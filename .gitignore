@@ -1,0 +1,72 @@
+# Chrome Extension
+# Chrome 扩展程序临时文件
+*.crx
+*.pem
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE 和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.temp
+
+# 备份文件
+*.bak
+*.backup
+
+# Node.js (如果使用构建工具)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 打包文件
+dist/
+build/
+output/
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# 操作系统生成的文件
+.DS_Store?
+ehthumbs.db
+Icon?
+Thumbs.db
+
+# 缓存文件
+.cache/
+.sass-cache/
+
+# 测试覆盖率报告
+coverage/
+
+# 私钥文件（Chrome扩展签名）
+key.pem
+private_key.pem
+
+# 用户数据
+exported_data/
+*.csv
+*.xlsx
+*.json
+
+# .qoder 文件夹（由AI工具生成）
+.qoder/
