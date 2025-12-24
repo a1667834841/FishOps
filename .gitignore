@@ -66,7 +66,7 @@ private_key.pem
 exported_data/
 *.csv
 *.xlsx
-*.json
+
 
 # .qoder 文件夹（由AI工具生成）
 .qoder/
