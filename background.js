@@ -84,10 +84,18 @@ function md5(string) {
 let capturedData = [];
 let capturedItemIds = new Set(); // 用于采集时去重的商品ID集合
 let requestLogs = []; // 存储每次请求的URL、参数和返回值
+let itemDetailData = []; // 存储商品详情数据
 let statistics = {
   pageCount: 0,        // 采集页数
   itemCount: 0,        // 商品总数
+  detailCount: 0,      // 商品详情数
   lastCaptureTime: null
+};
+
+// 配置选项
+let config = {
+  autoFetchDetail: false,  // 是否自动调用详情API
+  detailFetchDelay: 1000   // 详情API请求间隔(ms)
 };
 
 // 监听来自content script的消息
@@ -96,8 +104,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.type === 'API_DATA_CAPTURED') {
     const apiData = request.data;
-    const resultList = apiData.response.data?.resultList || [];
-    
+    const resultList = apiData.response?.data?.resultList || [];
+
     // 记录请求信息
     try {
       // 处理协议相对URL（如 //h5api.m.goofish.com/...)
@@ -110,7 +118,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       urlObj.searchParams.forEach((value, key) => {
         requestParams[key] = value;
       });
-      
+
       // 尝试解析请求体
       let parsedRequestBody = apiData.requestBody;
       if (typeof apiData.requestBody === 'string') {
@@ -120,7 +128,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           // 如果不是JSON，保持原样
         }
       }
-      
+
       requestLogs.push({
         timestamp: apiData.timestamp,
         captureTime: new Date(apiData.timestamp).toLocaleString(),
@@ -132,11 +140,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         response: apiData.response,
         itemCount: resultList.length
       });
-      
+
     } catch (error) {
       console.error('[闲鱼采集] 记录请求信息失败:', error);
     }
-    
+
     // 过滤已采集的商品（根据itemId去重）
     const newItems = resultList.filter(item => {
       const mainData = item.data?.item?.main;
@@ -144,50 +152,159 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const exContent = mainData.exContent || {};
       const clickParam = mainData.clickParam?.args || {};
       const itemId = clickParam.item_id || exContent.itemId || '';
-      if (!itemId || capturedItemIds.has(itemId)) {
-        return false; // 跳过无ID或已采集的商品
-      }
+      
+      if (!itemId) return false;
+      if (capturedItemIds.has(itemId)) return false;
+      
       capturedItemIds.add(itemId);
       return true;
     });
-    
+
     const newItemCount = newItems.length;
-    console.log('[闲鱼采集] ✅ 新增商品数:', newItemCount, '(去重后)');
-    console.log('[闲鱼采集] ===================================');
-    
+    console.log('[闲鱼采集] 新增商品数:', newItemCount, '(去重后)');
+
     // 只有新商品时才保存商品数据
     if (newItemCount > 0) {
-      capturedData.push({
+      const pageRecord = {
         url: apiData.url,
         response: apiData.response,
         items: newItems, // 只保存新商品
         timestamp: apiData.timestamp,
         captureTime: new Date(apiData.timestamp).toLocaleString()
-      });
-      
+      };
+      capturedData.push(pageRecord);
+      console.log('[闲鱼采集] 📦 已添加到 capturedData，当前页数:', capturedData.length, '本页商品数:', newItems.length);
+      console.log('[闲鱼采集] 📦 第一个商品数据:', JSON.stringify(newItems[0]).substring(0, 200));
+
       // 更新统计信息
       statistics.pageCount = capturedData.length;
       statistics.itemCount += newItemCount;
       statistics.lastCaptureTime = new Date(apiData.timestamp).toLocaleString();
     } else {
-      console.log('[闲鱼采集] 本页无新商品，已跳过');
+      console.log('[闲鱼采集] 本页无新商品');
     }
-    
+
     // 无论是否有新商品，都要保存 requestLogs
     chrome.storage.local.set({
       capturedData: capturedData,
-      capturedItemIds: Array.from(capturedItemIds), // Set转数组存储
+      capturedItemIds: Array.from(capturedItemIds),
       requestLogs: requestLogs,
       statistics: statistics
-    }, () => {
-      console.log('[闲鱼采集] 数据已保存 - 页数:', statistics.pageCount, '商品数:', statistics.itemCount, '请求记录:', requestLogs.length);
     });
 
-    sendResponse({ 
-      success: true, 
+    sendResponse({
+      success: true,
       pageCount: statistics.pageCount,
       itemCount: statistics.itemCount,
       newItems: newItemCount
+    });
+  }
+
+  // 处理商品详情数据
+  if (request.type === 'DETAIL_DATA_CAPTURED') {
+    const apiData = request.data;
+    const detailData = apiData.response.data;
+
+    if (!detailData) {
+      console.error('[闲鱼采集] 详情数据格式错误');
+      sendResponse({ success: false, error: '详情数据格式错误' });
+      return true;
+    }
+
+    const itemDO = detailData.itemDO || {};
+    const sellerDO = detailData.sellerDO || {};
+    const itemId = itemDO.itemId;
+
+    console.log('[闲鱼采集] ========== 收到商品详情 ==========');
+    console.log('[闲鱼采集] 商品ID:', itemId);
+    console.log('[闲鱼采集] 标题:', itemDO.title);
+    console.log('[闲鱼采集] 价格:', itemDO.soldPrice);
+    console.log('[闲鱼采集] 想要数:', itemDO.wantCnt);
+    console.log('[闲鱼采集] 浏览数:', itemDO.browseCnt);
+
+    // 解析请求体获取itemId
+    let requestedItemId = '';
+    try {
+      if (typeof apiData.requestBody === 'string') {
+        const urlParams = new URLSearchParams(apiData.requestBody);
+        const dataValue = urlParams.get('data');
+        if (dataValue) {
+          const parsedData = JSON.parse(decodeURIComponent(dataValue));
+          requestedItemId = parsedData.itemId;
+        }
+      }
+    } catch (e) {
+      console.error('[闲鱼采集] 解析请求体失败:', e);
+    }
+
+    // 提取详情数据
+    const detailRecord = {
+      itemId: itemId,
+      requestedItemId: requestedItemId,
+      title: itemDO.title || '',
+      price: itemDO.soldPrice || '',
+      originalPrice: itemDO.originalPrice || '',
+      wantCnt: itemDO.wantCnt || 0,
+      browseCnt: itemDO.browseCnt || 0,
+      collectCnt: itemDO.collectCnt || 0,
+      desc: (itemDO.desc || '').replace(/\n/g, ' '),
+      gmtCreate: itemDO.GMT_CREATE_DATE_KEY || '',
+      publishTime: itemDO.gmtCreate ? new Date(itemDO.gmtCreate).toLocaleString('zh-CN') : '',
+      itemStatus: itemDO.itemStatusStr || '',
+      quantity: itemDO.quantity || 0,
+      transportFee: itemDO.transportFee || '',
+      freeShip: itemDO.priceRelativeTags?.some(t => t.text === '包邮') ? '是' : '否',
+
+      // 卖家信息
+      sellerId: sellerDO.sellerId || '',
+      sellerNick: sellerDO.nick || '',
+      sellerCity: sellerDO.city || '',
+      sellerAvatar: sellerDO.portraitUrl || '',
+      sellerRegDay: sellerDO.userRegDay || 0,
+      hasSoldNum: sellerDO.hasSoldNumInteger || 0,
+      sellerSignature: (sellerDO.signature || '').replace(/\n/g, ' '),
+      replyRatio24h: sellerDO.replyRatio24h || '',
+      replyInterval: sellerDO.replyInterval || '',
+
+      // 图片URL
+      images: (itemDO.imageInfos || []).map(img => img.url).join(';'),
+
+      // 详情URL
+      detailUrl: `https://www.goofish.com/item?id=${itemId}`,
+
+      // 原始数据
+      rawData: detailData,
+
+      // 采集时间
+      timestamp: apiData.timestamp,
+      captureTime: new Date(apiData.timestamp).toLocaleString()
+    };
+
+    // 检查是否已存在该商品的详情（根据itemId去重）
+    const existingIndex = itemDetailData.findIndex(d => d.itemId === itemId);
+    if (existingIndex >= 0) {
+      // 更新现有记录
+      itemDetailData[existingIndex] = detailRecord;
+      console.log('[闲鱼采集] 更新商品详情:', itemId);
+    } else {
+      // 添加新记录
+      itemDetailData.push(detailRecord);
+      statistics.detailCount++;
+      console.log('[闲鱼采集] 新增商品详情:', itemId);
+    }
+
+    // 保存到 storage
+    chrome.storage.local.set({
+      itemDetailData: itemDetailData,
+      statistics: statistics
+    }, () => {
+      console.log('[闲鱼采集] 详情数据已保存 - 详情数:', statistics.detailCount);
+    });
+
+    sendResponse({
+      success: true,
+      itemId: itemId,
+      detailCount: statistics.detailCount
     });
   }
 
@@ -196,6 +313,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({
       pageCount: statistics.pageCount,
       itemCount: statistics.itemCount,
+      detailCount: statistics.detailCount || 0,
       lastCaptureTime: statistics.lastCaptureTime || '无'
     });
   }
@@ -206,12 +324,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     capturedData = [];
     capturedItemIds = new Set(); // 清空去重ID集合
     requestLogs = []; // 清空请求记录
+    itemDetailData = []; // 清空详情数据
     statistics = {
       pageCount: 0,
       itemCount: 0,
+      detailCount: 0,
       lastCaptureTime: null
     };
-    
+
     chrome.storage.local.clear(() => {
       if (chrome.runtime.lastError) {
         console.error('[闲鱼采集] 清空storage失败:', chrome.runtime.lastError);
@@ -225,6 +345,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 导出CSV数据
   if (request.type === 'EXPORT_CSV') {
+    console.log('[闲鱼采集] ========== 导出CSV ==========');
+    console.log('[闲鱼采集] capturedData长度:', capturedData.length);
+    console.log('[闲鱼采集] capturedItemIds数量:', capturedItemIds.size);
+    console.log('[闲鱼采集] statistics:', statistics);
+    console.log('[闲鱼采集] requestLogs长度:', requestLogs.length);
+
+    // 打印前几条数据结构用于调试
+    if (capturedData.length > 0) {
+      console.log('[闲鱼采集] 第1页 capturedData:', {
+        url: capturedData[0].url,
+        itemsCount: capturedData[0].items?.length,
+        hasItems: !!capturedData[0].items,
+        itemsType: typeof capturedData[0].items,
+        firstItem: capturedData[0].items?.[0]
+      });
+    }
+
+    // 打印 requestLogs 第一条用于对比
+    if (requestLogs.length > 0) {
+      console.log('[闲鱼采集] 第1条 requestLogs:', {
+        url: requestLogs[0].url,
+        itemCount: requestLogs[0].itemCount,
+        hasResponse: !!requestLogs[0].response,
+        responseKeys: Object.keys(requestLogs[0].response || {})
+      });
+    }
+
     try {
       const csvData = generateCSV(capturedData);
       sendResponse({ success: true, csvData: csvData });
@@ -247,11 +394,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // 导出详情CSV数据
+  if (request.type === 'EXPORT_DETAIL_CSV') {
+    try {
+      const csvData = generateDetailCSV(itemDetailData);
+      sendResponse({ success: true, csvData: csvData });
+    } catch (error) {
+      console.error('[闲鱼采集] 详情CSV生成失败:', error);
+      sendResponse({ success: false, error: error.message });
+    }
+    return true;
+  }
+
   return true; // 保持消息通道开启，用于异步响应
 });
 
 // 从 storage 恢复数据
-chrome.storage.local.get(['capturedData', 'capturedItemIds', 'requestLogs', 'statistics'], (result) => {
+chrome.storage.local.get(['capturedData', 'capturedItemIds', 'requestLogs', 'statistics', 'itemDetailData'], (result) => {
   if (result.capturedData) {
     capturedData = result.capturedData;
     console.log('[闲鱼采集] 从 storage恢复数据，数量:', capturedData.length);
@@ -264,9 +423,13 @@ chrome.storage.local.get(['capturedData', 'capturedItemIds', 'requestLogs', 'sta
     requestLogs = result.requestLogs;
     console.log('[闲鱼采集] 恢复请求记录数:', requestLogs.length);
   }
+  if (result.itemDetailData) {
+    itemDetailData = result.itemDetailData;
+    console.log('[闲鱼采集] 恢复详情数据数:', itemDetailData.length);
+  }
   if (result.statistics) {
     statistics = result.statistics;
-    console.log('[闲鱼采集] 恢复统计 - 页数:', statistics.pageCount, '商品数:', statistics.itemCount);
+    console.log('[闲鱼采集] 恢复统计 - 页数:', statistics.pageCount, '商品数:', statistics.itemCount, '详情数:', statistics.detailCount || 0);
   }
 });
 
@@ -424,6 +587,63 @@ function generateRequestsCSV(logs) {
       csvContent += row.join(',') + '\n';
     } catch (error) {
       console.error('[闲鱼采集] 处理请求记录出错:', error);
+    }
+  });
+
+  return csvContent;
+}
+
+// 生成详情CSV数据
+function generateDetailCSV(details) {
+  if (!details || details.length === 0) {
+    throw new Error('没有详情数据可导出');
+  }
+
+  // CSV表头
+  const headers = [
+    '商品ID', '标题', '价格', '原价', '想要人数', '浏览量', '收藏数',
+    '发布时间', '商品状态', '库存', '运费', '包邮',
+    '卖家ID', '卖家昵称', '卖家城市', '卖家头像', '注册天数', '已售件数',
+    '回复率', '回复时长', '卖家签名', '图片', '详情URL', '描述', '采集时间'
+  ];
+
+  let csvContent = headers.join(',') + '\n';
+
+  // 遍历所有详情数据
+  details.forEach(detail => {
+    try {
+      // 构建CSV行
+      const row = [
+        detail.itemId,
+        `"${(detail.title || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
+        detail.price,
+        detail.originalPrice,
+        detail.wantCnt,
+        detail.browseCnt,
+        detail.collectCnt,
+        detail.publishTime,
+        `"${detail.itemStatus}"`,
+        detail.quantity,
+        detail.transportFee,
+        `"${detail.freeShip}"`,
+        detail.sellerId,
+        `"${(detail.sellerNick || '').replace(/"/g, '""')}"`,
+        `"${detail.sellerCity}"`,
+        detail.sellerAvatar,
+        detail.sellerRegDay,
+        detail.hasSoldNum,
+        `"${detail.replyRatio24h}"`,
+        `"${detail.replyInterval}"`,
+        `"${(detail.sellerSignature || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
+        `"${detail.images}"`,
+        detail.detailUrl,
+        `"${(detail.desc || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
+        detail.captureTime
+      ];
+
+      csvContent += row.join(',') + '\n';
+    } catch (error) {
+      console.error('[闲鱼采集] 处理详情数据出错:', error);
     }
   });
 
