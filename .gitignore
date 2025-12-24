@@ -48,7 +48,6 @@ output/
 # 操作系统生成的文件
 .DS_Store?
 ehthumbs.db
-Icon?
 Thumbs.db
 
 # 缓存文件
