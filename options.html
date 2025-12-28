@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>配置中心 - 闲鱼数据采集助手</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+      background: white;
+      color: #333;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 标题栏 */
+    .header {
+      height: 40px;
+      padding: 0 20px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid #f0f0f0;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #2c3e50;
+    }
+
+    /* 主体布局 */
+    .main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* 左侧导航 */
+    .sidebar {
+      width: 144px;
+      background: white;
+      border-right: 1px solid #f0f0f0;
+      flex-shrink: 0;
+      overflow-y: auto;
+    }
+    .nav-item {
+      height: 36px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      font-size: 14px;
+      color: #666;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-item:hover {
+      background: #fafafa;
+    }
+    .nav-item.active {
+      color: #333;
+      font-weight: 500;
+      background: #fafafa;
+    }
+    .nav-item.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #ffe60f;
+    }
+    .nav-item .arrow {
+      margin-right: 8px;
+      font-size: 10px;
+      transition: transform 0.2s;
+    }
+    .nav-item.expanded .arrow {
+      transform: rotate(90deg);
+    }
+
+    /* 右侧表单区 */
+    .content {
+      flex: 1;
+      padding: 20px 24px;
+      overflow-y: auto;
+      min-height: 240px;
+    }
+
+    /* 表单 */
+    .form-section {
+      max-width: 500px;
+    }
+    .section-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: #333;
+    }
+    .form-group {
+      margin-bottom: 8px;
+    }
+    .form-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .form-label {
+      width: 80px;
+      font-size: 14px;
+      color: #666;
+      flex-shrink: 0;
+    }
+    .form-input {
+      width: 200px;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-input:focus {
+      border-color: #ffe60f;
+    }
+    .form-unit {
+      font-size: 13px;
+      color: #999;
+      width: 40px;
+      flex-shrink: 0;
+    }
+    .form-help {
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+      margin-left: 92px;
+    }
+    .form-range {
+      display: flex;
+      gap: 16px;
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+      margin-left: 92px;
+    }
+    .form-range span {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* 空状态 */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #999;
+      font-size: 14px;
+    }
+    .empty-state .icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+
+    /* 底部操作栏 */
+    .footer {
+      height: 48px;
+      padding: 0 24px;
+      border-top: 1px solid #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      flex-shrink: 0;
+      background: white;
+    }
+    .btn {
+      height: 32px;
+      padding: 0 20px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: white;
+      color: #666;
+    }
+    .btn:hover {
+      border-color: #bbb;
+      background: #fafafa;
+    }
+    .btn-primary {
+      border-color: #ffe60f;
+      background: linear-gradient(135deg, #ffe60f 0%, #ffed4e 100%);
+      color: #333;
+      font-weight: 500;
+    }
+    .btn-primary:hover {
+      border-color: #ffd700;
+      background: linear-gradient(135deg, #ffd700 0%, #ffe60f 100%);
+      box-shadow: 0 2px 8px rgba(255, 230, 15, 0.3);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      top: 30px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-100px);
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 14px;
+      z-index: 10000;
+      opacity: 0;
+      transition: all 0.3s ease;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    .toast.success {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    }
+    .toast.error {
+      background: linear-gradient(135deg, #f44336 0%, #e91e63 100%);
+    }
+
+    /* 隐藏面板 */
+    .panel {
+      display: none;
+    }
+    .panel.active {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <!-- 标题栏 -->
+  <div class="header">
+    <h1>配置中心</h1>
+  </div>
+
+  <!-- 主体 -->
+  <div class="main">
+    <!-- 左侧导航 -->
+    <div class="sidebar">
+      <div class="nav-item active" data-panel="crawl">
+        <span class="arrow">▶</span>
+        爬取设置
+      </div>
+      <div class="nav-item" data-panel="proxy">
+        <span class="arrow">▶</span>
+        代理设置
+      </div>
+      <div class="nav-item" data-panel="advanced">
+        <span class="arrow">▶</span>
+        高级设置
+      </div>
+      <div class="nav-item" data-panel="feishu">
+        <span class="arrow">▶</span>
+        飞书设置
+      </div>
+    </div>
+
+    <!-- 右侧内容区 -->
+    <div class="content">
+      <!-- 爬取设置面板 -->
+      <div class="panel active" id="panel-crawl">
+        <div class="form-section">
+          <div class="section-title">爬取设置</div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">起始页码</label>
+              <input type="number" class="form-input" id="startPageInput" min="1" max="100" />
+              <span class="form-unit">页</span>
+            </div>
+            <div class="form-help">从第几页开始采集数据</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">采集页数</label>
+              <input type="number" class="form-input" id="pageCountInput" min="1" max="50" />
+              <span class="form-unit">页</span>
+            </div>
+            <div class="form-range">
+              <span>💡 推荐: 1-20页</span>
+              <span>⚠️ 最大: 50页</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">间隔时间</label>
+              <input type="number" class="form-input" id="delayInput" min="500" max="10000" step="100" />
+              <span class="form-unit">毫秒</span>
+            </div>
+            <div class="form-range">
+              <span>💡 推荐: 1000-2000ms</span>
+              <span>📌 范围: 500-10000ms</span>
+            </div>
+            <div class="form-help">间隔时间过短可能导致请求被限制</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 代理设置面板（预留） -->
+      <div class="panel" id="panel-proxy">
+        <div class="empty-state">
+          <div class="icon">🔧</div>
+          <div>暂无代理配置</div>
+        </div>
+      </div>
+
+      <!-- 高级设置面板（预留） -->
+      <div class="panel" id="panel-advanced">
+        <div class="empty-state">
+          <div class="icon">⚙️</div>
+          <div>暂无高级配置</div>
+        </div>
+      </div>
+
+      <!-- 飞书设置面板 -->
+      <div class="panel" id="panel-feishu">
+        <div class="form-section">
+          <div class="section-title">飞书配置</div>
+          <div class="form-help" style="margin-bottom: 16px; margin-left: 0;">
+            配置飞书多维表格,实现数据自动同步
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">App ID</label>
+              <input type="text" class="form-input" id="feishuAppId" style="width: 320px;" placeholder="cli_xxxxxxxxx" />
+            </div>
+            <div class="form-help">飞书应用的 App ID,在飞书开放平台获取</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">App Secret</label>
+              <input type="password" class="form-input" id="feishuAppSecret" style="width: 320px;" placeholder="xxxxxxxxxxxxxxxx" />
+            </div>
+            <div class="form-help">飞书应用的 App Secret</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">表格 Token</label>
+              <input type="text" class="form-input" id="feishuSpreadsheetToken" style="width: 320px;" placeholder="xxxxxxxxxxxxxxxx" />
+            </div>
+            <div class="form-help">多维表格的 token,从表格URL中获取</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">商品表 ID</label>
+              <input type="text" class="form-input" id="feishuProductTableId" style="width: 200px;" placeholder="tblxxxxxxxx" />
+            </div>
+            <div class="form-help">存放商品数据的数据表 ID</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">商家表 ID</label>
+              <input type="text" class="form-input" id="feishuSellerTableId" style="width: 200px;" placeholder="tblxxxxxxxx" />
+            </div>
+            <div class="form-help">存放商家数据的数据表 ID(可选)</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">启用同步</label>
+              <input type="checkbox" id="feishuEnabled" style="width: auto;" />
+            </div>
+            <div class="form-help">勾选后,采集数据将自动同步到飞书表格</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label"></label>
+              <button class="btn" id="testFeishuBtn" type="button">测试连接</button>
+            </div>
+            <div class="form-help" id="feishuTestResult"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部操作栏 -->
+  <div class="footer">
+    <button class="btn" id="resetBtn">恢复默认</button>
+    <button class="btn btn-primary" id="saveBtn">保存配置</button>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

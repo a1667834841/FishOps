@@ -1,15 +1,22 @@
-// inject.js - 注入到页面上下文，用于拦截API请求和自动爬取
+/**
+ * inject.js - 注入到页面上下文的入口文件
+ * 这是一个兼容层，用于在开发模式下加载模块化代码
+ */
+
 (function() {
   'use strict';
-
   console.log('[闲鱼采集] inject.js 已注入到页面上下文');
-  
+
   // 检查 MessageBus 是否已加载
   if (!window.MessageBus) {
     console.error('[闲鱼采集] ❌ MessageBus 未找到！数据无法转发');
   }
 
-  // ==================== API 拦截器 ====================
+  // ==================== 加载模块化代码 ====================
+
+  // 由于 content scripts 不支持 ES Modules imports，
+  // 这里暂时保留原有的实现，或者等待打包工具处理
+  // 开发模式建议使用 npm run dev + 打包后的文件
 
   // 目标API URL特征
   const TARGET_API_URL = 'h5api.m.goofish.com/h5/mtop.taobao.idlemtopsearch.pc.search/1.0/';
@@ -162,7 +169,7 @@
     }
 
     // 检查 token
-    const token = apiModule.getToken();
+    const token = apiModule.getToken ? apiModule.getToken() : null;
     if (!token) {
       console.error('[闲鱼采集] 未找到 MTOP token，可能未登录或 cookie 失效！');
       alert('未找到登录 Token！\n请确保：\n1. 已登录闲鱼账号\n2. Cookie 没有过期\n3. 刷新页面后重试');
@@ -248,6 +255,45 @@
       console.log('[闲鱼采集] 已设置停止标志，当前页采集完成后将停止');
     } else {
       console.log('[闲鱼采集] 当前没有正在运行的爬取任务');
+    }
+  });
+
+  // ==================== 流量词功能 ====================
+
+  // 监听来自 content script 的 DOM 事件（获取流量词）
+  document.addEventListener('XIANYU_FETCH_SUGGEST_WORDS', async function(event) {
+    console.log('[闲鱼采集] 收到流量词请求（DOM事件）:', event.detail);
+
+    const { keyword } = event.detail;
+
+    try {
+      // 检查 API 模块是否存在
+      if (!window.XianyuAPI) {
+        throw new Error('XianyuAPI 模块未加载');
+      }
+
+      // 调用 API 获取流量词
+      const words = await window.XianyuAPI.fetchSuggestWords(keyword, { simpleMode: true });
+
+      console.log('[闲鱼采集] 流量词获取成功:', words);
+
+      // 发送响应给 content script
+      document.dispatchEvent(new CustomEvent('XIANYU_SUGGEST_WORDS_RESPONSE', {
+        detail: {
+          success: true,
+          words: words
+        }
+      }));
+    } catch (error) {
+      console.error('[闲鱼采集] 流量词获取失败:', error);
+
+      // 发送错误响应
+      document.dispatchEvent(new CustomEvent('XIANYU_SUGGEST_WORDS_RESPONSE', {
+        detail: {
+          success: false,
+          error: error.message
+        }
+      }));
     }
   });
 

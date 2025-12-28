@@ -57,6 +57,29 @@
       return true;
     }
 
+    if (request.type === 'FETCH_SUGGEST_WORDS') {
+      console.log('[闲鱼采集] 收到流量词请求:', request.keyword);
+
+      // 监听来自页面的响应
+      const handleSuggestResponse = function(event) {
+        console.log('[闲鱼采集] 收到流量词响应:', event.detail);
+        document.removeEventListener('XIANYU_SUGGEST_WORDS_RESPONSE', handleSuggestResponse);
+        sendResponse(event.detail);
+      };
+
+      document.addEventListener('XIANYU_SUGGEST_WORDS_RESPONSE', handleSuggestResponse);
+
+      // 转发到页面上下文
+      document.dispatchEvent(new CustomEvent('XIANYU_FETCH_SUGGEST_WORDS', {
+        detail: {
+          keyword: request.keyword
+        }
+      }));
+
+      console.log('[闲鱼采集] 已派发DOM事件 XIANYU_FETCH_SUGGEST_WORDS');
+      return true; // 异步响应
+    }
+
     return true;
   });
 

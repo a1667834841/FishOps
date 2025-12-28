@@ -157,6 +157,12 @@ window.XianyuAPI = (function() {
       baseUrl: 'https://h5api.m.goofish.com/h5/mtop.taobao.idle.pc.detail/1.0/',
       api: 'mtop.taobao.idle.pc.detail',
       appKey: '34839810'
+    },
+    // 流量词（搜索建议）API
+    suggest: {
+      baseUrl: 'https://h5api.m.goofish.com/h5/mtop.taobao.idlemtopsearch.pc.search.suggest/1.0/',
+      api: 'mtop.taobao.idlemtopsearch.pc.search.suggest',
+      appKey: '34839810'
     }
   };
 
@@ -255,7 +261,7 @@ window.XianyuAPI = (function() {
       sortField: "",
       customDistance: "",
       gps: "",
-      propValueStr: {},
+      propValueStr: {"searchFilter":"publishDays:14;"},
       customGps: "",
       searchReqFromPage: "pcSearch",
       extraFilterValue: "{}",
@@ -281,6 +287,37 @@ window.XianyuAPI = (function() {
     return request('detail', data, options);
   }
 
+  // ==================== 流量词（搜索建议）API ====================
+
+  /**
+   * 获取闲鱼流量词（搜索建议）列表
+   * @param {string} inputWords - 输入词
+   * @param {Object} options - 可选参数
+   * @param {string} options.searchReqFromPage - 搜索来源页面（默认 xyPcHome）
+   * @param {number} options.bucketId - 桶ID（默认 30）
+   * @param {number} options.type - 类型（默认 0）
+   * @returns {Promise<string[]>} 返回流量词列表
+   */
+  async function fetchSuggestWords(inputWords, options = {}) {
+    const data = {
+      inputWords: inputWords,
+      searchReqFromPage: options.searchReqFromPage || 'xyPcHome',
+      bucketId: options.bucketId || 30,
+      type: options.type || 0
+    };
+
+    const result = await request('suggest', data, options);
+    
+    // 提取流量词列表
+    const items = result && result.data && Array.isArray(result.data.items)
+      ? result.data.items
+      : [];
+    
+    return items
+      .map(item => item.suggest)
+      .filter(text => !!text);
+  }
+
   // ==================== 导出接口 ====================
   return {
     // MD5
@@ -301,6 +338,9 @@ window.XianyuAPI = (function() {
 
     // 详情 API
     fetchItemDetail: fetchItemDetail,
+
+    // 流量词 API
+    fetchSuggestWords: fetchSuggestWords,
 
     // 配置
     API_CONFIG: API_CONFIG

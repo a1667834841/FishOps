@@ -1,0 +1,337 @@
+/* 商品详情页下载按钮样式 */
+.xianyu-download-btn {
+  position: fixed;
+  right: 30px;
+  bottom: 30px;
+  z-index: 99999;
+  
+  /* 按钮样式 */
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  background: #ffe60f;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border: none;
+  cursor: pointer;
+  
+  /* 图标样式 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1f1f1f;
+  font-size: 24px;
+  
+  /* 动画过渡 */
+  transition: all 0.2s ease;
+}
+
+/* 控制台按钮 */
+.xianyu-console-btn {
+  position: fixed;
+  right: 30px;
+  bottom: 100px;
+  z-index: 99999;
+  
+  /* 按钮样式 */
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  background: #1f1f1f;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border: none;
+  cursor: pointer;
+  
+  /* 图标样式 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffe60f;
+  font-size: 24px;
+  
+  /* 动画过渡 */
+  transition: all 0.2s ease;
+}
+
+.xianyu-download-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 230, 15, 0.3);
+}
+
+.xianyu-console-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.xianyu-download-btn:active {
+  transform: scale(0.95);
+}
+
+/* 加载状态 */
+.xianyu-download-btn.loading {
+  pointer-events: none;
+  opacity: 0.7;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+/* 工具提示 */
+.xianyu-download-btn::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  right: 70px;
+  top: 50%;
+  transform: translateY(-50%);
+  
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  white-space: nowrap;
+  
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.xianyu-download-btn::after {
+  content: '';
+  position: absolute;
+  right: 60px;
+  top: 50%;
+  transform: translateY(-50%);
+  
+  border: 6px solid transparent;
+  border-left-color: rgba(0, 0, 0, 0.85);
+  
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.xianyu-download-btn:hover::before,
+.xianyu-download-btn:hover::after {
+  opacity: 1;
+}
+
+/* 成功提示动画 */
+.xianyu-download-btn.success {
+  background: #ffe60f;
+  animation: successPulse 0.4s ease;
+}
+
+@keyframes successPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+}
+
+/* 错误提示动画 */
+.xianyu-download-btn.error {
+  background: #f45c43;
+  color: white;
+  animation: shake 0.5s ease;
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+
+/* ==================== 控制台面板样式 ==================== */
+
+.xianyu-console-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 95%;
+  max-width: 1200px;
+  max-height: 80vh;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  z-index: 99998;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 2px solid #1f1f1f;
+}
+
+.console-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: #1f1f1f;
+  color: #ffe60f;
+}
+
+.console-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.console-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.console-clear-btn,
+.console-refresh-btn,
+.console-close-btn {
+  background: #ffe60f;
+  border: none;
+  color: #1f1f1f;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.console-clear-btn:hover,
+.console-refresh-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(255, 230, 15, 0.3);
+}
+
+.console-close-btn:hover {
+  background: #f45c43;
+  color: white;
+  transform: translateY(-2px);
+}
+
+.console-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.console-loading,
+.console-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+  font-size: 16px;
+}
+
+/* 表格样式 */
+.console-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  table-layout: fixed;
+}
+
+.console-table thead {
+  background: #1f1f1f;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.console-table th {
+  padding: 12px 8px;
+  text-align: left;
+  font-weight: 600;
+  color: #ffe60f;
+  border-bottom: 2px solid #ffe60f;
+  white-space: nowrap;
+}
+
+.console-table td {
+  padding: 12px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: middle;
+}
+
+.console-table tbody tr:hover {
+  background: #f9f9f9;
+}
+
+/* 商品图片 */
+.item-thumb {
+  width: 50px;
+  height: 50px;
+  object-fit: cover;
+  border-radius: 6px;
+  display: block;
+}
+
+/* 文本省略 */
+.text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+/* 发布按钮 */
+.publish-btn {
+  background: #ffe60f;
+  color: #1f1f1f;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  margin-right: 6px;
+}
+
+.publish-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(255, 230, 15, 0.3);
+}
+
+.publish-btn:active {
+  transform: translateY(0);
+}
+
+/* 删除按钮 */
+.delete-btn {
+  background: #1f1f1f;
+  color: #ffe60f;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.delete-btn:hover {
+  background: #f45c43;
+  color: white;
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(244, 92, 67, 0.3);
+}
+
+.delete-btn:active {
+  transform: translateY(0);
+}

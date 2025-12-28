@@ -10,11 +10,13 @@
   ],
   "host_permissions": [
     "https://h5api.m.goofish.com/*",
-    "https://www.goofish.com/*"
+    "https://www.goofish.com/*",
+    "https://open.feishu.cn/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
+  "options_page": "options.html",
   "content_scripts": [
     {
       "matches": ["https://www.goofish.com/*"],
@@ -26,6 +28,17 @@
       "js": ["message-bus-main.js", "xianyu-api.js", "inject.js"],
       "run_at": "document_start",
       "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.goofish.com/item*"],
+      "js": ["item-download.js"],
+      "css": ["item-download.css"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["https://www.goofish.com/publish*"],
+      "js": ["publish-helper.js"],
+      "run_at": "document_end"
     }
   ],
   "action": {

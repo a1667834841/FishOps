@@ -80,15 +80,73 @@ function md5(string) {
   return wordToHex(a) + wordToHex(b) + wordToHex(c) + wordToHex(d);
 }
 
+// ==================== 数据结构定义 ====================
+
+/**
+ * 商品数据标准结构
+ * 所有采集的数据都应该符合这个结构
+ */
+const PRODUCT_SCHEMA = {
+  itemId: { type: 'string', label: '商品ID', csvOrder: 1, feishuType: 1 },
+  title: { type: 'string', label: '商品标题', csvOrder: 2, feishuType: 1 },
+  price: { type: 'string', label: '价格', csvOrder: 3, feishuType: 1 },
+  priceNumber: { type: 'number', label: '价格数值', csvOrder: 0, feishuType: 2, feishuField: '价格' }, // 不导出到CSV，仅用于飞书
+  originalPrice: { type: 'string', label: '原价', csvOrder: 4, feishuType: 1 },
+  originalPriceNumber: { type: 'number', label: '原价数值', csvOrder: 0, feishuType: 2, feishuField: '原价' }, // 不导出到CSV，仅用于飞书
+  wantCnt: { type: 'number', label: '想要人数', csvOrder: 5, feishuType: 2 },
+  publishTime: { type: 'string', label: '发布时间', csvOrder: 6, feishuType: 1 },
+  publishTimeMs: { type: 'number', label: '发布时间戳', csvOrder: 0, feishuType: 5, feishuField: '发布时间' }, // 不导出到CSV，仅用于飞书
+  captureTime: { type: 'string', label: '采集时间', csvOrder: 0, feishuType: 1 }, // 不导出到CSV
+  captureTimeMs: { type: 'number', label: '采集时间戳', csvOrder: 0, feishuType: 5, feishuField: '采集时间' }, // 不导出到CSV，仅用于飞书
+  sellerNick: { type: 'string', label: '卖家昵称', csvOrder: 7, feishuType: 1 },
+  sellerCity: { type: 'string', label: '地区', csvOrder: 8, feishuType: 1 },
+  freeShip: { type: 'string', label: '包邮', csvOrder: 9, feishuType: 1 },
+  tags: { type: 'string', label: '商品标签', csvOrder: 10, feishuType: 1 },
+  coverUrl: { type: 'string', label: '封面URL', csvOrder: 11, feishuType: 15 },
+  detailUrl: { type: 'string', label: '商品详情URL', csvOrder: 12, feishuType: 15 }
+};
+
+// 从 SCHEMA 生成 CSV 表头（按 csvOrder 排序，跳过 csvOrder 为 0 的字段）
+function getCSVHeaders() {
+  return Object.entries(PRODUCT_SCHEMA)
+    .filter(([key, config]) => config.csvOrder > 0)
+    .sort((a, b) => a[1].csvOrder - b[1].csvOrder)
+    .map(([key, config]) => config.label);
+}
+
+// 从 SCHEMA 生成飞书字段配置
+function getFeishuFieldConfigs() {
+  const configs = [];
+  const addedFields = new Set();
+  
+  Object.entries(PRODUCT_SCHEMA).forEach(([key, config]) => {
+    // 使用 feishuField 或 label 作为字段名
+    const fieldName = config.feishuField || config.label;
+    
+    // 避免重复添加（比如价格和价格数值共用一个飞书字段）
+    if (!addedFields.has(fieldName)) {
+      configs.push({
+        name: fieldName,
+        type: config.feishuType
+      });
+      addedFields.add(fieldName);
+    }
+  });
+  
+  // 添加关键字字段（不在 schema 中，但飞书需要）
+  configs.unshift({ name: '关键字', type: 1 });
+  
+  return configs;
+}
+
 // 存储采集到的数据
 let capturedData = [];
-let capturedItemIds = new Set(); // 用于采集时去重的商品ID集合
+let capturedItemIds = new Set(); // 用于采集时去重的商品组合键集合（商品ID+想要数+价格）
 let requestLogs = []; // 存储每次请求的URL、参数和返回值
-let itemDetailData = []; // 存储商品详情数据
+let currentKeyword = ''; // 当前搜索关键词
 let statistics = {
   pageCount: 0,        // 采集页数
   itemCount: 0,        // 商品总数
-  detailCount: 0,      // 商品详情数
   lastCaptureTime: null
 };
 
@@ -101,6 +159,21 @@ let config = {
 // 监听来自content script的消息
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('[闲鱼采集] Background收到消息:', request.type);
+
+  // 设置当前关键词
+  if (request.type === 'SET_KEYWORD') {
+    currentKeyword = request.keyword || '';
+    console.log('[闲鱼采集] 设置关键词:', currentKeyword);
+    chrome.storage.local.set({ currentKeyword: currentKeyword });
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // 获取当前关键词
+  if (request.type === 'GET_KEYWORD') {
+    sendResponse({ keyword: currentKeyword });
+    return true;
+  }
 
   if (request.type === 'API_DATA_CAPTURED') {
     const apiData = request.data;
@@ -145,7 +218,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       console.error('[闲鱼采集] 记录请求信息失败:', error);
     }
 
-    // 过滤已采集的商品（根据itemId去重）
+    // 过滤已采集的商品（根据商品ID+想要数+价格组合键去重）
     const newItems = resultList.filter(item => {
       const mainData = item.data?.item?.main;
       if (!mainData) return false;
@@ -154,9 +227,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const itemId = clickParam.item_id || exContent.itemId || '';
       
       if (!itemId) return false;
-      if (capturedItemIds.has(itemId)) return false;
       
-      capturedItemIds.add(itemId);
+      // 提取想要人数
+      const fishTags = exContent.fishTags || {};
+      let wantCnt = 0;
+      Object.values(fishTags).forEach(region => {
+        const tagList = region?.tagList || [];
+        tagList.forEach(tag => {
+          const content = tag?.data?.content;
+          if (content && content.endsWith('人想要')) {
+            wantCnt = parseInt(content.replace('人想要', '')) || 0;
+          }
+        });
+      });
+      
+      // 提取价格
+      const price = (exContent.price || []).map(p => p.text || '').join('');
+      
+      // 构建组合键：商品ID + 想要数 + 价格
+      const compositeKey = `${itemId}_${wantCnt}_${price}`;
+      
+      if (capturedItemIds.has(compositeKey)) return false;
+      
+      capturedItemIds.add(compositeKey);
       return true;
     });
 
@@ -200,120 +293,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
   }
 
-  // 处理商品详情数据
-  if (request.type === 'DETAIL_DATA_CAPTURED') {
-    const apiData = request.data;
-    const detailData = apiData.response.data;
 
-    if (!detailData) {
-      console.error('[闲鱼采集] 详情数据格式错误');
-      sendResponse({ success: false, error: '详情数据格式错误' });
-      return true;
-    }
-
-    const itemDO = detailData.itemDO || {};
-    const sellerDO = detailData.sellerDO || {};
-    const itemId = itemDO.itemId;
-
-    console.log('[闲鱼采集] ========== 收到商品详情 ==========');
-    console.log('[闲鱼采集] 商品ID:', itemId);
-    console.log('[闲鱼采集] 标题:', itemDO.title);
-    console.log('[闲鱼采集] 价格:', itemDO.soldPrice);
-    console.log('[闲鱼采集] 想要数:', itemDO.wantCnt);
-    console.log('[闲鱼采集] 浏览数:', itemDO.browseCnt);
-
-    // 解析请求体获取itemId
-    let requestedItemId = '';
-    try {
-      if (typeof apiData.requestBody === 'string') {
-        const urlParams = new URLSearchParams(apiData.requestBody);
-        const dataValue = urlParams.get('data');
-        if (dataValue) {
-          const parsedData = JSON.parse(decodeURIComponent(dataValue));
-          requestedItemId = parsedData.itemId;
-        }
-      }
-    } catch (e) {
-      console.error('[闲鱼采集] 解析请求体失败:', e);
-    }
-
-    // 提取详情数据
-    const detailRecord = {
-      itemId: itemId,
-      requestedItemId: requestedItemId,
-      title: itemDO.title || '',
-      price: itemDO.soldPrice || '',
-      originalPrice: itemDO.originalPrice || '',
-      wantCnt: itemDO.wantCnt || 0,
-      browseCnt: itemDO.browseCnt || 0,
-      collectCnt: itemDO.collectCnt || 0,
-      desc: (itemDO.desc || '').replace(/\n/g, ' '),
-      gmtCreate: itemDO.GMT_CREATE_DATE_KEY || '',
-      publishTime: itemDO.gmtCreate ? new Date(itemDO.gmtCreate).toLocaleString('zh-CN') : '',
-      itemStatus: itemDO.itemStatusStr || '',
-      quantity: itemDO.quantity || 0,
-      transportFee: itemDO.transportFee || '',
-      freeShip: itemDO.priceRelativeTags?.some(t => t.text === '包邮') ? '是' : '否',
-
-      // 卖家信息
-      sellerId: sellerDO.sellerId || '',
-      sellerNick: sellerDO.nick || '',
-      sellerCity: sellerDO.city || '',
-      sellerAvatar: sellerDO.portraitUrl || '',
-      sellerRegDay: sellerDO.userRegDay || 0,
-      hasSoldNum: sellerDO.hasSoldNumInteger || 0,
-      sellerSignature: (sellerDO.signature || '').replace(/\n/g, ' '),
-      replyRatio24h: sellerDO.replyRatio24h || '',
-      replyInterval: sellerDO.replyInterval || '',
-
-      // 图片URL
-      images: (itemDO.imageInfos || []).map(img => img.url).join(';'),
-
-      // 详情URL
-      detailUrl: `https://www.goofish.com/item?id=${itemId}`,
-
-      // 原始数据
-      rawData: detailData,
-
-      // 采集时间
-      timestamp: apiData.timestamp,
-      captureTime: new Date(apiData.timestamp).toLocaleString()
-    };
-
-    // 检查是否已存在该商品的详情（根据itemId去重）
-    const existingIndex = itemDetailData.findIndex(d => d.itemId === itemId);
-    if (existingIndex >= 0) {
-      // 更新现有记录
-      itemDetailData[existingIndex] = detailRecord;
-      console.log('[闲鱼采集] 更新商品详情:', itemId);
-    } else {
-      // 添加新记录
-      itemDetailData.push(detailRecord);
-      statistics.detailCount++;
-      console.log('[闲鱼采集] 新增商品详情:', itemId);
-    }
-
-    // 保存到 storage
-    chrome.storage.local.set({
-      itemDetailData: itemDetailData,
-      statistics: statistics
-    }, () => {
-      console.log('[闲鱼采集] 详情数据已保存 - 详情数:', statistics.detailCount);
-    });
-
-    sendResponse({
-      success: true,
-      itemId: itemId,
-      detailCount: statistics.detailCount
-    });
-  }
 
   // 获取统计信息
   if (request.type === 'GET_STATS') {
     sendResponse({
       pageCount: statistics.pageCount,
       itemCount: statistics.itemCount,
-      detailCount: statistics.detailCount || 0,
       lastCaptureTime: statistics.lastCaptureTime || '无'
     });
   }
@@ -322,13 +308,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'CLEAR_DATA') {
     console.log('[闲鱼采集] 开始清空数据...');
     capturedData = [];
-    capturedItemIds = new Set(); // 清空去重ID集合
+    capturedItemIds = new Set(); // 清空去重组合键集合
     requestLogs = []; // 清空请求记录
-    itemDetailData = []; // 清空详情数据
+    currentKeyword = ''; // 清空关键词
     statistics = {
       pageCount: 0,
       itemCount: 0,
-      detailCount: 0,
       lastCaptureTime: null
     };
 
@@ -343,37 +328,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // 保持消息通道开启以支持异步响应
   }
 
-  // 导出CSV数据
+  // 导出CSV数据（使用列表数据）
   if (request.type === 'EXPORT_CSV') {
     console.log('[闲鱼采集] ========== 导出CSV ==========');
     console.log('[闲鱼采集] capturedData长度:', capturedData.length);
     console.log('[闲鱼采集] capturedItemIds数量:', capturedItemIds.size);
-    console.log('[闲鱼采集] statistics:', statistics);
-    console.log('[闲鱼采集] requestLogs长度:', requestLogs.length);
-
-    // 打印前几条数据结构用于调试
-    if (capturedData.length > 0) {
-      console.log('[闲鱼采集] 第1页 capturedData:', {
-        url: capturedData[0].url,
-        itemsCount: capturedData[0].items?.length,
-        hasItems: !!capturedData[0].items,
-        itemsType: typeof capturedData[0].items,
-        firstItem: capturedData[0].items?.[0]
-      });
-    }
-
-    // 打印 requestLogs 第一条用于对比
-    if (requestLogs.length > 0) {
-      console.log('[闲鱼采集] 第1条 requestLogs:', {
-        url: requestLogs[0].url,
-        itemCount: requestLogs[0].itemCount,
-        hasResponse: !!requestLogs[0].response,
-        responseKeys: Object.keys(requestLogs[0].response || {})
-      });
-    }
 
     try {
-      const csvData = generateCSV(capturedData);
+      // 使用统一的数据处理逻辑（与飞书发送相同）
+      const processedData = processListData(capturedData);
+      console.log('[闲鱼采集] 处理后数据量:', processedData.length);
+      
+      const csvData = generateProductCSV(processedData);
       sendResponse({ success: true, csvData: csvData });
     } catch (error) {
       console.error('[闲鱼采集] CSV生成失败:', error);
@@ -394,67 +360,123 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 导出详情CSV数据
-  if (request.type === 'EXPORT_DETAIL_CSV') {
+
+
+  // 导出商品和商家CSV（使用列表数据）
+  if (request.type === 'EXPORT_PRODUCT_SELLER_CSV') {
     try {
-      const csvData = generateDetailCSV(itemDetailData);
-      sendResponse({ success: true, csvData: csvData });
+      // 使用统一的数据处理逻辑（与CSV导出和飞书发送相同）
+      const processedData = processListData(capturedData);
+      console.log('[闲鱼采集] 处理后数据量:', processedData.length);
+
+      const productCsvData = generateProductCSV(processedData);
+      const sellerCsvData = generateSellerCSV(processedData);
+      sendResponse({
+        success: true,
+        productCsvData: productCsvData,
+        sellerCsvData: sellerCsvData
+      });
     } catch (error) {
-      console.error('[闲鱼采集] 详情CSV生成失败:', error);
+      console.error('[闲鱼采集] 商品/商家CSV生成失败:', error);
       sendResponse({ success: false, error: error.message });
     }
     return true;
   }
 
+  // 设置配置
+  if (request.type === 'SET_CONFIG') {
+    if (request.config) {
+      config = { ...config, ...request.config };
+      chrome.storage.local.set({ config: config });
+      sendResponse({ success: true, config: config });
+    } else {
+      sendResponse({ success: false, error: '无效的配置' });
+    }
+    return true;
+  }
+
+  // 获取配置
+  if (request.type === 'GET_CONFIG') {
+    sendResponse({ success: true, config: config });
+    return true;
+  }
+
+  // ========== 飞书相关消息处理 ==========
+
+  // 测试飞书连接
+  if (request.type === 'TEST_FEISHU_CONNECTION') {
+    testFeishuConnection(request.config).then(sendResponse);
+    return true;
+  }
+
+  // 发送数据到飞书（使用列表数据）
+  if (request.type === 'SEND_TO_FEISHU') {
+    // 使用统一的数据处理逻辑（与CSV导出相同）
+    const processedData = processListData(capturedData);
+    sendToFeishu(processedData).then(sendResponse);
+    return true;
+  }
+
+  // 更新飞书配置
+  if (request.type === 'UPDATE_FEISHU_CONFIG') {
+    if (request.config) {
+      feishuConfig = { ...feishuConfig, ...request.config };
+      chrome.storage.local.set(feishuConfig);
+      sendResponse({ success: true, config: feishuConfig });
+    } else {
+      sendResponse({ success: false, error: '无效的配置' });
+    }
+    return true;
+  }
+
+  // 获取飞书配置
+  if (request.type === 'GET_FEISHU_CONFIG') {
+    sendResponse({ success: true, config: feishuConfig });
+    return true;
+  }
+
   return true; // 保持消息通道开启，用于异步响应
 });
-
 // 从 storage 恢复数据
-chrome.storage.local.get(['capturedData', 'capturedItemIds', 'requestLogs', 'statistics', 'itemDetailData'], (result) => {
+chrome.storage.local.get(['capturedData', 'capturedItemIds', 'requestLogs', 'statistics', 'config', 'currentKeyword'], (result) => {
   if (result.capturedData) {
     capturedData = result.capturedData;
     console.log('[闲鱼采集] 从 storage恢复数据，数量:', capturedData.length);
   }
   if (result.capturedItemIds) {
     capturedItemIds = new Set(result.capturedItemIds); // 数组转Set
-    console.log('[闲鱼采集] 恢复已采集商品ID数:', capturedItemIds.size);
+    console.log('[闲鱼采集] 恢复已采集商品组合键数:', capturedItemIds.size);
   }
   if (result.requestLogs) {
     requestLogs = result.requestLogs;
     console.log('[闲鱼采集] 恢复请求记录数:', requestLogs.length);
   }
-  if (result.itemDetailData) {
-    itemDetailData = result.itemDetailData;
-    console.log('[闲鱼采集] 恢复详情数据数:', itemDetailData.length);
-  }
   if (result.statistics) {
     statistics = result.statistics;
-    console.log('[闲鱼采集] 恢复统计 - 页数:', statistics.pageCount, '商品数:', statistics.itemCount, '详情数:', statistics.detailCount || 0);
+    console.log('[闲鱼采集] 恢复统计 - 页数:', statistics.pageCount, '商品数:', statistics.itemCount);
+  }
+  if (result.config) {
+    config = { ...config, ...result.config };
+    console.log('[闲鱼采集] 恢复配置:', config);
+  }
+  if (result.currentKeyword) {
+    currentKeyword = result.currentKeyword;
+    console.log('[闲鱼采集] 恢复关键词:', currentKeyword);
   }
 });
 
-// 生成CSV数据
-function generateCSV(data) {
-  if (!data || data.length === 0) {
-    throw new Error('没有数据可导出');
-  }
+// ==================== 统一的数据处理逻辑 ====================
+// 说明：所有导出方式（CSV单文件、CSV双文件、飞书）都使用此函数处理列表数据
 
-  // CSV表头
-  const headers = [
-    '记录ID', '标题', '价格', '原价', '卖家昵称', 
-    '想要人数', '浏览量', '发布时间', '地区',
-    '包邮', '商品标签', '图片URL', '详情URL'
-  ];
+// 处理列表数据，返回符合 PRODUCT_SCHEMA 的标准数据结构
+function processListData(capturedData) {
+  const processedMap = new Map();
+  const currentTime = Date.now();
+  const currentTimeStr = new Date(currentTime).toLocaleString('zh-CN');
 
-  let csvContent = headers.join(',') + '\n';
-  
-  // 用于去重的recordId集合
-  const seenRecordIds = new Set();
-
-  // 遍历所有页面的数据
-  data.forEach(pageData => {
+  // 处理列表数据
+  capturedData.forEach(pageData => {
     const items = pageData.items || [];
-    
     items.forEach(item => {
       try {
         const mainData = item.data?.item?.main;
@@ -462,89 +484,122 @@ function generateCSV(data) {
 
         const exContent = mainData.exContent || {};
         const clickParam = mainData.clickParam?.args || {};
-        
-        // 提取数据
+
         const itemId = clickParam.item_id || exContent.itemId || '';
-        const title = (exContent.title || '').replace(/,/g, '，').replace(/\n/g, ' ');
-        const priceArray = exContent.price || [];
-        const price = priceArray.map(p => p.text || '').join('');
-        const oriPrice = exContent.oriPrice || '';
-        const seller = exContent.userNickName || '';
-        const viewNum = '';
-        const publishTime = clickParam.publishTime ? new Date(parseInt(clickParam.publishTime)).toLocaleString('zh-CN') : '';
-        const area = exContent.area || '';
-        const freeShip = clickParam.tag?.includes('freeship') || clickParam.tagname?.includes('包邮') ? '是' : '否';
-        
-        // 提取商品标签 - 从fishTags的各个区域(r1,r2,r3等)的tagList中提取data.content
+        if (!itemId) return;
+
+        // 从 fishTags提取想要人数
         const fishTags = exContent.fishTags || {};
+        let wantCnt = 0;
+        Object.values(fishTags).forEach(region => {
+          const tagList = region?.tagList || [];
+          tagList.forEach(tag => {
+            const content = tag?.data?.content;
+            if (content && content.endsWith('人想要')) {
+              wantCnt = parseInt(content.replace('人想要', '')) || 0;
+            }
+          });
+        });
+
+        // 提取商品标签
         const tagContents = [];
         Object.values(fishTags).forEach(region => {
           const tagList = region?.tagList || [];
           tagList.forEach(tag => {
             const content = tag?.data?.content;
-            if (content) {
+            if (content && !content.endsWith('人想要')) {
+              // 标签里如果包含freeShippingIcon，替换成包邮
+            if (content && content.includes('freeShippingIcon')) {
+              tagContents.push('包邮');
+            } else {
               tagContents.push(content);
             }
+            }
+            
           });
         });
-        
-        // 从标签中提取"人想要"数据作为想要人数
-        const wantTagMatch = tagContents.find(c => c.endsWith('人想要'));
-        const wantNum = wantTagMatch ? wantTagMatch.replace('人想要', '') : '';
-        
-        // 标签名称替换映射
-        const tagNameMap = {
-          'nfrIcon': '描述不符包邮退',
-          'freeShippingIcon': '包邮'
-        };
-        
-        // 过滤掉"人想要"标签，并替换特定标签名称
-        const processedTags = tagContents
-          .filter(c => !c.endsWith('人想要'))
-          .map(c => tagNameMap[c] || c);
-        
-        // 去重后用、分隔
-        const fishTagsStr = [...new Set(processedTags)].join('、');
-        
+        const tagsStr = [...new Set(tagContents)].join('、');
+
+        // 判断包邮
+        const isFreeShip = clickParam.tag?.includes('freeship') ||
+                          clickParam.tagname?.includes('包邮') ||
+                          exContent.fishTags?.r1?.tagList?.some(t => t.data?.content === '包邮');
+
+        // 获取封面图
         const picUrl = exContent.picUrl || '';
-        const detailUrl = `https://www.goofish.com/item?id=${itemId}`;
         
-        // 生成记录ID - 对关键字段做MD5哈希防止重复
-        const recordData = `${title}|${price}|${seller}|${itemId}`;
-        const recordId = md5(recordData);
+        // 提取价格（字符串和数值）
+        const priceStr = (exContent.price || []).map(p => p.text || '').join('');
+        const priceNumber = parseFloat(priceStr.replace(/[^\d.]/g, '')) || 0;
         
-        // 根据recordId去重
-        if (seenRecordIds.has(recordId)) {
-          return; // 跳过重复记录
-        }
-        seenRecordIds.add(recordId);
+        // 提取原价（字符串和数值）
+        const originalPriceStr = exContent.oriPrice || '';
+        const originalPriceNumber = parseFloat(originalPriceStr.replace(/[^\d.]/g, '')) || 0;
+        
+        // 提取发布时间
+        const publishTimeMs = clickParam.publishTime ? parseInt(clickParam.publishTime) : 0;
+        const publishTimeStr = publishTimeMs ? new Date(publishTimeMs).toLocaleString('zh-CN') : '';
 
-        // 构建CSV行
-        const row = [
-          recordId,
-          `"${title}"`,
-          price,
-          oriPrice,
-          seller,
-          wantNum,
-          viewNum,
-          publishTime,
-          area,
-          freeShip,
-          `"${fishTagsStr}"`,
-          picUrl,
-          detailUrl
-        ];
+        // 构建组合键：商品ID + 想要数 + 价格
+        const compositeKey = `${itemId}_${wantCnt}_${priceStr}`;
 
-        csvContent += row.join(',') + '\n';
+        // 构建符合 PRODUCT_SCHEMA 的标准数据结构
+        processedMap.set(compositeKey, {
+          // 基本信息
+          itemId: itemId,
+          title: exContent.title || '',
+          
+          // 价格相关（字符串和数值两种形式）
+          price: priceStr,
+          priceNumber: priceNumber,
+          originalPrice: originalPriceStr,
+          originalPriceNumber: originalPriceNumber,
+          
+          // 其他字段
+          wantCnt: wantCnt,
+          
+          // 时间相关（字符串和时间戳两种形式）
+          publishTime: publishTimeStr,
+          publishTimeMs: publishTimeMs,
+          captureTime: currentTimeStr,
+          captureTimeMs: currentTime,
+          
+          // 卖家信息
+          sellerNick: exContent.userNickName || '',
+          sellerCity: exContent.area || '',
+          
+          // 其他属性
+          freeShip: isFreeShip ? '是' : '否',
+          tags: tagsStr,
+          
+          // URL
+          coverUrl: normalizeUrl(picUrl),
+          detailUrl: normalizeUrl(`https://www.goofish.com/item?id=${itemId}`)
+        });
       } catch (error) {
-        console.error('[闲鱼采集] 处理商品数据出错:', error);
+        console.error('[闲鱼采集] 处理列表数据出错:', error);
       }
     });
   });
 
-  return csvContent;
+  return Array.from(processedMap.values());
 }
+
+// URL 规范化函数：处理 // 开头的协议相对地址
+function normalizeUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+
+  let trimmed = url.trim();
+
+  // 如果是 // 开头，补上 https:
+  if (trimmed.startsWith('//')) {
+    trimmed = 'https:' + trimmed;
+  }
+
+  return trimmed;
+}
+
+
 
 // 生成请求记录CSV数据
 function generateRequestsCSV(logs) {
@@ -593,57 +648,88 @@ function generateRequestsCSV(logs) {
   return csvContent;
 }
 
-// 生成详情CSV数据
-function generateDetailCSV(details) {
-  if (!details || details.length === 0) {
-    throw new Error('没有详情数据可导出');
+
+
+// ==================== CSV生成函数 ====================
+
+// 生成商品CSV数据（使用 PRODUCT_SCHEMA 自动生成）
+function generateProductCSV(processedData) {
+  if (!processedData || processedData.length === 0) {
+    throw new Error('没有商品数据可导出');
   }
 
-  // CSV表头
+  // 使用 SCHEMA 生成 CSV 表头
+  const headers = getCSVHeaders();
+  let csvContent = headers.join(',') + '\n';
+
+  // 获取需要导出的字段（按 csvOrder 排序）
+  const fields = Object.entries(PRODUCT_SCHEMA)
+    .filter(([key, config]) => config.csvOrder > 0)
+    .sort((a, b) => a[1].csvOrder - b[1].csvOrder)
+    .map(([key, config]) => key);
+
+  // 遍历所有数据
+  processedData.forEach(item => {
+    try {
+      const row = fields.map(fieldKey => {
+        const value = item[fieldKey];
+        const config = PRODUCT_SCHEMA[fieldKey];
+        
+        // 根据类型处理值
+        if (value === null || value === undefined) {
+          return '';
+        } else if (config.type === 'number') {
+          return value;
+        } else {
+          // 字符串类型，需要转义引号
+          return `"${String(value).replace(/"/g, '""')}"`;
+        }
+      });
+
+      csvContent += row.join(',') + '\n';
+    } catch (error) {
+      console.error('[闲鱼采集] 处理商品数据出错:', error, item);
+    }
+  });
+
+  return csvContent;
+}
+
+// 生成商家CSV数据
+function generateSellerCSV(processedData) {
+  if (!processedData || processedData.length === 0) {
+    throw new Error('没有商家数据可导出');
+  }
+
+  // CSV表头（移除详情相关字段）
   const headers = [
-    '商品ID', '标题', '价格', '原价', '想要人数', '浏览量', '收藏数',
-    '发布时间', '商品状态', '库存', '运费', '包邮',
-    '卖家ID', '卖家昵称', '卖家城市', '卖家头像', '注册天数', '已售件数',
-    '回复率', '回复时长', '卖家签名', '图片', '详情URL', '描述', '采集时间'
+    '商家名称', '地点'
   ];
 
   let csvContent = headers.join(',') + '\n';
 
-  // 遍历所有详情数据
-  details.forEach(detail => {
+  // 用于去重的商家名称集合
+  const seenSellerNicks = new Set();
+
+  // 遍历所有数据，提取唯一商家
+  processedData.forEach(item => {
     try {
+      const sellerNick = item.sellerNick;
+      // 如果没有商家名称，跳过
+      if (!sellerNick || seenSellerNicks.has(sellerNick)) {
+        return; // 跳过重复商家
+      }
+      seenSellerNicks.add(sellerNick);
+
       // 构建CSV行
       const row = [
-        detail.itemId,
-        `"${(detail.title || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
-        detail.price,
-        detail.originalPrice,
-        detail.wantCnt,
-        detail.browseCnt,
-        detail.collectCnt,
-        detail.publishTime,
-        `"${detail.itemStatus}"`,
-        detail.quantity,
-        detail.transportFee,
-        `"${detail.freeShip}"`,
-        detail.sellerId,
-        `"${(detail.sellerNick || '').replace(/"/g, '""')}"`,
-        `"${detail.sellerCity}"`,
-        detail.sellerAvatar,
-        detail.sellerRegDay,
-        detail.hasSoldNum,
-        `"${detail.replyRatio24h}"`,
-        `"${detail.replyInterval}"`,
-        `"${(detail.sellerSignature || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
-        `"${detail.images}"`,
-        detail.detailUrl,
-        `"${(detail.desc || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
-        detail.captureTime
+        `"${(item.sellerNick || '').replace(/"/g, '""')}"`,
+        `"${item.sellerCity || ''}"`
       ];
 
       csvContent += row.join(',') + '\n';
     } catch (error) {
-      console.error('[闲鱼采集] 处理详情数据出错:', error);
+      console.error('[闲鱼采集] 处理商家数据出错:', error, item);
     }
   });
 
@@ -651,3 +737,510 @@ function generateDetailCSV(details) {
 }
 
 console.log('[闲鱼采集] Background初始化完成，等待数据...');
+
+// ==================== 飞书 API 模块 ====================
+
+// 飞书 API 基础配置
+const FEISHU_API_BASE = 'https://open.feishu.cn';
+
+// 飞书配置缓存
+let feishuConfig = {
+  appId: '',
+  appSecret: '',
+  spreadsheetToken: '',
+  productTableId: '',
+  sellerTableId: '',
+  enabled: false
+};
+
+// 租户访问令牌缓存
+let tenantAccessToken = null;
+let tokenExpireTime = 0;
+
+// 从 storage 加载飞书配置
+chrome.storage.local.get(['appId', 'appSecret', 'spreadsheetToken', 'productTableId', 'sellerTableId', 'enabled'], (result) => {
+  feishuConfig = {
+    appId: result.appId || '',
+    appSecret: result.appSecret || '',
+    spreadsheetToken: result.spreadsheetToken || '',
+    productTableId: result.productTableId || '',
+    sellerTableId: result.sellerTableId || '',
+    enabled: result.enabled || false
+  };
+  console.log('[闲鱾采集-飞书] 配置已加载:', feishuConfig);
+  console.log('[闲鱾采集-飞书] Storage 原始数据:', result);
+});
+
+// 监听 storage 变化，实时更新配置
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local') {
+    // 检查飞书配置是否变化
+    const feishuKeys = ['appId', 'appSecret', 'spreadsheetToken', 'productTableId', 'sellerTableId', 'enabled'];
+    let hasFeishuChange = false;
+    
+    feishuKeys.forEach(key => {
+      if (changes[key]) {
+        feishuConfig[key] = changes[key].newValue || '';
+        hasFeishuChange = true;
+      }
+    });
+    
+    if (hasFeishuChange) {
+      console.log('[闲鱾采集-飞书] 配置已更新:', feishuConfig);
+    }
+  }
+});
+
+// 获取租户访问令牌
+async function getTenantAccessToken() {
+  // 如果令牌未过期,直接返回
+  if (tenantAccessToken && Date.now() < tokenExpireTime) {
+    return tenantAccessToken;
+  }
+
+  try {
+    const response = await fetch(`${FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        app_id: feishuConfig.appId,
+        app_secret: feishuConfig.appSecret
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.code !== 0) {
+      console.error('[闲鱼采集-飞书] 获取访问令牌失败:', data);
+      throw new Error(data.msg || '获取访问令牌失败');
+    }
+
+    tenantAccessToken = data.tenant_access_token;
+    // 提前5分钟过期
+    tokenExpireTime = Date.now() + (data.expire - 300) * 1000;
+
+    console.log('[闲鱼采集-飞书] 访问令牌已更新');
+    return tenantAccessToken;
+  } catch (error) {
+    console.error('[闲鱼采集-飞书] 获取访问令牌异常:', error);
+    throw error;
+  }
+}
+
+// 测试飞书连接
+async function testFeishuConnection(config) {
+  try {
+    const testConfig = { ...feishuConfig, ...config };
+
+    const response = await fetch(`${FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        app_id: testConfig.appId,
+        app_secret: testConfig.appSecret
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.code !== 0) {
+      return { success: false, error: data.msg || '认证失败' };
+    }
+
+    // 如果配置了表格,也测试表格访问
+    if (testConfig.spreadsheetToken && testConfig.productTableId) {
+      const tableResponse = await fetch(
+        `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${testConfig.spreadsheetToken}/tables/${testConfig.productTableId}/records?page_size=1`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${data.tenant_access_token}`
+          }
+        }
+      );
+
+      const tableData = await tableResponse.json();
+
+      if (tableData.code !== 0) {
+        return { success: false, error: `表格访问失败: ${tableData.msg}` };
+      }
+    }
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// 商品表字段配置（从 PRODUCT_SCHEMA 自动生成）
+const PRODUCT_FIELD_CONFIGS = getFeishuFieldConfigs();
+
+// 定义商家表字段配置（移除详情相关字段）
+const SELLER_FIELD_CONFIGS = [
+  { name: '商家名称', type: 1 },      // 文本
+  { name: '地点', type: 1 }          // 文本
+];
+
+// 获取表格字段列表
+async function getTableFields(tableId) {
+  const token = await getTenantAccessToken();
+  
+  try {
+    const response = await fetch(
+      `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${feishuConfig.spreadsheetToken}/tables/${tableId}/fields`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      }
+    );
+
+    const data = await response.json();
+    
+    if (data.code !== 0) {
+      console.error('[闲鱼采集-飞书] 获取字段列表失败:', data);
+      throw new Error(data.msg || '获取字段列表失败');
+    }
+
+    return data.data?.items || [];
+  } catch (error) {
+    console.error('[闲鱼采集-飞书] 获取字段列表异常:', error);
+    throw error;
+  }
+}
+
+// 创建表格字段
+async function createTableField(tableId, fieldConfig) {
+  const token = await getTenantAccessToken();
+  
+  try {
+    const response = await fetch(
+      `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${feishuConfig.spreadsheetToken}/tables/${tableId}/fields`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          field_name: fieldConfig.name,
+          type: fieldConfig.type
+        })
+      }
+    );
+
+    const data = await response.json();
+    
+    if (data.code !== 0) {
+      console.error(`[闲鱼采集-飞书] 创建字段失败 [${fieldConfig.name}]:`, data);
+      throw new Error(data.msg || `创建字段失败: ${fieldConfig.name}`);
+    }
+
+    console.log(`[闲鱼采集-飞书] 成功创建字段: ${fieldConfig.name}`);
+    return data.data?.field;
+  } catch (error) {
+    console.error(`[闲鱼采集-飞书] 创建字段异常 [${fieldConfig.name}]:`, error);
+    throw error;
+  }
+}
+
+// 确保表格字段存在
+async function ensureTableFields(tableId, fieldConfigs) {
+  console.log(`[闲鱼采集-飞书] 开始检查表格字段...`);
+  
+  // 获取现有字段
+  const existingFields = await getTableFields(tableId);
+  const existingFieldNames = new Set(existingFields.map(f => f.field_name));
+  
+  console.log(`[闲鱼采集-飞书] 现有字段:`, Array.from(existingFieldNames));
+  
+  // 找出缺失的字段
+  const missingFields = fieldConfigs.filter(config => !existingFieldNames.has(config.name));
+  
+  if (missingFields.length === 0) {
+    console.log(`[闲鱼采集-飞书] 所有字段已存在`);
+    return;
+  }
+  
+  console.log(`[闲鱼采集-飞书] 需要创建 ${missingFields.length} 个字段:`, missingFields.map(f => f.name));
+  
+  // 逐个创建缺失的字段
+  for (const fieldConfig of missingFields) {
+    await createTableField(tableId, fieldConfig);
+    // 避免速率限制
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  
+  console.log(`[闲鱼采集-飞书] 字段创建完成`);
+}
+
+// 转换商品数据为飞书记录格式（使用 PRODUCT_SCHEMA 自动转换）
+function convertProductToFeishuRecord(item) {
+  const fields = {
+    // 添加关键字字段（不在 schema 中）
+    '关键字': String(currentKeyword || '')
+  };
+  
+  // 遍历 PRODUCT_SCHEMA，自动转换所有字段
+  Object.entries(PRODUCT_SCHEMA).forEach(([key, config]) => {
+    const fieldName = config.feishuField || config.label;
+    const value = item[key];
+    
+    // 根据飞书字段类型转换数据
+    if (config.feishuType === 1) {
+      // 文本类型
+      fields[fieldName] = String(value || '');
+    } else if (config.feishuType === 2) {
+      // 数字类型
+      fields[fieldName] = Number(value) || 0;
+    } else if (config.feishuType === 5) {
+      // 日期类型（时间戳）
+      fields[fieldName] = value || null;
+    } else if (config.feishuType === 15) {
+      // URL类型
+      const url = normalizeUrl(value || '');
+      fields[fieldName] = url ? { link: url } : null;
+    } else {
+      // 默认处理
+      fields[fieldName] = value;
+    }
+  });
+  
+  return { fields };
+}
+
+// 转换商家数据为飞书记录格式（移除详情相关字段）
+function convertSellerToFeishuRecord(item) {
+  return {
+    fields: {
+      '商家名称': String(item.sellerNick || ''),
+      '地点': String(item.sellerCity || '')
+    }
+  };
+}
+
+// 获取表格中已存在的商品组合键（用于去重）
+async function getExistingItemIds(tableId) {
+  const token = await getTenantAccessToken();
+  const existingKeys = new Set();
+  
+  try {
+    let hasMore = true;
+    let pageToken = undefined;
+    
+    while (hasMore) {
+      const url = new URL(`${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${feishuConfig.spreadsheetToken}/tables/${tableId}/records`);
+      url.searchParams.append('page_size', '500');
+      url.searchParams.append('field_names', '["商品ID", "想要人数", "价格"]');
+      if (pageToken) {
+        url.searchParams.append('page_token', pageToken);
+      }
+      
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      const data = await response.json();
+      
+      if (data.code !== 0) {
+        console.error('[闲鱼采集-飞书] 获取已存在商品失败:', data);
+        throw new Error(data.msg || '获取已存在商品失败');
+      }
+      
+      // 收集商品组合键（商品ID + 想要数 + 价格）
+      (data.data?.items || []).forEach(item => {
+        const itemId = item.fields?.['商品ID'];
+        const wantCnt = item.fields?.['想要人数'] || 0;
+        const price = item.fields?.['价格'] || 0;
+        if (itemId) {
+          const compositeKey = `${itemId}_${wantCnt}_${price}`;
+          existingKeys.add(compositeKey);
+        }
+      });
+      
+      hasMore = data.data?.has_more || false;
+      pageToken = data.data?.page_token;
+      
+      // 避免速率限制
+      if (hasMore) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    console.log(`[闲鱼采集-飞书] 已存在的商品组合键数量: ${existingKeys.size}`);
+    return existingKeys;
+  } catch (error) {
+    console.error('[闲鱼采集-飞书] 获取已存在商品异常:', error);
+    // 如果获取失败，返回空集合，继续执行（不影响主流程）
+    return new Set();
+  }
+}
+
+// 批量创建记录
+async function batchCreateRecords(tableId, records) {
+  const token = await getTenantAccessToken();
+
+  // 飞书 API 每次最多创建 500 条记录
+  const batchSize = 500;
+  const results = [];
+
+  for (let i = 0; i < records.length; i += batchSize) {
+    const batch = records.slice(i, i + batchSize);
+
+    try {
+      const url = `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${feishuConfig.spreadsheetToken}/tables/${tableId}/records/batch_create`;
+      console.log('[闲鱼采集-飞书] 请求 URL:', url);
+      console.log('[闲鱼采集-飞书] 请求数据数量:', batch.length);
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          records: batch
+        })
+      });
+
+      console.log('[闲鱼采集-飞书] HTTP 响应状态:', response.status, response.statusText);
+
+      const data = await response.json();
+      console.log('[闲鱼采集-飞书] 响应数据:', data);
+
+      if (data.code !== 0) {
+        console.error('[闲鱼采集-飞书] 批量创建记录失败:', data);
+        throw new Error(data.msg || '批量创建记录失败');
+      }
+
+      results.push(...(data.data?.records || []));
+      console.log(`[闲鱼采集-飞书] 成功创建 ${batch.length} 条记录`);
+
+      // 速率限制: 每次请求后等待 200ms
+      if (i + batchSize < records.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    } catch (error) {
+      console.error('[闲鱼采集-飞书] 批量创建记录异常:', error);
+      throw error;
+    }
+  }
+
+  return results;
+}
+
+// 发送数据到飞书
+async function sendToFeishu(processedData) {
+  if (!feishuConfig.enabled) {
+    return { success: false, error: '飞书同步未启用' };
+  }
+
+  if (!feishuConfig.appId || !feishuConfig.appSecret) {
+    return { success: false, error: '请先配置飞书 App ID 和 App Secret' };
+  }
+
+  if (!feishuConfig.spreadsheetToken || !feishuConfig.productTableId) {
+    return { success: false, error: '请先配置飞书表格 Token 和商品表 ID' };
+  }
+
+  try {
+    // 自动创建商品表字段
+    console.log('[闲鱼采集-飞书] 开始检查并创建商品表字段...');
+    await ensureTableFields(feishuConfig.productTableId, PRODUCT_FIELD_CONFIGS);
+
+    console.log('[闲鱼采集-飞书] 当前关键词:', currentKeyword);
+    console.log('[闲鱼采集-飞书] 处理后数据量:', processedData.length);
+    
+    // 打印前3条数据，检查是否有空值
+    if (processedData.length > 0) {
+      console.log('[闲鱼采集-飞书] 第1条数据:', {
+        itemId: processedData[0].itemId,
+        title: processedData[0].title?.substring(0, 20),
+        price: processedData[0].price,
+        hasAllFields: !!(processedData[0].itemId && processedData[0].title)
+      });
+    }
+
+    const productRecords = processedData
+      .filter(item => {
+        // 过滤掉关键字段为空的记录
+        const hasValidData = item.itemId && item.title;
+        if (!hasValidData) {
+          console.warn('[闲鱼采集-飞书] 过滤空记录:', item);
+        }
+        return hasValidData;
+      })
+      .map(convertProductToFeishuRecord);
+
+    console.log('[闲鱼采集-飞书] 过滤后的记录数:', productRecords.length);
+
+    // 获取已存在的商品组合键，用于去重
+    console.log('[闲鱼采集-飞书] 开始获取已存在的商品组合键...');
+    const existingItemKeys = await getExistingItemIds(feishuConfig.productTableId);
+    
+    // 过滤掉已存在的商品（根据组合键）
+    const newProductRecords = productRecords.filter(record => {
+      const itemId = record.fields['商品ID'];
+      const wantCnt = record.fields['想要人数'] || 0;
+      const priceNum = record.fields['价格'] || 0;
+      // 注意：这里需要使用价格数值构建组合键，但在获取已存在记录时也需要使用数值
+      const compositeKey = `${itemId}_${wantCnt}_${priceNum}`;
+      const isNew = !existingItemKeys.has(compositeKey);
+      if (!isNew) {
+        console.log(`[闲鱼采集-飞书] 跳过已存在的商品: ${compositeKey}`);
+      }
+      return isNew;
+    });
+    
+    console.log(`[闲鱼采集-飞书] 去重后待创建的记录数: ${newProductRecords.length}/${productRecords.length}`);
+    
+    // 如果没有新记录，直接返回
+    if (newProductRecords.length === 0) {
+      console.log('[闲鱼采集-飞书] 没有新记录需要创建');
+      return {
+        success: true,
+        productCount: 0,
+        sellerCount: 0,
+        message: '所有商品已存在，未添加新记录'
+      };
+    }
+
+    // 创建商品记录
+    const productResults = await batchCreateRecords(feishuConfig.productTableId, newProductRecords);
+
+    let sellerResults = [];
+    if (feishuConfig.sellerTableId) {
+      // 自动创建商家表字段
+      console.log('[闲鱼采集-飞书] 开始检查并创建商家表字段...');
+      await ensureTableFields(feishuConfig.sellerTableId, SELLER_FIELD_CONFIGS);
+
+      // 去重商家记录
+      const sellerMap = new Map();
+      processedData.forEach(item => {
+        if (item.sellerNick && !sellerMap.has(item.sellerNick)) {
+          sellerMap.set(item.sellerNick, item);
+        }
+      });
+
+      const sellerRecords = Array.from(sellerMap.values()).map(convertSellerToFeishuRecord);
+      sellerResults = await batchCreateRecords(feishuConfig.sellerTableId, sellerRecords);
+    }
+
+    return {
+      success: true,
+      productCount: productResults.length,
+      sellerCount: sellerResults.length
+    };
+  } catch (error) {
+    console.error('[闲鱼采集-飞书] 发送数据失败:', error);
+    return { success: false, error: error.message };
+  }
+}

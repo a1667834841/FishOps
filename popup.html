@@ -5,307 +5,144 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>闲鱼数据采集助手</title>
   <style>
-    body {
-      width: 420px;
-      padding: 0;
-      font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+    * {
+      box-sizing: border-box;
       margin: 0;
+      padding: 0;
+    }
+    body {
+      width: 400px;
+      font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
       background: #f5f7fa;
       color: #333;
-      letter-spacing: 0.5px;
     }
+
+    /* 主容器 */
     .container {
       background: white;
-      border-radius: 0;
-      padding: 0;
-      box-shadow: none;
+      padding: 16px;
     }
-    h1 {
-      margin: 0;
-      font-size: 18px;
+
+    /* 顶部标题 */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .header h1 {
+      font-size: 16px;
       font-weight: 600;
       color: #2c3e50;
-      text-align: center;
-      padding: 20px;
-      background: linear-gradient(135deg, #ffe60f 0%, #ffed4e 100%);
-      border-bottom: 1px solid #f0f0f0;
     }
-    .status {
-      background: white;
-      padding: 16px 20px;
-      margin: 0;
-      border-bottom: 1px solid #f0f0f0;
-      display: flex;
-      align-items: center;
-      justify-content: space-around;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-    .status-item {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-      font-size: 12px;
-    }
-    .status-item:last-child {
-      flex-basis: 100%;
-      margin-top: 4px;
-    }
-    .status-label {
-      color: #999;
-      font-weight: 400;
+    .header .badge {
       font-size: 11px;
-    }
-    .status-value {
-      color: #ff9800;
-      font-weight: 600;
-      font-size: 18px;
-    }
-    .info-box {
-      background: #fffbea;
-      border: none;
-      border-radius: 0;
-      padding: 0;
-      margin: 0;
-      font-size: 13px;
-      color: #856404;
-      line-height: 1.6;
-      overflow: hidden;
-      transition: all 0.3s ease;
-    }
-    .info-toggle {
-      background: #fffbea;
-      padding: 12px 20px;
-      cursor: pointer;
-      user-select: none;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid #f0f0f0;
-      transition: background 0.2s;
-    }
-    .info-toggle:hover {
-      background: #ffe60f;
-    }
-    .info-toggle-icon {
-      transition: transform 0.3s ease;
-      font-size: 12px;
-      color: #ff9800;
-    }
-    .info-toggle-icon.expanded {
-      transform: rotate(180deg);
-    }
-    .info-content {
-      max-height: 0;
-      overflow: hidden;
-      transition: max-height 0.3s ease;
-      padding: 0 20px;
-      background: white;
-    }
-    .info-content.expanded {
-      max-height: 200px;
-      padding: 12px 20px;
-    }
-    .info-box strong {
-      color: #d35400;
-    }
-    .config-box {
-      background: white;
-      border: none;
-      border-radius: 0;
-      padding: 20px;
-      margin: 0;
-      border-bottom: 1px solid #f0f0f0;
-    }
-    .config-item {
-      display: flex;
-      align-items: center;
-      margin-bottom: 16px;
-      font-size: 14px;
-    }
-    .config-item:last-child {
-      margin-bottom: 0;
-    }
-    .config-item label {
-      flex: 0 0 90px;
-      font-weight: 500;
-      color: #555;
-      font-size: 13px;
-    }
-    .config-item input {
-      flex: 1;
-      padding: 10px 12px;
-      border: none;
-      border-bottom: 2px solid #e0e0e0;
-      border-radius: 0;
-      font-size: 14px;
-      text-align: left;
-      background: #fafafa;
-      transition: all 0.3s;
-    }
-    .config-item input:focus {
-      outline: none;
-      border-bottom-color: #ffe60f;
-      background: white;
-    }
-    .config-item .unit {
-      flex: 0 0 30px;
-      margin-left: 8px;
       color: #999;
-      font-size: 12px;
     }
-    .progress-box {
-      background: #fff9e6;
-      border: 1px solid #ffc107;
-      border-radius: 6px;
-      padding: 15px;
-      margin-bottom: 15px;
-    }
-    .progress-info {
+
+    /* 状态栏 */
+    .status-bar {
+      height: 32px;
+      background: #fafafa;
+      border-radius: 4px;
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      margin-bottom: 8px;
-      font-size: 14px;
-      font-weight: 500;
-    }
-    .progress-percent {
-      color: #4a90e2;
-      font-size: 16px;
-      font-weight: bold;
-    }
-    .progress-bar {
-      height: 20px;
-      background: #e0e0e0;
-      border-radius: 10px;
-      overflow: hidden;
-      margin-bottom: 8px;
-    }
-    .progress-fill {
-      height: 100%;
-      background: linear-gradient(90deg, #4a90e2, #667eea);
-      transition: width 0.3s ease;
-      border-radius: 10px;
-      width: 0%;
-    }
-    .progress-detail {
-      display: flex;
-      justify-content: space-between;
-      font-size: 12px;
-      color: #666;
-    }
-    .progress-detail strong {
-      color: #4a90e2;
-    }
-    .button-group {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      padding: 0 12px;
       gap: 12px;
-      padding: 20px;
-      background: white;
-    }
-    .button-group.single-row {
-      grid-template-columns: repeat(4, 1fr);
-    }
-    button {
-      padding: 14px 12px;
-      border: none;
-      border-radius: 8px;
       font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      margin-bottom: 8px;
     }
-    button:active {
-      transform: scale(0.98);
-    }
-    .btn-start {
-      background: linear-gradient(135deg, #ffe60f 0%, #ffed4e 100%);
-      color: #333;
-      font-weight: 600;
-      grid-column: span 2;
-    }
-    .btn-start:hover {
-      background: linear-gradient(135deg, #ffd700 0%, #ffe60f 100%);
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(255, 230, 15, 0.4);
-    }
-    .btn-pause {
-      background: #e64646;
-      color: white;
-    }
-    .btn-pause:hover {
-      background: #f06969;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 8px rgba(255, 152, 0, 0.25);
-    }
-    .btn-stop {
-      background: white;
-      color: #757575;
-      border: 1px solid #e0e0e0;
-    }
-    .btn-stop:hover {
-      background: #f5f5f5;
-      border-color: #bdbdbd;
-      transform: translateY(-1px);
-    }
-    .btn-success {
-      background: white;
-      color: #28a745;
-      border: 1px solid #28a745;
-    }
-    .btn-success:hover {
-      background: #28a745;
-      color: white;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 8px rgba(40, 167, 69, 0.25);
-    }
-    .btn-primary {
-      background: white;
-      color: #ff9800;
-      border: 1px solid #ff9800;
-    }
-    .btn-primary:hover {
-      background: #ff9800;
-      color: white;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 8px rgba(255, 152, 0, 0.25);
-    }
-    .btn-danger {
-      background: white;
-      color: #f44336;
-      border: 1px solid #f44336;
-    }
-    .btn-danger:hover {
-      background: #f44336;
-      color: white;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 8px rgba(244, 67, 54, 0.25);
-    }
-    .indicator {
-      display: inline-block;
+    .status-bar .indicator {
       width: 6px;
       height: 6px;
       border-radius: 50%;
       background: #4caf50;
-      margin-right: 4px;
       animation: pulse 2s infinite;
     }
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.5; }
     }
-    .version {
-      text-align: center;
-      color: #bbb;
-      font-size: 11px;
-      padding: 16px 20px;
-      background: #fafafa;
-      margin: 0;
+    .status-bar .status-text {
+      color: #666;
     }
-    /* Toast 提示样式 */
+    .status-bar .status-text span {
+      color: #ff9800;
+      font-weight: 600;
+      margin: 0 4px;
+    }
+
+    /* 操作栏 */
+    .action-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 40px;
+    }
+
+    /* 输入框 */
+    .keyword-input {
+      flex: 1;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .keyword-input:focus {
+      border-color: #ffe60f;
+    }
+    .keyword-input::placeholder {
+      color: #bbb;
+    }
+
+    /* 按钮 */
+    .btn {
+      height: 32px;
+      padding: 0 16px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: white;
+      color: #666;
+      white-space: nowrap;
+    }
+    .btn:hover {
+      border-color: #bbb;
+      background: #fafafa;
+    }
+    .btn:active {
+      transform: scale(0.98);
+    }
+    .btn-primary {
+      border-color: #ffe60f;
+      background: linear-gradient(135deg, #ffe60f 0%, #ffed4e 100%);
+      color: #333;
+      font-weight: 500;
+    }
+    .btn-primary:hover {
+      border-color: #ffd700;
+      background: linear-gradient(135deg, #ffd700 0%, #ffe60f 100%);
+      box-shadow: 0 2px 8px rgba(255, 230, 15, 0.3);
+    }
+    .btn-danger {
+      border: none;
+      background: transparent;
+      color: #f44336;
+    }
+    .btn-danger:hover {
+      background: #fff5f5;
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Toast 提示 */
     .toast {
       position: fixed;
       top: 20px;
@@ -313,12 +150,9 @@
       transform: translateX(-50%) translateY(-100px);
       background: rgba(0, 0, 0, 0.85);
       color: white;
-      padding: 12px 24px;
-      border-radius: 8px;
+      padding: 10px 20px;
+      border-radius: 6px;
       font-size: 13px;
-      line-height: 1.6;
-      max-width: 320px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
       z-index: 10000;
       opacity: 0;
       transition: all 0.3s ease;
@@ -337,11 +171,8 @@
     .toast.warning {
       background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%);
     }
-    .toast.info {
-      background: linear-gradient(135deg, #ffe60f 0%, #ffed4e 100%);
-      color: #333;
-    }
-    /* 确认对话框样式 */
+
+    /* 确认对话框 */
     .confirm-dialog {
       position: fixed;
       top: 0;
@@ -353,159 +184,156 @@
       align-items: center;
       justify-content: center;
       z-index: 10001;
-      animation: fadeIn 0.2s;
     }
     .confirm-dialog.show {
       display: flex;
     }
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
     .confirm-content {
       background: white;
-      border-radius: 12px;
-      padding: 24px;
-      max-width: 320px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-      animation: slideDown 0.3s ease;
-    }
-    @keyframes slideDown {
-      from { transform: translateY(-20px); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
+      border-radius: 8px;
+      padding: 20px;
+      width: 280px;
     }
     .confirm-title {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 600;
-      color: #333;
-      margin-bottom: 12px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      margin-bottom: 10px;
     }
     .confirm-message {
+      font-size: 13px;
       color: #666;
-      font-size: 14px;
+      margin-bottom: 16px;
       line-height: 1.6;
-      margin-bottom: 20px;
     }
     .confirm-buttons {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       justify-content: flex-end;
     }
     .confirm-btn {
-      padding: 8px 20px;
-      border: none;
-      border-radius: 6px;
+      padding: 6px 16px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
       font-size: 13px;
       cursor: pointer;
-      transition: all 0.2s;
+      background: white;
     }
     .confirm-btn-cancel {
-      background: #f5f5f5;
       color: #666;
-    }
-    .confirm-btn-cancel:hover {
-      background: #e0e0e0;
     }
     .confirm-btn-confirm {
       background: #f44336;
       color: white;
+      border-color: #f44336;
     }
-    .confirm-btn-confirm:hover {
-      background: #d32f2f;
+
+    /* 爬取进行中状态 */
+    .btn-primary.crawling {
+      background: linear-gradient(135deg, #e64646 0%, #f06969 100%);
+      border-color: #e64646;
+      color: white;
+    }
+    .btn-primary.crawling:hover {
+      background: linear-gradient(135deg, #d63636 0%, #e05959 100%);
+    }
+
+    /* 流量词列表 */
+    .suggest-words-list {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 6px;
+      overflow: hidden;
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+    .suggest-words-list:hover {
+      background: #f5f5f5;
+    }
+    .suggest-word-tag {
+      padding: 4px 10px;
+      background: #fff8e1;
+      border: 1px solid #ffe60f;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #333;
+      white-space: nowrap;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .suggest-word-more {
+      padding: 4px 10px;
+      background: #f5f5f5;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #999;
+      white-space: nowrap;
+      user-select: none;
+      flex-shrink: 0;
     }
   </style>
 </head>
 <body>
-  <!-- Toast 提示容器 -->
-  <div id="toastContainer"></div>
-  
+  <div class="container">
+    <!-- 头部 -->
+    <div class="header">
+      <h1>🐟 闲鱼数据采集</h1>
+      <span class="badge">v1.7.0</span>
+    </div>
+
+    <!-- 状态栏 -->
+    <div class="status-bar">
+      <span class="indicator"></span>
+      <span class="status-text">
+        运行中 · 已采 <span id="itemCount">0</span> 件 · 第 <span id="pageCount">0</span> 页
+      </span>
+    </div>
+
+    <!-- 操作栏 - 第一行 -->
+    <div class="action-bar">
+      <input type="text" class="keyword-input" id="keywordInput" placeholder="输入关键词...">
+      <button class="btn btn-primary" id="startCrawl">开始</button>
+    </div>
+
+    <!-- 操作栏 - 第二行 -->
+    <div class="action-bar">
+      <button class="btn" id="openConfig">配置</button>
+      <button class="btn" id="exportCSV">导出</button>
+      <button class="btn" id="sendFeishu">飞书</button>
+      <button class="btn btn-danger" id="clearData">清空</button>
+    </div>
+
+    <!-- 流量词展示区域 -->
+    <div id="suggestWordsContainer" style="display: none; margin-top: 12px;">
+      <div style="font-size: 12px; color: #999; margin-bottom: 6px;">流量词（点击复制全部）</div>
+      <div id="suggestWordsList" class="suggest-words-list" title="点击复制所有流量词"></div>
+      <div id="suggestWordsHidden" style="display: none;"></div>
+    </div>
+
+    <!-- 飞书状态 -->
+    <div id="feishuStatus" style="display: none; margin-top: 8px; padding: 8px 12px; background: #f0f9ff; border-radius: 4px; font-size: 12px; color: #1976d2;">
+      <span style="display: flex; align-items: center; gap: 6px;">
+        <span style="font-size: 14px;">📊</span>
+        <span id="feishuStatusText">正在发送到飞书...</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
   <!-- 确认对话框 -->
   <div id="confirmDialog" class="confirm-dialog">
     <div class="confirm-content">
-      <div class="confirm-title">
-        <span id="confirmIcon">⚠️</span>
-        <span id="confirmTitle">确认操作</span>
-      </div>
+      <div class="confirm-title" id="confirmTitle">确认操作</div>
       <div class="confirm-message" id="confirmMessage"></div>
       <div class="confirm-buttons">
         <button class="confirm-btn confirm-btn-cancel" id="confirmCancel">取消</button>
         <button class="confirm-btn confirm-btn-confirm" id="confirmOk">确定</button>
       </div>
     </div>
-  </div>
-
-  <div class="container">
-    <h1>🐟 闲鱼数据采集助手</h1>
-    
-    <div class="status">
-      <div class="status-item">
-        <span class="status-label">
-          <span class="indicator"></span>监听状态
-        </span>
-        <span class="status-value">运行中</span>
-      </div>
-      <div class="status-item">
-        <span class="status-label">采集页数</span>
-        <span class="status-value" id="pageCount">0</span>
-      </div>
-      <div class="status-item">
-        <span class="status-label">商品数量</span>
-        <span class="status-value" id="itemCount">0</span>
-      </div>
-      <div class="status-item">
-        <span class="status-label">最后采集时间 <span class="status-value" id="lastTime" style="font-size: 11px; color: #999;">无</span></span>
-       
-      </div>
-    </div>
-
-   <div class="info-box">
-      <div class="info-toggle" id="infoToggle">
-        <span style="font-weight: 500; color: #ff9800;">💡 使用快速入门</span>
-        <span class="info-toggle-icon" id="infoToggleIcon">🔽</span>
-      </div>
-      <div class="info-content" id="infoContent">
-
-        <strong>第一步：</strong>打开<a href="https://www.goofish.com/" target="_blank" rel="noopener noreferrer">闲鱼网页</a><br>
-        <strong>第二步 ：</strong>配置关键词和页数，点击"开始爬取"自动采集<br>
-        <span style="color: #999; font-size: 12px;">💾 采集完成后点击"导出CSV文件"</span>
-      </div>
-    </div>
-   
-    <div class="config-box">
-      <div class="config-item">
-        <label for="keywordInput">搜索关键词：</label>
-        <input type="text" id="keywordInput" placeholder="如：雨伞" />
-      </div>
-      <div class="config-item">
-        <label for="startPageInput">起始页码：</label>
-        <input type="number" id="startPageInput" value="1" min="1" />
-        <span class="unit">页</span>
-      </div>
-      <div class="config-item">
-        <label for="pageCountInput">采集页数：</label>
-        <input type="number" id="pageCountInput" value="3" min="1" max="50" />
-        <span class="unit">页</span>
-      </div>
-      <div class="config-item">
-        <label for="delayInput">间隔时间：</label>
-        <input type="number" id="delayInput" value="1500" min="500" max="10000" step="100" />
-        <span class="unit">毫秒</span>
-      </div>
-    </div>
-
-    <div class="button-group">
-      <button class="btn-start" id="startCrawl" style="grid-column: span 2;">🚀 开始爬取</button>
-    </div>
-    
-    <div class="button-group">
-      <button class="btn-success" id="exportCSV">📄 导出CSV</button>
-      <button class="btn-danger" id="clearData">🗑️ 清空数据</button>
-    </div>
-
-    <div class="version">v1.3.1 - 基础采集功能</div>
   </div>
 
   <script src="popup.js"></script>
