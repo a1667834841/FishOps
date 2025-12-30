@@ -150,6 +150,14 @@ let statistics = {
   lastCaptureTime: null
 };
 
+// 过滤条件配置
+let filterConfig = {
+  minWantCnt: 0,      // 最小想要人数
+  minPrice: 0,        // 最小价格
+  maxPrice: 0,        // 最大价格（0表示不限）
+  onlyFreeShip: false // 只看包邮
+};
+
 // 配置选项
 let config = {
   autoFetchDetail: false,  // 是否自动调用详情API
@@ -178,10 +186,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'API_DATA_CAPTURED') {
     const apiData = request.data;
     const resultList = apiData.response?.data?.resultList || [];
-
+  
     // 记录请求信息
     try {
-      // 处理协议相对URL（如 //h5api.m.goofish.com/...)
+      // 处理协议相对URL（如 //h5api.m.goofish.com/...）
       let fullUrl = apiData.url;
       if (fullUrl.startsWith('//')) {
         fullUrl = 'https:' + fullUrl;
@@ -191,7 +199,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       urlObj.searchParams.forEach((value, key) => {
         requestParams[key] = value;
       });
-
+  
       // 尝试解析请求体
       let parsedRequestBody = apiData.requestBody;
       if (typeof apiData.requestBody === 'string') {
@@ -201,7 +209,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           // 如果不是JSON，保持原样
         }
       }
-
+  
       requestLogs.push({
         timestamp: apiData.timestamp,
         captureTime: new Date(apiData.timestamp).toLocaleString(),
@@ -213,12 +221,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         response: apiData.response,
         itemCount: resultList.length
       });
-
+  
     } catch (error) {
       console.error('[闲鱼采集] 记录请求信息失败:', error);
     }
+  
+    // 打印当前过滤条件（首次采集时）
+    if (requestLogs.length === 1) {
+      console.log('[闲鱼采集] 当前过滤条件:', {
+        '最小想要人数': filterConfig.minWantCnt > 0 ? `>=${filterConfig.minWantCnt}人` : '不限制',
+        '最小价格': filterConfig.minPrice > 0 ? `>=${filterConfig.minPrice}元` : '不限制',
+        '最大价格': filterConfig.maxPrice > 0 ? `<=${filterConfig.maxPrice}元` : '不限制',
+        '只看包邮': filterConfig.onlyFreeShip ? '是' : '否'
+      });
+    }
 
-    // 过滤已采集的商品（根据商品ID+想要数+价格组合键去重）
+    // 过滤已采集的商品（根据商品ID+想要数+价格组合键去重）并应用过滤条件
     const newItems = resultList.filter(item => {
       const mainData = item.data?.item?.main;
       if (!mainData) return false;
@@ -242,11 +260,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
       
       // 提取价格
-      const price = (exContent.price || []).map(p => p.text || '').join('');
+      const priceStr = (exContent.price || []).map(p => p.text || '').join('');
+      const priceNumber = parseFloat(priceStr.replace(/[^\d.]/g, '')) || 0;
+      
+      // 判断包邮
+      const isFreeShip = clickParam.tag?.includes('freeship') ||
+                        clickParam.tagname?.includes('包邮') ||
+                        fishTags?.r1?.tagList?.some(t => t.data?.content === '包邮');
+      
+      // 应用过滤条件
+      // 1. 最小想要人数过滤
+      if (filterConfig.minWantCnt > 0 && wantCnt < filterConfig.minWantCnt) {
+        console.log(`[闲鱼采集] 过滤: 商品 ${itemId} 想要人数 ${wantCnt} < ${filterConfig.minWantCnt}`);
+        return false;
+      }
+      
+      // 2. 最小价格过滤
+      if (filterConfig.minPrice > 0 && priceNumber < filterConfig.minPrice) {
+        console.log(`[闲鱼采集] 过滤: 商品 ${itemId} 价格 ${priceNumber} < ${filterConfig.minPrice}`);
+        return false;
+      }
+      
+      // 3. 最大价格过滤
+      if (filterConfig.maxPrice > 0 && priceNumber > filterConfig.maxPrice) {
+        console.log(`[闲鱼采集] 过滤: 商品 ${itemId} 价格 ${priceNumber} > ${filterConfig.maxPrice}`);
+        return false;
+      }
+      
+      // 4. 只看包邮过滤
+      if (filterConfig.onlyFreeShip && !isFreeShip) {
+        console.log(`[闲鱼采集] 过滤: 商品 ${itemId} 不包邮`);
+        return false;
+      }
       
       // 构建组合键：商品ID + 想要数 + 价格
-      const compositeKey = `${itemId}_${wantCnt}_${price}`;
+      const compositeKey = `${itemId}_${wantCnt}_${priceStr}`;
       
+      // 去重检查
       if (capturedItemIds.has(compositeKey)) return false;
       
       capturedItemIds.add(compositeKey);
@@ -310,14 +360,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     capturedData = [];
     capturedItemIds = new Set(); // 清空去重组合键集合
     requestLogs = []; // 清空请求记录
-    currentKeyword = ''; // 清空关键词
+
+    // 重置统计信息
     statistics = {
       pageCount: 0,
       itemCount: 0,
       lastCaptureTime: null
     };
 
-    chrome.storage.local.clear(() => {
+    // 只删除采集数据和统计信息，保留配置和关键词
+    const keysToRemove = ['capturedData', 'capturedItemIds', 'requestLogs', 'statistics'];
+    chrome.storage.local.remove(keysToRemove, () => {
       if (chrome.runtime.lastError) {
         console.error('[闲鱼采集] 清空storage失败:', chrome.runtime.lastError);
         sendResponse({ success: false, error: chrome.runtime.lastError.message });
@@ -438,7 +491,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true; // 保持消息通道开启，用于异步响应
 });
 // 从 storage 恢复数据
-chrome.storage.local.get(['capturedData', 'capturedItemIds', 'requestLogs', 'statistics', 'config', 'currentKeyword'], (result) => {
+chrome.storage.local.get(['capturedData', 'capturedItemIds', 'requestLogs', 'statistics', 'config', 'currentKeyword', 'minWantCnt', 'minPrice', 'maxPrice', 'onlyFreeShip'], (result) => {
   if (result.capturedData) {
     capturedData = result.capturedData;
     console.log('[闲鱼采集] 从 storage恢复数据，数量:', capturedData.length);
@@ -463,6 +516,12 @@ chrome.storage.local.get(['capturedData', 'capturedItemIds', 'requestLogs', 'sta
     currentKeyword = result.currentKeyword;
     console.log('[闲鱼采集] 恢复关键词:', currentKeyword);
   }
+  // 恢复过滤条件配置
+  if (result.minWantCnt !== undefined) filterConfig.minWantCnt = result.minWantCnt;
+  if (result.minPrice !== undefined) filterConfig.minPrice = result.minPrice;
+  if (result.maxPrice !== undefined) filterConfig.maxPrice = result.maxPrice;
+  if (result.onlyFreeShip !== undefined) filterConfig.onlyFreeShip = result.onlyFreeShip;
+  console.log('[闲鱼采集] 恢复过滤条件:', filterConfig);
 });
 
 // ==================== 统一的数据处理逻辑 ====================

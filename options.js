@@ -7,6 +7,14 @@ const DEFAULT_CONFIG = {
   delay: 1500
 };
 
+// 过滤条件默认配置
+const DEFAULT_FILTER_CONFIG = {
+  minWantCnt: 0,      // 最小想要人数
+  minPrice: 0,        // 最小价格
+  maxPrice: 0,        // 最大价格（0表示不限）
+  onlyFreeShip: false // 只看包邮
+};
+
 // 飞书默认配置
 const DEFAULT_FEISHU_CONFIG = {
   appId: '',
@@ -32,6 +40,14 @@ function loadConfig() {
     document.getElementById('startPageInput').value = result.startPage || DEFAULT_CONFIG.startPage;
     document.getElementById('pageCountInput').value = result.pageCount || DEFAULT_CONFIG.pageCount;
     document.getElementById('delayInput').value = result.delay || DEFAULT_CONFIG.delay;
+  });
+
+  // 加载过滤条件配置
+  chrome.storage.local.get(DEFAULT_FILTER_CONFIG, (result) => {
+    document.getElementById('minWantCntInput').value = result.minWantCnt || DEFAULT_FILTER_CONFIG.minWantCnt;
+    document.getElementById('minPriceInput').value = result.minPrice || DEFAULT_FILTER_CONFIG.minPrice;
+    document.getElementById('maxPriceInput').value = result.maxPrice || DEFAULT_FILTER_CONFIG.maxPrice;
+    document.getElementById('onlyFreeShipInput').checked = result.onlyFreeShip || DEFAULT_FILTER_CONFIG.onlyFreeShip;
   });
 
   // 加载飞书配置 - 使用数组指定键名，确保与保存时一致
@@ -87,6 +103,21 @@ function saveConfig() {
     }
   });
 
+  // 保存过滤条件配置
+  const filterConfig = {
+    minWantCnt: parseInt(document.getElementById('minWantCntInput').value) || 0,
+    minPrice: parseFloat(document.getElementById('minPriceInput').value) || 0,
+    maxPrice: parseFloat(document.getElementById('maxPriceInput').value) || 0,
+    onlyFreeShip: document.getElementById('onlyFreeShipInput').checked
+  };
+  chrome.storage.local.set(filterConfig, () => {
+    if (chrome.runtime.lastError) {
+      console.error('[配置页面] 保存过滤条件失败:', chrome.runtime.lastError);
+    } else {
+      console.log('[配置页面] 过滤条件已保存:', filterConfig);
+    }
+  });
+
   // 保存飞书配置
   const feishuConfig = {
     appId: document.getElementById('feishuAppId').value.trim(),
@@ -113,6 +144,12 @@ function resetConfig() {
     document.getElementById('startPageInput').value = DEFAULT_CONFIG.startPage;
     document.getElementById('pageCountInput').value = DEFAULT_CONFIG.pageCount;
     document.getElementById('delayInput').value = DEFAULT_CONFIG.delay;
+
+    // 恢复过滤条件
+    document.getElementById('minWantCntInput').value = DEFAULT_FILTER_CONFIG.minWantCnt;
+    document.getElementById('minPriceInput').value = DEFAULT_FILTER_CONFIG.minPrice;
+    document.getElementById('maxPriceInput').value = DEFAULT_FILTER_CONFIG.maxPrice;
+    document.getElementById('onlyFreeShipInput').checked = DEFAULT_FILTER_CONFIG.onlyFreeShip;
 
     // 恢复飞书配置
     document.getElementById('feishuAppId').value = DEFAULT_FEISHU_CONFIG.appId;

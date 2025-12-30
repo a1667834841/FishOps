@@ -312,6 +312,43 @@
             </div>
             <div class="form-help">间隔时间过短可能导致请求被限制</div>
           </div>
+
+          <div class="section-title" style="margin-top: 24px;">过滤条件</div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">最小想要数</label>
+              <input type="number" class="form-input" id="minWantCntInput" min="0" max="99999" value="0" />
+              <span class="form-unit">人</span>
+            </div>
+            <div class="form-help">只采集想要人数大于等于此值的商品，0表示不限制</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">最小价格</label>
+              <input type="number" class="form-input" id="minPriceInput" min="0" max="999999" step="0.01" value="0" />
+              <span class="form-unit">元</span>
+            </div>
+            <div class="form-help">只采集价格大于等于此值的商品，0表示不限制</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">最大价格</label>
+              <input type="number" class="form-input" id="maxPriceInput" min="0" max="999999" step="0.01" value="0" />
+              <span class="form-unit">元</span>
+            </div>
+            <div class="form-help">只采集价格小于等于此值的商品，0表示不限制</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">只看包邮</label>
+              <input type="checkbox" id="onlyFreeShipInput" style="width: auto;" />
+            </div>
+            <div class="form-help">勾选后只采集包邮商品</div>
+          </div>
         </div>
       </div>
 
