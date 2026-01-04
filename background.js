@@ -488,6 +488,37 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // ========== 关键词-表格映射相关消息处理 ==========
+
+  // 获取关键词-表格映射列表
+  if (request.type === 'GET_KEYWORD_TABLE_MAP') {
+    sendResponse({ success: true, map: keywordTableMap });
+    return true;
+  }
+
+  // 删除单个映射记录
+  if (request.type === 'DELETE_KEYWORD_MAPPING') {
+    const keyword = request.keyword;
+    if (keyword && keywordTableMap[keyword]) {
+      delete keywordTableMap[keyword];
+      chrome.storage.local.set({ keywordTableMap });
+      console.log(`[闲鱼采集-控制台] 已删除关键词映射: ${keyword}`);
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: false, error: '关键词不存在' });
+    }
+    return true;
+  }
+
+  // 清空所有映射记录
+  if (request.type === 'CLEAR_KEYWORD_MAPPING') {
+    keywordTableMap = {};
+    chrome.storage.local.remove('keywordTableMap');
+    console.log('[闲鱼采集-控制台] 已清空所有关键词映射');
+    sendResponse({ success: true });
+    return true;
+  }
+
   return true; // 保持消息通道开启，用于异步响应
 });
 // 从 storage 恢复数据
@@ -809,7 +840,9 @@ let feishuConfig = {
   spreadsheetToken: '',
   productTableId: '',
   sellerTableId: '',
-  enabled: false
+  enabled: false,
+  autoCreateTable: false,      // 是否自动创建表格
+  parentFolderToken: ''        // 父文件夹 token（可选）
 };
 
 // 租户访问令牌缓存
@@ -817,14 +850,16 @@ let tenantAccessToken = null;
 let tokenExpireTime = 0;
 
 // 从 storage 加载飞书配置
-chrome.storage.local.get(['appId', 'appSecret', 'spreadsheetToken', 'productTableId', 'sellerTableId', 'enabled'], (result) => {
+chrome.storage.local.get(['appId', 'appSecret', 'spreadsheetToken', 'productTableId', 'sellerTableId', 'enabled', 'autoCreateTable', 'parentFolderToken'], (result) => {
   feishuConfig = {
     appId: result.appId || '',
     appSecret: result.appSecret || '',
     spreadsheetToken: result.spreadsheetToken || '',
     productTableId: result.productTableId || '',
     sellerTableId: result.sellerTableId || '',
-    enabled: result.enabled || false
+    enabled: result.enabled || false,
+    autoCreateTable: result.autoCreateTable || false,
+    parentFolderToken: result.parentFolderToken || ''
   };
   console.log('[闲鱾采集-飞书] 配置已加载:', feishuConfig);
   console.log('[闲鱾采集-飞书] Storage 原始数据:', result);
@@ -834,16 +869,16 @@ chrome.storage.local.get(['appId', 'appSecret', 'spreadsheetToken', 'productTabl
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local') {
     // 检查飞书配置是否变化
-    const feishuKeys = ['appId', 'appSecret', 'spreadsheetToken', 'productTableId', 'sellerTableId', 'enabled'];
+    const feishuKeys = ['appId', 'appSecret', 'spreadsheetToken', 'productTableId', 'sellerTableId', 'enabled', 'autoCreateTable', 'parentFolderToken'];
     let hasFeishuChange = false;
-    
+
     feishuKeys.forEach(key => {
       if (changes[key]) {
         feishuConfig[key] = changes[key].newValue || '';
         hasFeishuChange = true;
       }
     });
-    
+
     if (hasFeishuChange) {
       console.log('[闲鱾采集-飞书] 配置已更新:', feishuConfig);
     }
@@ -854,11 +889,19 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 async function getTenantAccessToken() {
   // 如果令牌未过期,直接返回
   if (tenantAccessToken && Date.now() < tokenExpireTime) {
+    console.log('[闲鱼采集-飞书] 使用缓存的访问令牌');
     return tenantAccessToken;
   }
 
+  console.log('[闲鱼采集-飞书] 开始获取新的访问令牌...');
+  console.log('[闲鱼采集-飞书] App ID:', feishuConfig.appId ? `${feishuConfig.appId.substring(0, 10)}...` : 'null');
+  console.log('[闲鱼采集-飞书] App Secret:', feishuConfig.appSecret ? `${feishuConfig.appSecret.substring(0, 10)}...` : 'null');
+
   try {
-    const response = await fetch(`${FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal`, {
+    const url = `${FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal`;
+    console.log('[闲鱼采集-飞书] Token API URL:', url);
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -869,7 +912,18 @@ async function getTenantAccessToken() {
       })
     });
 
-    const data = await response.json();
+    console.log('[闲鱼采集-飞书] Token API 响应状态:', response.status, response.statusText);
+
+    const text = await response.text();
+    console.log('[闲鱼采集-飞书] Token API 完整响应:', text);
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (parseError) {
+      console.error('[闲鱼采集-飞书] Token API 响应解析失败:', parseError);
+      throw new Error(`无法解析 Token API 响应: ${text}`);
+    }
 
     if (data.code !== 0) {
       console.error('[闲鱼采集-飞书] 获取访问令牌失败:', data);
@@ -880,7 +934,8 @@ async function getTenantAccessToken() {
     // 提前5分钟过期
     tokenExpireTime = Date.now() + (data.expire - 300) * 1000;
 
-    console.log('[闲鱼采集-飞书] 访问令牌已更新');
+    console.log('[闲鱼采集-飞书] 访问令牌已更新，有效期:', data.expire, '秒');
+    console.log('[闲鱼采集-飞书] 新令牌:', tenantAccessToken ? `${tenantAccessToken.substring(0, 20)}...` : 'null');
     return tenantAccessToken;
   } catch (error) {
     console.error('[闲鱼采集-飞书] 获取访问令牌异常:', error);
@@ -893,6 +948,11 @@ async function testFeishuConnection(config) {
   try {
     const testConfig = { ...feishuConfig, ...config };
 
+    console.log(`\n========== 测试飞书连接 ==========`);
+    console.log(`[闲鱼采集-飞书] App ID: ${testConfig.appId ? `${testConfig.appId.substring(0, 15)}...` : '未设置'}`);
+    console.log(`[闲鱼采集-飞书] App Secret: ${testConfig.appSecret ? `${testConfig.appSecret.substring(0, 15)}...` : '未设置'}`);
+    console.log(`[闲鱼采集-飞书] API 基础地址: ${FEISHU_API_BASE}`);
+
     const response = await fetch(`${FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal`, {
       method: 'POST',
       headers: {
@@ -904,14 +964,23 @@ async function testFeishuConnection(config) {
       })
     });
 
+    console.log(`[闲鱼采集-飞书] Token API HTTP 状态: ${response.status}`);
     const data = await response.json();
+    console.log(`[闲鱼采集-飞书] Token API 响应:`, JSON.stringify(data, null, 2));
 
     if (data.code !== 0) {
-      return { success: false, error: data.msg || '认证失败' };
+      console.error(`========================================\n`);
+      return { success: false, error: `认证失败 (code: ${data.code}): ${data.msg || '未知错误'}` };
     }
+
+    console.log(`[闲鱼采集-飞书] ✓ 认证成功`);
 
     // 如果配置了表格,也测试表格访问
     if (testConfig.spreadsheetToken && testConfig.productTableId) {
+      console.log(`[闲鱼采集-飞书] 测试表格访问...`);
+      console.log(`[闲鱼采集-飞书] Spreadsheet Token: ${testConfig.spreadsheetToken}`);
+      console.log(`[闲鱼采集-飞书] Product Table ID: ${testConfig.productTableId}`);
+      
       const tableResponse = await fetch(
         `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${testConfig.spreadsheetToken}/tables/${testConfig.productTableId}/records?page_size=1`,
         {
@@ -922,15 +991,23 @@ async function testFeishuConnection(config) {
         }
       );
 
+      console.log(`[闲鱼采集-飞书] 表格 API HTTP 状态: ${tableResponse.status}`);
       const tableData = await tableResponse.json();
+      console.log(`[闲鱼采集-飞书] 表格 API 响应:`, JSON.stringify(tableData, null, 2));
 
       if (tableData.code !== 0) {
-        return { success: false, error: `表格访问失败: ${tableData.msg}` };
+        console.error(`========================================\n`);
+        return { success: false, error: `表格访问失败 (code: ${tableData.code}): ${tableData.msg}` };
       }
+      
+      console.log(`[闲鱼采集-飞书] ✓ 表格访问成功`);
     }
 
+    console.log(`========================================\n`);
     return { success: true };
   } catch (error) {
+    console.error(`[闲鱼采集-飞书] 测试连接异常:`, error);
+    console.error(`========================================\n`);
     return { success: false, error: error.message };
   }
 }
@@ -945,16 +1022,22 @@ const SELLER_FIELD_CONFIGS = [
 ];
 
 // 获取表格字段列表
-async function getTableFields(tableId) {
-  const token = await getTenantAccessToken();
-  
+async function getTableFields(tableId, appToken) {
+  const accessToken = await getTenantAccessToken();
+
+  // 使用传入的 appToken，如果没有则使用 feishuConfig.spreadsheetToken
+  const token = appToken || feishuConfig.spreadsheetToken;
+  if (!token) {
+    throw new Error('缺少 appToken，无法获取字段列表');
+  }
+
   try {
     const response = await fetch(
-      `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${feishuConfig.spreadsheetToken}/tables/${tableId}/fields`,
+      `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${token}/tables/${tableId}/fields`,
       {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${accessToken}`
         }
       }
     );
@@ -974,12 +1057,12 @@ async function getTableFields(tableId) {
 }
 
 // 创建表格字段
-async function createTableField(tableId, fieldConfig) {
+async function createTableField(appToken, tableId, fieldConfig) {
   const token = await getTenantAccessToken();
-  
+
   try {
     const response = await fetch(
-      `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${feishuConfig.spreadsheetToken}/tables/${tableId}/fields`,
+      `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
       {
         method: 'POST',
         headers: {
@@ -994,7 +1077,7 @@ async function createTableField(tableId, fieldConfig) {
     );
 
     const data = await response.json();
-    
+
     if (data.code !== 0) {
       console.error(`[闲鱼采集-飞书] 创建字段失败 [${fieldConfig.name}]:`, data);
       throw new Error(data.msg || `创建字段失败: ${fieldConfig.name}`);
@@ -1009,32 +1092,38 @@ async function createTableField(tableId, fieldConfig) {
 }
 
 // 确保表格字段存在
-async function ensureTableFields(tableId, fieldConfigs) {
+async function ensureTableFields(tableId, fieldConfigs, appToken) {
   console.log(`[闲鱼采集-飞书] 开始检查表格字段...`);
-  
+
+  // 使用传入的 appToken，如果没有则使用 feishuConfig.spreadsheetToken
+  const token = appToken || feishuConfig.spreadsheetToken;
+  if (!token) {
+    throw new Error('缺少 appToken，无法创建字段');
+  }
+
   // 获取现有字段
-  const existingFields = await getTableFields(tableId);
+  const existingFields = await getTableFields(tableId, token);
   const existingFieldNames = new Set(existingFields.map(f => f.field_name));
-  
+
   console.log(`[闲鱼采集-飞书] 现有字段:`, Array.from(existingFieldNames));
-  
+
   // 找出缺失的字段
   const missingFields = fieldConfigs.filter(config => !existingFieldNames.has(config.name));
-  
+
   if (missingFields.length === 0) {
     console.log(`[闲鱼采集-飞书] 所有字段已存在`);
     return;
   }
-  
+
   console.log(`[闲鱼采集-飞书] 需要创建 ${missingFields.length} 个字段:`, missingFields.map(f => f.name));
-  
+
   // 逐个创建缺失的字段
   for (const fieldConfig of missingFields) {
-    await createTableField(tableId, fieldConfig);
+    await createTableField(token, tableId, fieldConfig);
     // 避免速率限制
     await new Promise(resolve => setTimeout(resolve, 200));
   }
-  
+
   console.log(`[闲鱼采集-飞书] 字段创建完成`);
 }
 
@@ -1206,8 +1295,73 @@ async function sendToFeishu(processedData) {
     return { success: false, error: '请先配置飞书 App ID 和 App Secret' };
   }
 
+  // ========== 自动创建表格逻辑 ==========
+  // 如果启用了自动创建表格，且有关键词
+  if (feishuConfig.autoCreateTable && currentKeyword) {
+    console.log('[闲鱼采集-飞书] 自动创建表格模式已启用');
+
+    // 检查映射中是否已存在该关键词的表格
+    if (!keywordTableMap[currentKeyword]) {
+      console.log(`[闲鱼采集-飞书] 关键词 "${currentKeyword}" 未创建过表格，开始创建...`);
+
+      try {
+        // 1. 检查是否已存在同名表格
+        const spreadsheets = await getSpreadsheetList();
+        const existingSpreadsheet = spreadsheets.find(s => s.title === currentKeyword);
+
+        let spreadsheet;
+
+        if (existingSpreadsheet) {
+          console.log(`[闲鱼采集-飞书] 找到已存在的同名表格: ${existingSpreadsheet.title}`);
+          spreadsheet = existingSpreadsheet;
+        } else {
+          // 2. 创建新的多维表格
+          console.log(`[闲鱼采集-飞书] 创建新表格: ${currentKeyword}`);
+          spreadsheet = await createSpreadsheet(currentKeyword, feishuConfig.parentFolderToken || '');
+        }
+
+        // 3. 创建商品表
+        console.log('[闲鱼采集-飞书] 创建商品数据表...');
+        const productTable = await createDataTable(spreadsheet.appToken, '商品表', PRODUCT_FIELD_CONFIGS);
+
+        // 4. 创建商家表
+        console.log('[闲鱼采集-飞书] 创建商家数据表...');
+        const sellerTable = await createDataTable(spreadsheet.appToken, '商家表', SELLER_FIELD_CONFIGS);
+
+        // 5. 保存映射关系
+        keywordTableMap[currentKeyword] = {
+          spreadsheetToken: spreadsheet.spreadsheetToken,
+          appToken: spreadsheet.appToken,
+          spreadsheetUrl: spreadsheet.url,
+          productTableId: productTable.tableId,
+          sellerTableId: sellerTable.tableId,
+          createTime: Date.now(),
+          updateTime: Date.now()
+        };
+
+        // 持久化到 storage
+        chrome.storage.local.set({ keywordTableMap });
+
+        console.log('[闲鱼采集-飞书] 表格创建完成，映射关系已保存');
+      } catch (error) {
+        console.error('[闲鱼采集-飞书] 自动创建表格失败:', error);
+        // 如果自动创建失败，返回错误
+        return { success: false, error: `自动创建表格失败: ${error.message}` };
+      }
+    } else {
+      console.log(`[闲鱼采集-飞书] 使用已存在的表格: ${currentKeyword}`);
+    }
+
+    // 6. 更新当前使用的配置为关键词对应的表格配置
+    const mapping = keywordTableMap[currentKeyword];
+    feishuConfig.spreadsheetToken = mapping.spreadsheetToken;
+    feishuConfig.productTableId = mapping.productTableId;
+    feishuConfig.sellerTableId = mapping.sellerTableId;
+  }
+
+  // 检查必要的配置
   if (!feishuConfig.spreadsheetToken || !feishuConfig.productTableId) {
-    return { success: false, error: '请先配置飞书表格 Token 和商品表 ID' };
+    return { success: false, error: '请先配置飞书表格 Token 和商品表 ID，或启用「自动创建表格」功能' };
   }
 
   try {
@@ -1301,5 +1455,315 @@ async function sendToFeishu(processedData) {
   } catch (error) {
     console.error('[闲鱼采集-飞书] 发送数据失败:', error);
     return { success: false, error: error.message };
+  }
+}
+
+// ==================== 飞书表格创建 API ====================
+
+// 存储关键词与表格的映射关系
+let keywordTableMap = {};
+
+// 从 storage 恢复映射关系
+chrome.storage.local.get(['keywordTableMap'], (result) => {
+  if (result.keywordTableMap) {
+    keywordTableMap = result.keywordTableMap;
+    console.log('[闲鱼采集-飞书] 恢复关键词-表格映射:', Object.keys(keywordTableMap));
+  }
+});
+
+// 获取用户的所有多维表格列表
+async function getSpreadsheetList() {
+  const token = await getTenantAccessToken();
+
+  try {
+    let hasMore = true;
+    let pageToken = undefined;
+    const spreadsheets = [];
+
+    while (hasMore) {
+      const url = new URL(`${FEISHU_API_BASE}/open-apis/bitable/v1/apps`);
+      url.searchParams.append('page_size', '100');
+      if (pageToken) {
+        url.searchParams.append('page_token', pageToken);
+      }
+
+      console.log(`[闲鱼采集-飞书] 获取表格列表请求 URL:`, url.toString());
+      console.log(`[闲鱼采集-飞书] 使用的 token:`, token ? `${token.substring(0, 20)}...` : 'null');
+
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      console.log(`[闲鱼采集-飞书] 获取表格列表 HTTP 状态: ${response.status} ${response.statusText}`);
+
+      const text = await response.text();
+      console.log(`[闲鱼采集-飞书] 响应类型: ${response.headers.get('content-type')}`);
+      console.log(`[闲鱼采集-飞书] 完整响应内容:`, text);
+      console.log(`[闲鱼采集-飞书] 响应前200字符:`, text.substring(0, 200));
+
+      // 检查响应是否为 HTML（错误页面）
+      if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html>') || text.trim().startsWith('<HTML>')) {
+        console.error(`[闲鱼采集-飞书] 获取表格列表收到 HTML 响应`);
+        console.error(`[闲鱼采集-飞书] 响应前500字符:`, text.substring(0, 500));
+        throw new Error('飞书 API 返回错误页面。请检查应用权限：\n' +
+          '1. 多维表格权限：创建、获取、更新多维表格\n' +
+          '2. 数据表权限：创建、获取数据表\n' +
+          '3. 字段权限：创建、获取字段\n' +
+          '4. 记录权限：创建、获取记录\n' +
+          '请前往飞书开放平台，在【应用配置】-【权限管理】中添加以上所有权限。');
+      }
+
+      // 检查响应是否为空
+      if (!text || text.trim() === '') {
+        throw new Error('飞书 API 返回空响应，可能网络连接异常');
+      }
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (parseError) {
+        console.error(`[闲鱼采集-飞书] JSON 解析失败:`, parseError);
+        console.error(`[闲鱼采集-飞书] 响应内容(前500字符):`, text.substring(0, 500));
+        throw new Error(`飞书 API 返回无效 JSON。请检查：\n` +
+          `1. 应用权限是否包含：\n` +
+          `   - 多维表格：创建、获取、更新\n` +
+          `   - 数据表：创建、获取\n` +
+          `   - 字段：创建、获取\n` +
+          `   - 记录：创建、获取\n` +
+          `2. App ID 和 App Secret 是否正确\n` +
+          `3. 网络连接是否正常\n` +
+          `响应内容: ${text.substring(0, 100)}`);
+      }
+
+      if (data.code !== 0) {
+        console.error('[闲鱼采集-飞书] 获取表格列表失败:', data);
+        throw new Error(data.msg || '获取表格列表失败');
+      }
+
+      // 收集表格信息
+      (data.data?.items || []).forEach(app => {
+        spreadsheets.push({
+          appToken: app.app_token,
+          spreadsheetToken: app.spreadsheet_token,
+          title: app.name,
+          url: app.url
+        });
+      });
+
+      hasMore = data.data?.has_more || false;
+      pageToken = data.data?.page_token;
+
+      if (hasMore) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+
+    console.log(`[闲鱼采集-飞书] 获取到 ${spreadsheets.length} 个表格`);
+    return spreadsheets;
+  } catch (error) {
+    console.error('[闲鱼采集-飞书] 获取表格列表异常:', error);
+    throw error;
+  }
+}
+
+// 创建新的多维表格
+async function createSpreadsheet(title, folderToken = '') {
+  const token = await getTenantAccessToken();
+
+  try {
+    const requestBody = {
+      name: title,
+      folder_token: folderToken || undefined
+    };
+
+    // 移除空值
+    Object.keys(requestBody).forEach(key => {
+      if (requestBody[key] === undefined) {
+        delete requestBody[key];
+      }
+    });
+
+    const url = `${FEISHU_API_BASE}/open-apis/bitable/v1/apps`;
+    console.log(`
+========== 创建多维表格详细诊断 ==========`);
+    console.log(`[闲鱼采集-飞书] 创建多维表格 URL: ${url}`);
+    console.log(`[闲鱼采集-飞书] FEISHU_API_BASE: ${FEISHU_API_BASE}`);
+    console.log(`[闲鱼采集-飞书] 表格标题: ${title}`);
+    console.log(`[闲鱼采集-飞书] 父文件夹 Token: ${folderToken || '(未指定)'}`);
+    console.log(`[闲鱼采集-飞书] 请求体:`, JSON.stringify(requestBody));
+    console.log(`[闲鱼采集-飞书] 使用的 token:`, token ? `${token.substring(0, 20)}...` : 'null');
+    console.log(`[闲鱼采集-飞书] Token 完整长度: ${token ? token.length : 0}`);
+    console.log(`========================================\n`);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    console.log(`\n========== HTTP 响应详情 ==========`);
+    console.log(`[闲鱼采集-飞书] HTTP 状态码: ${response.status}`);
+    console.log(`[闲鱼采集-飞书] HTTP 状态文本: ${response.statusText}`);
+    console.log(`[闲鱼采集-飞书] 响应 Headers:`);
+    response.headers.forEach((value, key) => {
+      console.log(`  ${key}: ${value}`);
+    });
+
+    const text = await response.text();
+
+    // 记录详细响应信息
+    console.log(`[闲鱼采集-飞书] 响应类型: ${response.headers.get('content-type')}`);
+    console.log(`[闲鱼采集-飞书] 响应长度: ${text.length} 字符`);
+    console.log(`[闲鱼采集-飞书] 响应前200字符:`, text.substring(0, 200));
+    console.log(`[闲鱼采集-飞书] 完整响应内容:`, text);
+    console.log(`========================================\n`);
+
+    // 检查响应是否为 HTML（错误页面）
+    if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html>') || text.trim().startsWith('<HTML>')) {
+      console.error(`\n========== 错误诊断: 收到 HTML 响应 ==========`);
+      console.error(`[闲鱼采集-飞书] 创建多维表格收到 HTML 响应，这通常表示:`);
+      console.error(`  1. API URL 不正确`);
+      console.error(`  2. 应用权限不足`);
+      console.error(`  3. 使用了错误的域名 (国内版 vs 国际版)`);
+      console.error(`[闲鱼采集-飞书] 当前 API 基础地址: ${FEISHU_API_BASE}`);
+      console.error(`[闲鱼采集-飞书] 响应前500字符:`, text.substring(0, 500));
+      console.error(`========================================\n`);
+      throw new Error('飞书 API 返回错误页面。\n\n请检查:\n1. 应用权限是否包含「查看、创建、编辑和删除多维表格」\n2. 确认使用的是正确的飞书域名 (国内版: open.feishu.cn)\n3. App ID 和 App Secret 是否正确');
+    }
+
+    // 检查响应是否为空
+    if (!text || text.trim() === '') {
+      throw new Error('飞书 API 返回空响应，可能网络连接异常');
+    }
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (parseError) {
+      console.error(`[闲鱼采集-飞书] JSON 解析失败:`, parseError);
+      console.error(`[闲鱼采集-飞书] 响应内容(前500字符):`, text.substring(0, 500));
+      throw new Error(`飞书 API 返回无效 JSON。请检查: 1)应用权限是否正确 2)App ID和App Secret是否有效 3)网络是否正常。响应: ${text.substring(0, 100)}`);
+    }
+
+    if (data.code !== 0) {
+      console.error(`\n========== 飞书 API 错误 ==========`);
+      console.error('[闲鱼采集-飞书] 创建多维表格失败');
+      console.error('[闲鱼采集-飞书] 错误代码:', data.code);
+      console.error('[闲鱼采集-飞书] 错误消息:', data.msg);
+      console.error('[闲鱼采集-飞书] 完整响应:', JSON.stringify(data, null, 2));
+      
+      // 根据错误代码提供更具体的解决方案
+      let errorHint = '';
+      if (data.code === 99991663) {
+        errorHint = '\n解决方案: 应用缺少「创建多维表格」权限，请在飞书开放平台 -> 应用管理 -> 权限管理中添加「bitable:app:create」权限';
+      } else if (data.code === 99991401) {
+        errorHint = '\n解决方案: 访问令牌无效或已过期，请检查 App ID 和 App Secret 是否正确';
+      } else if (data.code === 99991500) {
+        errorHint = '\n解决方案: 飞书服务器错误，请稍后重试';
+      }
+      console.error(`========================================\n`);
+      throw new Error((data.msg || '创建多维表格失败') + errorHint);
+    }
+
+    const spreadsheet = {
+      appToken: data.data.app.app_token,
+      spreadsheetToken: data.data.app.spreadsheet_token,
+      title: data.data.app.name,
+      url: data.data.app.url
+    };
+
+    console.log('[闲鱼采集-飞书] 成功创建多维表格:', spreadsheet);
+    return spreadsheet;
+  } catch (error) {
+    console.error('[闲鱼采集-飞书] 创建多维表格异常:', error);
+    throw error;
+  }
+}
+
+// 创建数据表（先创建空表，再添加字段）
+// 注意：appToken 是多维表格的应用 token，不是 spreadsheetToken
+async function createDataTable(appToken, tableName, fieldConfigs) {
+  const accessToken = await getTenantAccessToken();
+
+  try {
+    // 步骤1: 创建空的数据表（不指定字段）
+    console.log(`[闲鱼采集-飞书] 准备创建数据表: ${tableName}`);
+    console.log(`[闲鱼采集-飞书] appToken: ${appToken}`);
+
+    const requestBody = {
+      table: {
+        name: tableName,
+        default_view: {
+          type: 'grid'
+        }
+      }
+    };
+    console.log(`[闲鱼采集-飞书] 请求体:`, JSON.stringify(requestBody));
+
+    const response = await fetch(
+      `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${appToken}/tables`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      }
+    );
+
+    console.log(`[闲鱼采集-飞书] 创建数据表 HTTP 状态: ${response.status} ${response.statusText}`);
+
+    const text = await response.text();
+    console.log(`[闲鱼采集-飞书] 响应类型: ${response.headers.get('content-type')}`);
+    console.log(`[闲鱼采集-飞书] 完整响应内容:`, text);
+    console.log(`[闲鱼采集-飞书] 响应前100个字符:`, text.substring(0, 100));
+
+    // 检查响应是否为 HTML（错误页面）
+    if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html>') || text.trim().startsWith('<HTML>')) {
+      console.error(`[闲鱼采集-飞书] 收到 HTML 响应，可能 API URL 或权限有问题`);
+      console.error(`[闲鱼采集-飞书] 响应前500字符:`, text.substring(0, 500));
+      throw new Error('飞书 API 返回错误页面，请检查应用权限是否包含「查看、创建、编辑和删除多维表格」权限');
+    }
+
+    // 检查响应是否为空
+    if (!text || text.trim() === '') {
+      throw new Error('飞书 API 返回空响应，可能网络连接异常');
+    }
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (parseError) {
+      console.error(`[闲鱼采集-飞书] JSON 解析失败:`, parseError);
+      console.error(`[闲鱼采集-飞书] 响应内容(完整):`, text);
+      throw new Error(`飞书 API 返回无效 JSON。请检查: 1)应用权限是否包含「查看、创建、编辑和删除多维表格」 2)appToken是否正确 3)网络是否正常。响应: ${text.substring(0, 100)}`);
+    }
+
+    if (data.code !== 0) {
+      console.error(`[闲鱼采集-飞书] 创建数据表失败 [${tableName}]:`, data);
+      throw new Error(data.msg || `创建数据表失败: ${tableName}`);
+    }
+
+    const tableId = data.data.table.table_id;
+    console.log(`[闲鱼采集-飞书] 成功创建空数据表: ${tableName} (ID: ${tableId})`);
+
+    // 步骤2: 使用 ensureTableFields 添加字段（传递 appToken）
+    console.log(`[闲鱼采集-飞书] 开始为表 ${tableName} 添加字段...`);
+    await ensureTableFields(tableId, fieldConfigs, appToken);
+
+    return {
+      tableId: tableId,
+      name: tableName
+    };
+  } catch (error) {
+    console.error(`[闲鱼采集-飞书] 创建数据表异常 [${tableName}]:`, error);
+    throw error;
   }
 }

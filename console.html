@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>表格管理 - 闲鱼数据采集助手</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 标题栏 */
+    .header {
+      height: 56px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: white;
+      border-bottom: 1px solid #e0e0e0;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #2c3e50;
+    }
+    .header-actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    /* 主体 */
+    .main {
+      flex: 1;
+      padding: 24px;
+      overflow-y: auto;
+    }
+
+    /* 卡片 */
+    .card {
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    /* 表格 */
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .table thead {
+      background: #fafafa;
+    }
+    .table th {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 14px;
+      font-weight: 600;
+      color: #666;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 14px;
+    }
+    .table tbody tr:hover {
+      background: #fafafa;
+    }
+    .table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* 按钮样式 */
+    .btn {
+      height: 32px;
+      padding: 0 16px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: white;
+      color: #666;
+    }
+    .btn:hover {
+      border-color: #bbb;
+      background: #fafafa;
+    }
+    .btn-primary {
+      border-color: #ffe60f;
+      background: linear-gradient(135deg, #ffe60f 0%, #ffed4e 100%);
+      color: #333;
+      font-weight: 500;
+    }
+    .btn-primary:hover {
+      border-color: #ffd700;
+      background: linear-gradient(135deg, #ffd700 0%, #ffe60f 100%);
+      box-shadow: 0 2px 8px rgba(255, 230, 15, 0.3);
+    }
+    .btn-danger {
+      border-color: #f44336;
+      color: #f44336;
+    }
+    .btn-danger:hover {
+      background: #f44336;
+      color: white;
+    }
+    .btn-sm {
+      height: 28px;
+      padding: 0 12px;
+      font-size: 13px;
+    }
+
+    /* 链接按钮 */
+    .link-btn {
+      color: #1890ff;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .link-btn:hover {
+      text-decoration: underline;
+    }
+
+    /* 空状态 */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #999;
+      font-size: 14px;
+    }
+    .empty-state .icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+
+    /* 加载状态 */
+    .loading {
+      text-align: center;
+      padding: 40px 20px;
+      color: #999;
+    }
+
+    /* 操作列 */
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* 时间格式 */
+    .time {
+      color: #999;
+      font-size: 13px;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      top: 30px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-100px);
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 14px;
+      z-index: 10000;
+      opacity: 0;
+      transition: all 0.3s ease;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    .toast.success {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    }
+    .toast.error {
+      background: linear-gradient(135deg, #f44336 0%, #e91e63 100%);
+    }
+
+    /* 统计信息 */
+    .stats {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .stat-item {
+      flex: 1;
+      background: white;
+      padding: 16px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .stat-label {
+      font-size: 13px;
+      color: #999;
+      margin-bottom: 4px;
+    }
+    .stat-value {
+      font-size: 24px;
+      font-weight: 600;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <!-- 标题栏 -->
+  <div class="header">
+    <h1>表格管理控制台</h1>
+    <div class="header-actions">
+      <button class="btn" id="refreshBtn">刷新</button>
+      <button class="btn btn-danger" id="clearBtn">清空记录</button>
+    </div>
+  </div>
+
+  <!-- 主体 -->
+  <div class="main">
+    <!-- 统计信息 -->
+    <div class="stats">
+      <div class="stat-item">
+        <div class="stat-label">表格总数</div>
+        <div class="stat-value" id="totalCount">0</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">已创建表格</div>
+        <div class="stat-value" id="createdCount">0</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">使用现有表格</div>
+        <div class="stat-value" id="existingCount">0</div>
+      </div>
+    </div>
+
+    <!-- 表格卡片 -->
+    <div class="card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>关键词</th>
+            <th>表格名称</th>
+            <th>创建时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr>
+            <td colspan="4" class="loading">加载中...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="console.js"></script>
+</body>
+</html>

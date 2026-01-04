@@ -424,6 +424,35 @@
             <div class="form-help">勾选后,采集数据将自动同步到飞书表格</div>
           </div>
 
+          <div class="section-title" style="margin-top: 24px;">自动创建表格</div>
+          <div class="form-help" style="margin-bottom: 16px; margin-left: 0;">
+            启用后,每次爬取不同关键词时会自动创建新的飞书多维表格
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">自动创建</label>
+              <input type="checkbox" id="feishuAutoCreateTable" style="width: auto;" />
+            </div>
+            <div class="form-help">勾选后,爬取时会根据关键词自动创建新的多维表格</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">父文件夹</label>
+              <input type="text" class="form-input" id="feishuParentFolderToken" style="width: 320px;" placeholder="xxxxxxxxxxxxxxxx" />
+            </div>
+            <div class="form-help">父文件夹的 token（可选）,新表格将创建在此文件夹下</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">管理表格</label>
+              <button class="btn" id="openConsoleBtn" type="button">打开表格管理</button>
+            </div>
+            <div class="form-help">查看和管理所有已创建的关键词表格</div>
+          </div>
+
           <div class="form-group">
             <div class="form-row">
               <label class="form-label"></label>

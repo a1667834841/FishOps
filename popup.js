@@ -100,6 +100,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const suggestWordsContainer = document.getElementById('suggestWordsContainer');
   const suggestWordsList = document.getElementById('suggestWordsList');
   const suggestWordsHidden = document.getElementById('suggestWordsHidden');
+  const fetchSuggestBtn = document.getElementById('fetchSuggestBtn');
 
   // 更新统计信息
   function updateStats() {
@@ -159,6 +160,15 @@ document.addEventListener('DOMContentLoaded', function() {
     chrome.tabs.create({ url: 'options.html' });
     window.close();
   });
+
+  // 打开表格管理按钮
+  const tableManageBtn = document.getElementById('tableManage');
+  if (tableManageBtn) {
+    tableManageBtn.addEventListener('click', function() {
+      chrome.tabs.create({ url: 'console.html' });
+      window.close();
+    });
+  }
 
   // 开始/停止爬取按钮
   let isCrawling = false;
@@ -399,8 +409,9 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   });
 
-  // 爬取流量词按钮
-  fetchSuggestBtn.addEventListener('click', function() {
+  // 爬取流量词按钮（如果存在）
+  if (fetchSuggestBtn) {
+    fetchSuggestBtn.addEventListener('click', function() {
     const keyword = keywordInput.value.trim();
 
     if (!keyword) {
@@ -455,6 +466,7 @@ document.addEventListener('DOMContentLoaded', function() {
       });
     });
   });
+  }
 
   // 获取流量词函数
   function fetchSuggestWords(tabId, keyword) {

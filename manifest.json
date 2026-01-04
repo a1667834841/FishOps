@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "闲鱼数据采集助手",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "闲鱼商品数据采集Chrome插件",
   "permissions": [
     "storage",

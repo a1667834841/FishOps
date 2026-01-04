@@ -22,7 +22,9 @@ const DEFAULT_FEISHU_CONFIG = {
   spreadsheetToken: '',
   productTableId: '',
   sellerTableId: '',
-  enabled: false
+  enabled: false,
+  autoCreateTable: false,      // 是否自动创建表格
+  parentFolderToken: ''        // 父文件夹 token（可选）
 };
 
 // Toast 提示
@@ -51,13 +53,15 @@ function loadConfig() {
   });
 
   // 加载飞书配置 - 使用数组指定键名，确保与保存时一致
-  chrome.storage.local.get(['appId', 'appSecret', 'spreadsheetToken', 'productTableId', 'sellerTableId', 'enabled'], (result) => {
+  chrome.storage.local.get(['appId', 'appSecret', 'spreadsheetToken', 'productTableId', 'sellerTableId', 'enabled', 'autoCreateTable', 'parentFolderToken'], (result) => {
     document.getElementById('feishuAppId').value = result.appId || '';
     document.getElementById('feishuAppSecret').value = result.appSecret || '';
     document.getElementById('feishuSpreadsheetToken').value = result.spreadsheetToken || '';
     document.getElementById('feishuProductTableId').value = result.productTableId || '';
     document.getElementById('feishuSellerTableId').value = result.sellerTableId || '';
     document.getElementById('feishuEnabled').checked = result.enabled || false;
+    document.getElementById('feishuAutoCreateTable').checked = result.autoCreateTable || false;
+    document.getElementById('feishuParentFolderToken').value = result.parentFolderToken || '';
     console.log('[配置页面] 飞书配置已加载:', result);
   });
 }
@@ -125,7 +129,9 @@ function saveConfig() {
     spreadsheetToken: document.getElementById('feishuSpreadsheetToken').value.trim(),
     productTableId: document.getElementById('feishuProductTableId').value.trim(),
     sellerTableId: document.getElementById('feishuSellerTableId').value.trim(),
-    enabled: document.getElementById('feishuEnabled').checked
+    enabled: document.getElementById('feishuEnabled').checked,
+    autoCreateTable: document.getElementById('feishuAutoCreateTable').checked,
+    parentFolderToken: document.getElementById('feishuParentFolderToken').value.trim()
   };
   chrome.storage.local.set(feishuConfig, () => {
     if (chrome.runtime.lastError) {
@@ -158,6 +164,8 @@ function resetConfig() {
     document.getElementById('feishuProductTableId').value = DEFAULT_FEISHU_CONFIG.productTableId;
     document.getElementById('feishuSellerTableId').value = DEFAULT_FEISHU_CONFIG.sellerTableId;
     document.getElementById('feishuEnabled').checked = DEFAULT_FEISHU_CONFIG.enabled;
+    document.getElementById('feishuAutoCreateTable').checked = DEFAULT_FEISHU_CONFIG.autoCreateTable;
+    document.getElementById('feishuParentFolderToken').value = DEFAULT_FEISHU_CONFIG.parentFolderToken;
 
     saveConfig();
   }
@@ -223,6 +231,11 @@ document.addEventListener('DOMContentLoaded', () => {
         resultEl.style.color = '#f44336';
       }
     });
+  });
+
+  // 打开表格管理控制台
+  document.getElementById('openConsoleBtn')?.addEventListener('click', () => {
+    chrome.tabs.create({ url: 'console.html' });
   });
 
   // Ctrl+S 快捷保存
