@@ -6,6 +6,339 @@
 window.XianyuAPI = (function() {
   'use strict';
 
+  // ==================== MessagePack 解析工具 ====================
+
+  /**
+   * MessagePack 解码器
+   * 用于解析阿里系聊天 WebSocket 的 Base64 数据
+   */
+  class MessagePackDecoder {
+    constructor(buffer) {
+      this.view = new DataView(buffer);
+      this.offset = 0;
+    }
+
+    decode() {
+      return this.parse();
+    }
+
+    parse() {
+      const byte = this.view.getUint8(this.offset++);
+
+      // positive fixint
+      if (byte <= 0x7f) return byte;
+
+      // fixmap
+      if (byte >= 0x80 && byte <= 0x8f) {
+        return this.parseMap(byte - 0x80);
+      }
+
+      // fixarray
+      if (byte >= 0x90 && byte <= 0x9f) {
+        return this.parseArray(byte - 0x90);
+      }
+
+      // fixstr
+      if (byte >= 0xa0 && byte <= 0xbf) {
+        return this.parseString(byte - 0xa0);
+      }
+
+      // nil
+      if (byte === 0xc0) return null;
+
+      // false
+      if (byte === 0xc2) return false;
+
+      // true
+      if (byte === 0xc3) return true;
+
+      // bin 8
+      if (byte === 0xc4) {
+        const len = this.view.getUint8(this.offset++);
+        return this.parseBytes(len);
+      }
+
+      // bin 16
+      if (byte === 0xc5) {
+        const len = this.view.getUint16(this.offset);
+        this.offset += 2;
+        return this.parseBytes(len);
+      }
+
+      // bin 32
+      if (byte === 0xc6) {
+        const len = this.view.getUint32(this.offset);
+        this.offset += 4;
+        return this.parseBytes(len);
+      }
+
+      // float 32
+      if (byte === 0xca) {
+        const val = this.view.getFloat32(this.offset);
+        this.offset += 4;
+        return val;
+      }
+
+      // float 64
+      if (byte === 0xcb) {
+        const val = this.view.getFloat64(this.offset);
+        this.offset += 8;
+        return val;
+      }
+
+      // uint 8
+      if (byte === 0xcc) {
+        return this.view.getUint8(this.offset++);
+      }
+
+      // uint 16
+      if (byte === 0xcd) {
+        const val = this.view.getUint16(this.offset);
+        this.offset += 2;
+        return val;
+      }
+
+      // uint 32
+      if (byte === 0xce) {
+        const val = this.view.getUint32(this.offset);
+        this.offset += 4;
+        return val;
+      }
+
+      // uint 64
+      if (byte === 0xcf) {
+        const val = this.view.getBigUint64(this.offset);
+        this.offset += 8;
+        return Number(val);
+      }
+
+      // int 8
+      if (byte === 0xd0) {
+        return this.view.getInt8(this.offset++);
+      }
+
+      // int 16
+      if (byte === 0xd1) {
+        const val = this.view.getInt16(this.offset);
+        this.offset += 2;
+        return val;
+      }
+
+      // int 32
+      if (byte === 0xd2) {
+        const val = this.view.getInt32(this.offset);
+        this.offset += 4;
+        return val;
+      }
+
+      // int 64
+      if (byte === 0xd3) {
+        const val = this.view.getBigInt64(this.offset);
+        this.offset += 8;
+        return Number(val);
+      }
+
+      // str 8
+      if (byte === 0xd9) {
+        const len = this.view.getUint8(this.offset++);
+        return this.parseString(len);
+      }
+
+      // str 16
+      if (byte === 0xda) {
+        const len = this.view.getUint16(this.offset);
+        this.offset += 2;
+        return this.parseString(len);
+      }
+
+      // str 32
+      if (byte === 0xdb) {
+        const len = this.view.getUint32(this.offset);
+        this.offset += 4;
+        return this.parseString(len);
+      }
+
+      // array 16
+      if (byte === 0xdc) {
+        const len = this.view.getUint16(this.offset);
+        this.offset += 2;
+        return this.parseArray(len);
+      }
+
+      // array 32
+      if (byte === 0xdd) {
+        const len = this.view.getUint32(this.offset);
+        this.offset += 4;
+        return this.parseArray(len);
+      }
+
+      // map 16
+      if (byte === 0xde) {
+        const len = this.view.getUint16(this.offset);
+        this.offset += 2;
+        return this.parseMap(len);
+      }
+
+      // map 32
+      if (byte === 0xdf) {
+        const len = this.view.getUint32(this.offset);
+        this.offset += 4;
+        return this.parseMap(len);
+      }
+
+      // negative fixint
+      if (byte >= 0xe0) return byte - 256;
+
+      throw new Error(`Unknown byte: 0x${byte.toString(16)} at offset ${this.offset - 1}`);
+    }
+
+    parseString(length) {
+      const bytes = new Uint8Array(this.view.buffer, this.offset, length);
+      this.offset += length;
+      return new TextDecoder('utf-8').decode(bytes);
+    }
+
+    parseBytes(length) {
+      const bytes = new Uint8Array(this.view.buffer, this.offset, length);
+      this.offset += length;
+      return bytes;
+    }
+
+    parseArray(length) {
+      const arr = [];
+      for (let i = 0; i < length; i++) {
+        arr.push(this.parse());
+      }
+      return arr;
+    }
+
+    parseMap(length) {
+      const obj = {};
+      for (let i = 0; i < length; i++) {
+        const key = this.parse();
+        const value = this.parse();
+        obj[key] = value;
+      }
+      return obj;
+    }
+  }
+
+  /**
+   * Base64 字符串转 ArrayBuffer
+   */
+  function base64ToArrayBuffer(base64) {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+  }
+
+  /**
+   * 解析阿里系聊天 MessagePack 数据
+   * @param {string} base64Data - Base64 编码的 MessagePack 数据
+   * @returns {Object|null} 解析后的对象，失败返回 null
+   */
+  function parseMessagePackData(base64Data) {
+    try {
+      const buffer = base64ToArrayBuffer(base64Data);
+      const decoder = new MessagePackDecoder(buffer);
+      const result = decoder.decode();
+      return result;
+    } catch (error) {
+      console.warn('[XianyuAPI] MessagePack 解析失败:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * 检查字符串是否为有效的 JSON
+   */
+  function isValidJSON(str) {
+    try {
+      JSON.parse(str);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * 解码并解析 Base64 编码的聊天数据
+   * 支持 MessagePack 和 JSON 两种格式
+   * @param {string} base64Data - Base64 编码的数据
+   * @returns {Object|null} 解析后的数据对象
+   */
+  function decodeChatData(base64Data) {
+    if (!base64Data || typeof base64Data !== 'string') {
+      console.warn('[XianyuAPI] 无效的 Base64 数据');
+      return null;
+    }
+
+    const cleanedData = base64Data.trim();
+
+    // 优先尝试 MessagePack 解析（阿里系聊天数据）
+    const msgPackData = parseMessagePackData(cleanedData);
+    if (msgPackData) {
+      console.log('[XianyuAPI] ✅ MessagePack 解析成功');
+      return msgPackData;
+    }
+
+    // MessagePack 解析失败，尝试传统 Base64 解析
+    let decodedText;
+    try {
+      decodedText = atob(cleanedData);
+    } catch (decodeError) {
+      console.warn('[XianyuAPI] ⚠️ Base64 解码失败:', decodeError.message);
+      return null;
+    }
+
+    // 判断是否属于 JSON
+    if (!isValidJSON(decodedText)) {
+      console.log('[XianyuAPI] 📝 解码后的内容（非JSON）:', decodedText);
+      return null;
+    }
+
+    // 如果是 JSON，则解析
+    try {
+      const jsonData = JSON.parse(decodedText);
+      console.log('[XianyuAPI] ✅ JSON 解析成功');
+      return jsonData;
+    } catch (parseError) {
+      console.warn('[XianyuAPI] ⚠️ JSON 解析失败:', parseError.message);
+      return null;
+    }
+  }
+
+  /**
+   * 从 reminderUrl 中提取接收人ID
+   * URL格式: fleamarket://message_chat?itemId=xxx&peerUserId=xxx&sid=xxx
+   */
+  function extractReceiverId(reminderUrl) {
+    if (!reminderUrl) return null;
+    const match = reminderUrl.match(/peerUserId=([^&]+)/);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * 从 reminderUrl 中提取会话ID (sid)
+   */
+  function extractSessionId(reminderUrl) {
+    if (!reminderUrl) return null;
+    const match = reminderUrl.match(/sid=([^&]+)/);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * 从 reminderUrl 中提取商品ID (itemId)
+   */
+  function extractItemId(reminderUrl) {
+    if (!reminderUrl) return null;
+    const match = reminderUrl.match(/itemId=([^&]+)/);
+    return match ? match[1] : null;
+  }
+
   // ==================== MD5 算法实现 ====================
   function md5(string) {
     function rotateLeft(value, shift) {
@@ -318,6 +651,506 @@ window.XianyuAPI = (function() {
       .filter(text => !!text);
   }
 
+  // ==================== 闲鱼业务消息处理 ====================
+
+  /**
+   * 修复 UTF-8 乱码问题
+   * 将被错误解码为 ISO-8859-1 的 UTF-8 字符串还原
+   */
+  function fixUTF8Encoding(str) {
+    if (typeof str !== 'string') return str;
+
+    try {
+      // 更准确的乱码检测模式（针对中文优化）
+      const hasMojibake =
+        // 模式1: 检测连续的 Latin-1 补充字符（典型乱码特征）
+        /[\u00C0-\u00FF]{2,}/.test(str) ||
+        // 模式2: 检测 UTF-8 双字节序列被错误解码的情况
+        /[\u00C2-\u00DF][\u0080-\u00BF]/.test(str) ||
+        // 模式3: 检测 UTF-8 三字节序列被错误解码的情况（中文常见）
+        /[\u00E0-\u00EF][\u0080-\u00BF]{2}/.test(str);
+
+      if (!hasMojibake) {
+        return str; // 没有乱码，直接返回
+      }
+
+      // 将字符串转换为字节数组（按 ISO-8859-1 编码）
+      const bytes = [];
+      for (let i = 0; i < str.length; i++) {
+        bytes.push(str.charCodeAt(i) & 0xff);
+      }
+
+      // 使用 TextDecoder 将字节数组按 UTF-8 解码
+      const decoder = new TextDecoder('utf-8');
+      return decoder.decode(new Uint8Array(bytes));
+    } catch (error) {
+      console.warn('[XianyuAPI] 编码修复失败:', error);
+      return str;
+    }
+  }
+
+  /**
+   * 递归修复对象中所有字符串的编码问题
+   */
+  function fixEncodingInObject(obj) {
+    if (typeof obj === 'string') {
+      return fixUTF8Encoding(obj);
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.map(item => fixEncodingInObject(item));
+    }
+
+    if (typeof obj === 'object' && obj !== null) {
+      const fixed = {};
+      for (const key in obj) {
+        if (obj.hasOwnProperty(key)) {
+          fixed[key] = fixEncodingInObject(obj[key]);
+        }
+      }
+      return fixed;
+    }
+
+    return obj;
+  }
+
+  /**
+   * 判断是否为订单消息
+   */
+  function isOrderMessage(data) {
+    return data && data['3'] && data['3']['redReminder'];
+  }
+
+  /**
+   * 判断是否为正在输入状态
+   * 检查消息['1']数组中是否包含@goofish字符串
+   */
+  function isTypingStatus(data) {
+    try {
+      return (
+        typeof data === 'object' &&
+        data !== null &&
+        '1' in data &&
+        Array.isArray(data['1']) &&
+        data['1'].length > 0 &&
+        typeof data['1'][0] === 'object' &&
+        data['1'][0] !== null &&
+        '1' in data['1'][0] &&
+        typeof data['1'][0]['1'] === 'string' &&
+        data['1'][0]['1'].includes('@goofish')
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * 判断是否为系统消息
+   */
+  function isSystemMessage(data) {
+    return data && data['3'] && data['3']['systemNotice'];
+  }
+
+  /**
+   * 判断是否为用户聊天消息
+   */
+  function isChatMessage(data) {
+    return data && data['1'] && data['1']['10'] && data['1']['10']['reminderContent'];
+  }
+
+  /**
+   * 获取消息类型
+   */
+  function getMessageType(data) {
+    if (!data) return '未知';
+    if (isOrderMessage(data)) return '订单消息';
+    if (isTypingStatus(data)) return '正在输入';
+    if (isSystemMessage(data)) return '系统消息';
+    if (isChatMessage(data)) return '用户聊天消息';
+    return '未知类型';
+  }
+
+  /**
+   * 安全的 JSON 解析函数，自动进行编码修复
+   */
+  function safeJSONParse(str) {
+    try {
+      const parsed = JSON.parse(str);
+      return fixEncodingInObject(parsed);
+    } catch (e) {
+      console.warn('[XianyuAPI] JSON解析失败:', e);
+      return null;
+    }
+  }
+
+  /**
+   * 构造统一的聊天消息对象
+   * @param {Object} options - 配置选项
+   * @returns {Object} 聊天消息对象
+   */
+  function buildChatMessage(options) {
+    const {
+      senderId,
+      senderName,
+      senderUserType,
+      clientIp,
+      receiverId,
+      sessionId,
+      itemId,
+      content,
+      contentType,
+      timestamp,
+      createAt,
+      messageId,
+      platform,
+      appVersion,
+      direction // 'in' = 接收的消息, 'out' = 发送的消息
+    } = options;
+
+    return {
+      type: 'chat',
+      // 发送人信息
+      senderId: senderId || '未知',
+      senderName: senderName || '未知',
+      senderUserType: senderUserType || '0',
+      clientIp: clientIp || '未知',
+      // 接收人信息
+      receiverId: receiverId || '未知',
+      sessionId: sessionId || '未知',
+      // 商品信息
+      itemId: itemId || '未知',
+      // 消息内容
+      content: content || '',
+      contentType: contentType || 101,
+      // 时间信息
+      timestamp: timestamp || new Date().toLocaleString(),
+      createAt: createAt || Date.now(),
+      // 其他信息
+      messageId: messageId || '未知',
+      platform: platform || '未知',
+      appVersion: appVersion || '未知',
+      // 消息方向：in=接收, out=发送
+      direction: direction || 'in'
+    };
+  }
+
+  /**
+   * 处理闲鱼聊天数据项（对象格式）
+   * @param {Object} dataItem - 包含 data 字段的数据对象
+   * @param {number} index - 数据索引
+   * @returns {Object|null} 解析后的聊天信息
+   */
+  function handleObjectDataItem(dataItem, index) {
+    console.log(`[XianyuAPI] 📦 消息包 [${index + 1}]:`, {
+      bizType: dataItem.bizType,
+      objectType: dataItem.objectType,
+      streamId: dataItem.streamId
+    });
+
+    // 解码 data 字段
+    try {
+      let decodedData = safeJSONParse(atob(dataItem.data));
+      if (!decodedData) {
+        console.log('[XianyuAPI] ⚠️ 数据解码失败，跳过');
+        return null;
+      }
+
+      console.log(`[XianyuAPI] 📦 解码后的数据 [${index + 1}]:`, decodedData);
+
+      // 消息分类
+      const msgType = getMessageType(decodedData);
+      console.log(`[XianyuAPI] 🔍 消息类型: ${msgType}`);
+
+      // 根据消息类型进行处理
+      if (isOrderMessage(decodedData)) {
+        const orderStatus = decodedData['3']['redReminder'];
+        const userId = decodedData['1'] ? decodedData['1'].split('@')[0] : '未知';
+        console.log(`[XianyuAPI] 📦 订单状态: ${orderStatus}, 用户ID: ${userId}`);
+        return { type: 'order', orderStatus, userId, data: decodedData };
+      } else if (isTypingStatus(decodedData)) {
+        console.log('[XianyuAPI] ⌨️ 用户正在输入...');
+        return { type: 'typing', data: decodedData };
+      } else if (isSystemMessage(decodedData)) {
+        console.log('[XianyuAPI] 🔔 系统消息（不需要推送）');
+        return { type: 'system', data: decodedData };
+      } else if (isChatMessage(decodedData)) {
+        // 提取聊天消息详细信息
+        const chatInfo = decodedData['1']['10'];
+        const chatData = buildChatMessage({
+          senderId: chatInfo.senderUserId || '未知',
+          senderName: chatInfo.reminderTitle || '未知',
+          senderUserType: chatInfo.senderUserType || '0',
+          clientIp: chatInfo.clientIp || '未知',
+          receiverId: decodedData['1']?.['2']?.split('@')[0] || '未知',
+          sessionId: chatInfo.reminderUrl ? extractSessionId(chatInfo.reminderUrl) : decodedData['1']?.['2'] || '未知',
+          itemId: chatInfo.reminderUrl ? extractItemId(chatInfo.reminderUrl) : '未知',
+          content: chatInfo.reminderContent || '',
+          contentType: 101,
+          timestamp: decodedData['1']['5'] ? new Date(decodedData['1']['5']).toLocaleString() : '未知',
+          createAt: decodedData['1']['5'] || Date.now(),
+          messageId: decodedData['1']['3'] || '未知',
+          platform: chatInfo._platform || '未知',
+          appVersion: chatInfo._appVersion || '未知',
+          direction: 'in' // 接收的消息
+        });
+        console.log('[XianyuAPI] 💬 用户聊天消息:', chatData);
+        return chatData;
+      }
+
+      // 提取会话信息
+      if (decodedData.sessionInfo) {
+        const sessionInfo = decodedData.sessionInfo;
+        const ext = sessionInfo.extensions || {};
+        console.log('[XianyuAPI] 📋 会话信息:', {
+          sessionId: sessionInfo.sessionId,
+          itemTitle: ext.itemTitle || '未知',
+          sellerId: ext.itemSellerId || ext.ownerUserId || '未知',
+          buyerId: ext.extUserId || '未知',
+          itemId: ext.itemId || '未知'
+        });
+      }
+
+      return { type: 'unknown', data: decodedData };
+    } catch (decodeError) {
+      console.log('[XianyuAPI] ⚠️ 无法解码 data 字段:', decodeError.message);
+      return null;
+    }
+  }
+
+  /**
+   * 处理闲鱼聊天数据项（字符串格式，MessagePack/JSON）
+   * @param {string} base64Data - Base64 编码的数据
+   * @param {number} index - 数据索引
+   * @returns {Object|null} 解析后的聊天信息
+   */
+  function handleStringDataItem(base64Data, index) {
+    // 调用统一解析函数
+    const decodedData = decodeChatData(base64Data);
+
+    if (!decodedData) {
+      console.log('[XianyuAPI] ⚠️ 数据解析失败，跳过');
+      return null;
+    }
+
+    console.log(`[XianyuAPI] 📦 同步数据 [${index + 1}] 解析成功:`, decodedData);
+
+    // 消息分类
+    const msgType = getMessageType(decodedData);
+    console.log(`[XianyuAPI] 🔍 消息类型: ${msgType}`);
+
+    // 判断是否为用户聊天消息
+    if (decodedData["1"] && decodedData["1"]["10"] && decodedData["1"]["10"]["reminderContent"]) {
+      const chatData = decodedData["1"];
+      const contentData = chatData["10"];
+      const messageData = chatData["6"] || {};
+
+      // 解析消息内容（从 messageData["3"]["5"] 或 contentData.reminderContent）
+      let messageText = '';
+      let messageContentType = 101;
+
+      if (messageData["3"] && messageData["3"]["5"]) {
+        try {
+          const contentJson = JSON.parse(messageData["3"]["5"]);
+          if (contentJson.text && contentJson.text.text) {
+            messageText = contentJson.text.text;
+          }
+          messageContentType = contentJson.contentType || 101;
+        } catch (e) {
+          messageText = messageData["3"]["5"] || contentData.reminderContent || '';
+        }
+      } else {
+        messageText = contentData.reminderContent || '';
+      }
+
+      // 从 reminderUrl 提取信息
+      const sessionId = extractSessionId(contentData.reminderUrl);
+      const itemId = extractItemId(contentData.reminderUrl);
+      const peerUserId = extractReceiverId(contentData.reminderUrl);
+
+      // 判断消息方向：根据接收人ID是否等于当前会话的发送方
+      // 这里简单判断：如果接收人ID存在且在peerUserId中，则可能是接收的消息
+      const direction = 'in'; // 默认为接收的消息，后续可根据业务逻辑调整
+
+      const chatInfo = buildChatMessage({
+        senderId: contentData.senderUserId || chatData["1"]?.["1"]?.split('@')[0] || peerUserId || '未知',
+        senderName: contentData.reminderTitle || '未知',
+        senderUserType: contentData.senderUserType || '0',
+        clientIp: contentData.clientIp || '未知',
+        receiverId: chatData["2"]?.split('@')[0] || '未知',
+        sessionId: sessionId || chatData["2"] || '未知',
+        itemId: itemId || '未知',
+        content: messageText,
+        contentType: messageContentType,
+        timestamp: chatData["5"] ? new Date(chatData["5"]).toLocaleString() : new Date().toLocaleString(),
+        createAt: chatData["5"] || Date.now(),
+        messageId: chatData["3"] || '未知',
+        platform: contentData._platform || '未知',
+        appVersion: contentData._appVersion || '未知',
+        direction: direction
+      });
+
+      console.log('[XianyuAPI] 💬 聊天消息:', {
+        方向: direction === 'in' ? '接收' : '发送',
+        发送人: `${chatInfo.senderName}(${chatInfo.senderId})`,
+        发送人IP: chatInfo.clientIp,
+        接收人ID: chatInfo.receiverId,
+        会话ID: chatInfo.sessionId,
+        商品ID: chatInfo.itemId,
+        内容: chatInfo.content,
+        类型: chatInfo.contentType,
+        时间: chatInfo.timestamp
+      });
+
+      return chatInfo;
+    }
+
+    return { type: 'unknown', data: decodedData };
+  }
+
+  /**
+   * 处理闲鱼 WebSocket 同步数据
+   * @param {Array} syncData - 同步数据数组
+   * @returns {Array} 处理后的消息列表
+   */
+  function handleSyncData(syncData) {
+    if (!Array.isArray(syncData)) {
+      console.log('[XianyuAPI] syncData 不是数组，类型:', typeof syncData);
+      return [];
+    }
+
+    console.log('[XianyuAPI] syncData 是数组，长度:', syncData.length);
+
+    const results = [];
+
+    syncData.forEach((dataItem, index) => {
+      try {
+        // 检查是否为对象（闲鱼格式）
+        if (typeof dataItem.data === 'object' && dataItem.data) {
+          const result = handleObjectDataItem(dataItem, index);
+          if (result) {
+            results.push(result);
+          }
+        }
+        // 旧格式：直接是 base64 字符串
+        else if (typeof dataItem.data === 'string') {
+          const result = handleStringDataItem(dataItem.data, index);
+          if (result) {
+            results.push(result);
+          }
+        }
+      } catch (decodeError) {
+        console.log('[XianyuAPI] ⚠️ 处理消息失败:', decodeError.message);
+        console.log('[XianyuAPI] 原始数据:', dataItem);
+      }
+    });
+
+    return results;
+  }
+
+  /**
+   * 处理闲鱼 WebSocket 消息
+   * @param {string} eventData - WebSocket 接收到的原始数据
+   * @returns {Object} 处理结果
+   */
+  function handleWebSocketMessage(eventData) {
+    try {
+      const parsed = JSON.parse(eventData);
+
+      // 解析钉钉长轮询协议消息
+      if (parsed.body && parsed.body.syncPushPackage && parsed.body.syncPushPackage.data) {
+        console.log('[XianyuAPI] 🔄 收到同步包消息');
+
+        const syncData = parsed.body.syncPushPackage.data;
+        const messages = handleSyncData(syncData);
+
+        return {
+          type: 'sync',
+          messages: messages,
+          raw: parsed
+        };
+      }
+
+      // 解析普通消息体
+      else if (parsed.body) {
+        const body = parsed.body;
+        if (body.content || body.extension) {
+          // 解析扩展信息（包含发送人、接收人信息）
+          const ext = body.extension || {};
+          const content = body.content || {};
+
+          // 解析消息内容（custom.data 是 Base64 编码的 JSON）
+          let messageText = '';
+          if (content.custom && content.custom.data) {
+            try {
+              const decodedData = atob(content.custom.data);
+              const contentJson = JSON.parse(decodedData);
+              if (contentJson.text && contentJson.text.text) {
+                messageText = contentJson.text.text;
+              }
+            } catch (e) {
+              console.warn('[XianyuAPI] 解析消息内容失败:', e);
+              messageText = content.custom.summary || '';
+            }
+          }
+
+          // 判断消息方向：这是从WebSocket接收到的，默认为接收的消息
+          const direction = 'in';
+
+          const chatMessage = buildChatMessage({
+            senderId: ext.senderUserId || '未知',
+            senderName: ext.reminderTitle || '未知',
+            senderUserType: ext.senderUserType || '0',
+            clientIp: ext.clientIp || '未知',
+            receiverId: extractReceiverId(ext.reminderUrl) || '未知',
+            sessionId: extractSessionId(ext.reminderUrl) || '未知',
+            itemId: extractItemId(ext.reminderUrl) || '未知',
+            content: messageText || content.custom?.summary || '',
+            contentType: content.contentType || 101,
+            timestamp: body.createAt ? new Date(body.createAt).toLocaleString() : new Date().toLocaleString(),
+            createAt: body.createAt || Date.now(),
+            messageId: body.messageId || '未知',
+            platform: ext._platform || '未知',
+            appVersion: ext._appVersion || '未知',
+            direction: direction
+          });
+
+          console.log('[XianyuAPI] 💬 聊天消息:', {
+            方向: direction === 'in' ? '接收' : '发送',
+            发送人: `${chatMessage.senderName}(${chatMessage.senderId})`,
+            接收人: `ID:${chatMessage.receiverId}`,
+            会话ID: chatMessage.sessionId,
+            内容: chatMessage.content,
+            未读数: body.unreadCount || 0,
+            时间: chatMessage.timestamp
+          });
+
+          return {
+            type: 'message',
+            message: chatMessage,
+            raw: parsed
+          };
+        }
+      }
+
+      // 记录协议路径
+      if (parsed.lwp) {
+        console.log('[XianyuAPI] 🔄 LWP协议路径:', parsed.lwp);
+      }
+
+      return {
+        type: 'unknown',
+        raw: parsed
+      };
+
+    } catch (e) {
+      console.log('[XianyuAPI] ⚠️ 无法解析为JSON:', e.message);
+      return {
+        type: 'error',
+        error: e.message
+      };
+    }
+  }
+
   // ==================== 导出接口 ====================
   return {
     // MD5
@@ -341,6 +1174,31 @@ window.XianyuAPI = (function() {
 
     // 流量词 API
     fetchSuggestWords: fetchSuggestWords,
+
+    // WebSocket 数据解析
+    decodeChatData: decodeChatData,
+    parseMessagePackData: parseMessagePackData,
+    MessagePackDecoder: MessagePackDecoder,
+
+    // URL 参数提取
+    extractReceiverId: extractReceiverId,
+    extractSessionId: extractSessionId,
+    extractItemId: extractItemId,
+
+    // 闲鱼业务消息处理
+    buildChatMessage: buildChatMessage,
+    handleWebSocketMessage: handleWebSocketMessage,
+    handleSyncData: handleSyncData,
+    handleObjectDataItem: handleObjectDataItem,
+    handleStringDataItem: handleStringDataItem,
+    getMessageType: getMessageType,
+    isOrderMessage: isOrderMessage,
+    isTypingStatus: isTypingStatus,
+    isSystemMessage: isSystemMessage,
+    isChatMessage: isChatMessage,
+    fixUTF8Encoding: fixUTF8Encoding,
+    fixEncodingInObject: fixEncodingInObject,
+    safeJSONParse: safeJSONParse,
 
     // 配置
     API_CONFIG: API_CONFIG

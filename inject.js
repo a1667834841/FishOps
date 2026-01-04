@@ -7,6 +7,109 @@
   'use strict';
   console.log('[闲鱼采集] inject.js 已注入到页面上下文');
 
+  // ==================== WebSocket 拦截功能 (最高优先级) ====================
+  // 必须在任何其他代码之前 hook WebSocket，确保在 WebSocket 被创建之前拦截
+
+  const originalWebSocket = window.WebSocket;
+  
+  window.WebSocket = function(url, protocols) {
+    console.log('[闲鱼采集] WebSocket 连接创建:', url);
+    
+    // 创建原始 WebSocket 实例
+    const ws = new originalWebSocket(url, protocols);
+    
+    // 判断是否是闲鱼聊天的 WebSocket
+    if (url.includes('wss-goofish.dingtalk.com')) {
+      console.log('[闲鱼采集] 🎯 检测到闲鱼聊天 WebSocket 连接');
+      
+      // Hook send 方法（发送的消息）
+      const originalSend = ws.send;
+      ws.send = function(data) {
+        try {
+          // console.log('[闲鱼采集] 📤 发送消息:', data);
+          
+          // 尝试解析 JSON
+          if (typeof data === 'string') {
+            try {
+              const parsed = JSON.parse(data);
+              // console.log('[闲鱼采集] 📤 发送消息(已解析):', parsed);
+            } catch (e) {
+              // 不是 JSON 格式
+            }
+          }
+        } catch (error) {
+          console.error('[闲鱼采集] 处理发送消息失败:', error);
+        }
+        
+        return originalSend.apply(this, arguments);
+      };
+      
+      
+      // Hook onmessage 属性（关键！）
+      let actualOnMessageHandler = null;
+      Object.defineProperty(ws, 'onmessage', {
+        get: function() {
+          return actualOnMessageHandler;
+        },
+        set: function(handler) {
+          console.log('[闲鱼采集] 🎯 检测到 onmessage 被设置');
+          actualOnMessageHandler = handler;
+          
+          // 包装原始 handler
+          const wrappedHandler = function(event) {
+            // 关键：始终先调用原始 handler，确保闲鱼功能正常
+            const result = handler ? handler.call(this, event) : undefined;
+
+            // 然后调用 XianyuAPI 处理消息
+            try {
+              if (typeof event.data === 'string' && window.XianyuAPI) {
+                window.XianyuAPI.handleWebSocketMessage(event.data);
+              }
+            } catch (error) {
+              console.error('[闲鱼采集] 处理接收消息失败(onmessage):', error);
+            }
+            
+            // 返回原始 handler 的返回值
+            return result;
+          };
+          
+          // 使用原型链上的原始 setter 设置包装后的 handler
+          Object.getOwnPropertyDescriptor(originalWebSocket.prototype, 'onmessage').set.call(ws, wrappedHandler);
+        },
+        configurable: true
+      });
+      
+      // 监听连接事件
+      const originalOpen = ws.addEventListener.bind(ws);
+      originalOpen('open', function(event) {
+        console.log('[闲鱼采集] ✅ WebSocket 连接已建立:', url);
+      });
+      
+      originalOpen('close', function(event) {
+        console.log('[闲鱼采集] ❌ WebSocket 连接已关闭:', {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean
+        });
+      });
+      
+      originalOpen('error', function(event) {
+        console.error('[闲鱼采集] ⚠️ WebSocket 连接错误:', event);
+      });
+    }
+    
+    return ws;
+  };
+  
+  // 复制原始 WebSocket 的属性
+  window.WebSocket.prototype = originalWebSocket.prototype;
+  window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
+  window.WebSocket.OPEN = originalWebSocket.OPEN;
+  window.WebSocket.CLOSING = originalWebSocket.CLOSING;
+  window.WebSocket.CLOSED = originalWebSocket.CLOSED;
+
+  console.log('[闲鱼采集] WebSocket 拦截器已安装完成');
+
   // 检查 MessageBus 是否已加载
   if (!window.MessageBus) {
     console.error('[闲鱼采集] ❌ MessageBus 未找到！数据无法转发');
