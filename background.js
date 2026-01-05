@@ -119,19 +119,33 @@ function getFeishuFieldConfigs() {
   const configs = [];
   const addedFields = new Set();
   
-  Object.entries(PRODUCT_SCHEMA).forEach(([key, config]) => {
-    // 使用 feishuField 或 label 作为字段名
-    const fieldName = config.feishuField || config.label;
-    
-    // 避免重复添加（比如价格和价格数值共用一个飞书字段）
-    if (!addedFields.has(fieldName)) {
-      configs.push({
-        name: fieldName,
-        type: config.feishuType
-      });
-      addedFields.add(fieldName);
-    }
-  });
+  // 先处理有 feishuField 的字段（优先级更高，如 priceNumber 使用数字类型）
+  Object.entries(PRODUCT_SCHEMA)
+    .filter(([key, config]) => config.feishuField)
+    .forEach(([key, config]) => {
+      const fieldName = config.feishuField;
+      if (!addedFields.has(fieldName)) {
+        configs.push({
+          name: fieldName,
+          type: config.feishuType
+        });
+        addedFields.add(fieldName);
+      }
+    });
+  
+  // 再处理没有 feishuField 的字段（使用 label）
+  Object.entries(PRODUCT_SCHEMA)
+    .filter(([key, config]) => !config.feishuField)
+    .forEach(([key, config]) => {
+      const fieldName = config.label;
+      if (!addedFields.has(fieldName)) {
+        configs.push({
+          name: fieldName,
+          type: config.feishuType
+        });
+        addedFields.add(fieldName);
+      }
+    });
   
   // 添加关键字字段（不在 schema 中，但飞书需要）
   configs.unshift({ name: '关键字', type: 1 });
@@ -180,6 +194,37 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // 获取当前关键词
   if (request.type === 'GET_KEYWORD') {
     sendResponse({ keyword: currentKeyword });
+    return true;
+  }
+
+  // 获取过滤条件配置
+  if (request.type === 'GET_FILTER_CONFIG') {
+    sendResponse({ config: filterConfig });
+    return true;
+  }
+
+  // 清空数据
+  if (request.type === 'CLEAR_DATA') {
+    capturedData = [];
+    capturedItemIds = new Set();
+    statistics = { pageCount: 0, itemCount: 0, lastCaptureTime: null };
+    chrome.storage.local.set({
+      capturedData: [],
+      capturedItemIds: [],
+      statistics
+    });
+    console.log('[闲鱼采集] 数据已清空');
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // 获取统计信息
+  if (request.type === 'GET_STATS') {
+    sendResponse({
+      itemCount: capturedData.length,
+      pageCount: statistics.pageCount,
+      lastCaptureTime: statistics.lastCaptureTime
+    });
     return true;
   }
 
@@ -236,16 +281,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     }
 
+    // 打印原始数据信息
+    console.log('[闲鱼采集] ========== 页面数据分析 ==========');
+    console.log('[闲鱼采集] 本页返回商品总数:', resultList.length);
+    console.log('[闲鱼采集] 过滤条件:', {
+      minWantCnt: filterConfig.minWantCnt,
+      minPrice: filterConfig.minPrice,
+      maxPrice: filterConfig.maxPrice,
+      onlyFreeShip: filterConfig.onlyFreeShip
+    });
+
     // 过滤已采集的商品（根据商品ID+想要数+价格组合键去重）并应用过滤条件
-    const newItems = resultList.filter(item => {
+    let filteredByConditions = 0;
+    let filteredByDuplicate = 0;
+    const newItems = resultList.filter((item, index) => {
       const mainData = item.data?.item?.main;
-      if (!mainData) return false;
+      if (!mainData) {
+        console.log(`[闲鱼采集] 跳过商品 ${index}: 无 main 数据`);
+        return false;
+      }
       const exContent = mainData.exContent || {};
       const clickParam = mainData.clickParam?.args || {};
       const itemId = clickParam.item_id || exContent.itemId || '';
-      
-      if (!itemId) return false;
-      
+
+      if (!itemId) {
+        console.log(`[闲鱼采集] 跳过商品 ${index}: 无商品ID`);
+        return false;
+      }
+
       // 提取想要人数
       const fishTags = exContent.fishTags || {};
       let wantCnt = 0;
@@ -258,53 +321,65 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           }
         });
       });
-      
+
       // 提取价格
       const priceStr = (exContent.price || []).map(p => p.text || '').join('');
       const priceNumber = parseFloat(priceStr.replace(/[^\d.]/g, '')) || 0;
-      
+
       // 判断包邮
       const isFreeShip = clickParam.tag?.includes('freeship') ||
                         clickParam.tagname?.includes('包邮') ||
                         fishTags?.r1?.tagList?.some(t => t.data?.content === '包邮');
-      
+
       // 应用过滤条件
       // 1. 最小想要人数过滤
       if (filterConfig.minWantCnt > 0 && wantCnt < filterConfig.minWantCnt) {
-        console.log(`[闲鱼采集] 过滤: 商品 ${itemId} 想要人数 ${wantCnt} < ${filterConfig.minWantCnt}`);
+        filteredByConditions++;
         return false;
       }
-      
+
       // 2. 最小价格过滤
       if (filterConfig.minPrice > 0 && priceNumber < filterConfig.minPrice) {
-        console.log(`[闲鱼采集] 过滤: 商品 ${itemId} 价格 ${priceNumber} < ${filterConfig.minPrice}`);
+        filteredByConditions++;
         return false;
       }
-      
+
       // 3. 最大价格过滤
       if (filterConfig.maxPrice > 0 && priceNumber > filterConfig.maxPrice) {
-        console.log(`[闲鱼采集] 过滤: 商品 ${itemId} 价格 ${priceNumber} > ${filterConfig.maxPrice}`);
+        filteredByConditions++;
         return false;
       }
-      
+
       // 4. 只看包邮过滤
       if (filterConfig.onlyFreeShip && !isFreeShip) {
-        console.log(`[闲鱼采集] 过滤: 商品 ${itemId} 不包邮`);
+        filteredByConditions++;
         return false;
       }
-      
+
       // 构建组合键：商品ID + 想要数 + 价格
       const compositeKey = `${itemId}_${wantCnt}_${priceStr}`;
-      
+
       // 去重检查
-      if (capturedItemIds.has(compositeKey)) return false;
-      
+      if (capturedItemIds.has(compositeKey)) {
+        filteredByDuplicate++;
+        return false;
+      }
+
       capturedItemIds.add(compositeKey);
       return true;
     });
 
     const newItemCount = newItems.length;
-    console.log('[闲鱼采集] 新增商品数:', newItemCount, '(去重后)');
+    const previousTotal = statistics.itemCount;
+    const newTotal = previousTotal + newItemCount;
+
+    console.log('[闲鱼采集] ========== 页面采集结果 ==========');
+    console.log('[闲鱼采集] 本页返回商品总数:', resultList.length);
+    console.log('[闲鱼采集] 条件过滤掉:', filteredByConditions, '个商品');
+    console.log('[闲鱼采集] 去重过滤掉:', filteredByDuplicate, '个商品');
+    console.log('[闲鱼采集] 实际新增商品数:', newItemCount);
+    console.log('[闲鱼采集] 累计总商品数:', newTotal, '(之前:', previousTotal, '+ 新增:', newItemCount, ')');
+    console.log('[闲鱼采集] ========================================');
 
     // 只有新商品时才保存商品数据
     if (newItemCount > 0) {
@@ -368,13 +443,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       lastCaptureTime: null
     };
 
-    // 只删除采集数据和统计信息，保留配置和关键词
-    const keysToRemove = ['capturedData', 'capturedItemIds', 'requestLogs', 'statistics'];
-    chrome.storage.local.remove(keysToRemove, () => {
+    // 同步清空 storage
+    chrome.storage.local.set({
+      capturedData: [],
+      capturedItemIds: [],
+      requestLogs: [],
+      statistics: statistics
+    }, () => {
       if (chrome.runtime.lastError) {
         console.error('[闲鱼采集] 清空storage失败:', chrome.runtime.lastError);
         sendResponse({ success: false, error: chrome.runtime.lastError.message });
       } else {
+        console.log('[闲鱼采集] 数据已清空');
         sendResponse({ success: true });
       }
     });
@@ -488,11 +568,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // ========== 关键词-表格映射相关消息处理 ==========
+  // ========== 关键词-数据表映射相关消息处理 ==========
 
-  // 获取关键词-表格映射列表
+  // 获取关键词-数据表映射列表
   if (request.type === 'GET_KEYWORD_TABLE_MAP') {
     sendResponse({ success: true, map: keywordTableMap });
+    return true;
+  }
+
+  // 获取所有数据表列表（用于控制台展示）
+  if (request.type === 'GET_ALL_DATA_TABLES') {
+    (async () => {
+      try {
+        if (!feishuConfig.spreadsheetToken) {
+          sendResponse({ success: false, error: '未配置表格 Token' });
+          return;
+        }
+        const tables = await getDataTableList(feishuConfig.spreadsheetToken);
+        sendResponse({ success: true, tables: tables, spreadsheetToken: feishuConfig.spreadsheetToken });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
     return true;
   }
 
@@ -1134,30 +1231,67 @@ function convertProductToFeishuRecord(item) {
     '关键字': String(currentKeyword || '')
   };
   
-  // 遍历 PRODUCT_SCHEMA，自动转换所有字段
-  Object.entries(PRODUCT_SCHEMA).forEach(([key, config]) => {
-    const fieldName = config.feishuField || config.label;
-    const value = item[key];
-    
-    // 根据飞书字段类型转换数据
-    if (config.feishuType === 1) {
-      // 文本类型
-      fields[fieldName] = String(value || '');
-    } else if (config.feishuType === 2) {
-      // 数字类型
-      fields[fieldName] = Number(value) || 0;
-    } else if (config.feishuType === 5) {
-      // 日期类型（时间戳）
-      fields[fieldName] = value || null;
-    } else if (config.feishuType === 15) {
-      // URL类型
-      const url = normalizeUrl(value || '');
-      fields[fieldName] = url ? { link: url } : null;
-    } else {
-      // 默认处理
-      fields[fieldName] = value;
-    }
-  });
+  const processedFields = new Set(); // 用于记录已处理的飞书字段名
+  
+  // 先处理有 feishuField 的字段（优先级更高）
+  Object.entries(PRODUCT_SCHEMA)
+    .filter(([key, config]) => config.feishuField)
+    .forEach(([key, config]) => {
+      const fieldName = config.feishuField;
+      const value = item[key];
+      
+      if (!processedFields.has(fieldName)) {
+        // 根据飞书字段类型转换数据
+        if (config.feishuType === 1) {
+          // 文本类型
+          fields[fieldName] = String(value || '');
+        } else if (config.feishuType === 2) {
+          // 数字类型
+          fields[fieldName] = Number(value) || 0;
+        } else if (config.feishuType === 5) {
+          // 日期类型（时间戳）
+          fields[fieldName] = value || null;
+        } else if (config.feishuType === 15) {
+          // URL类型
+          const url = normalizeUrl(value || '');
+          fields[fieldName] = url ? { link: url } : null;
+        } else {
+          // 默认处理
+          fields[fieldName] = value;
+        }
+        processedFields.add(fieldName);
+      }
+    });
+  
+  // 再处理没有 feishuField 的字段（使用 label）
+  Object.entries(PRODUCT_SCHEMA)
+    .filter(([key, config]) => !config.feishuField)
+    .forEach(([key, config]) => {
+      const fieldName = config.label;
+      const value = item[key];
+      
+      if (!processedFields.has(fieldName)) {
+        // 根据飞书字段类型转换数据
+        if (config.feishuType === 1) {
+          // 文本类型
+          fields[fieldName] = String(value || '');
+        } else if (config.feishuType === 2) {
+          // 数字类型
+          fields[fieldName] = Number(value) || 0;
+        } else if (config.feishuType === 5) {
+          // 日期类型（时间戳）
+          fields[fieldName] = value || null;
+        } else if (config.feishuType === 15) {
+          // URL类型
+          const url = normalizeUrl(value || '');
+          fields[fieldName] = url ? { link: url } : null;
+        } else {
+          // 默认处理
+          fields[fieldName] = value;
+        }
+        processedFields.add(fieldName);
+      }
+    });
   
   return { fields };
 }
@@ -1295,68 +1429,75 @@ async function sendToFeishu(processedData) {
     return { success: false, error: '请先配置飞书 App ID 和 App Secret' };
   }
 
-  // ========== 自动创建表格逻辑 ==========
+  // ========== 自动创建数据表逻辑 ==========
   // 如果启用了自动创建表格，且有关键词
   if (feishuConfig.autoCreateTable && currentKeyword) {
-    console.log('[闲鱼采集-飞书] 自动创建表格模式已启用');
+    console.log('[闲鱼采集-飞书] 自动创建数据表模式已启用');
 
-    // 检查映射中是否已存在该关键词的表格
+    // 检查是否配置了 spreadsheetToken
+    if (!feishuConfig.spreadsheetToken) {
+      return { success: false, error: '请先配置飞书表格 Token，或者关闭「自动创建表格」功能' };
+    }
+
+    console.log(`[闲鱼采集-飞书] 当前关键词: ${currentKeyword}`);
+    console.log(`[闲鱼采集-飞书] 表格 Token: ${feishuConfig.spreadsheetToken}`);
+
+    // 检查映射中是否已存在该关键词的数据表
     if (!keywordTableMap[currentKeyword]) {
-      console.log(`[闲鱼采集-飞书] 关键词 "${currentKeyword}" 未创建过表格，开始创建...`);
+      console.log(`[闲鱼采集-飞书] 关键词 "${currentKeyword}" 未创建过数据表，检查是否已存在...`);
 
       try {
-        // 1. 检查是否已存在同名表格
-        const spreadsheets = await getSpreadsheetList();
-        const existingSpreadsheet = spreadsheets.find(s => s.title === currentKeyword);
+        // 1. 先获取所有数据表列表，检查是否已存在同名表
+        console.log(`[闲鱼采集-飞书] 获取现有数据表列表...`);
+        const existingTables = await getDataTableList(feishuConfig.spreadsheetToken);
+        const existingTable = existingTables.find(t => t.tableName === currentKeyword);
 
-        let spreadsheet;
-
-        if (existingSpreadsheet) {
-          console.log(`[闲鱼采集-飞书] 找到已存在的同名表格: ${existingSpreadsheet.title}`);
-          spreadsheet = existingSpreadsheet;
+        let productTable;
+        
+        if (existingTable) {
+          // 找到已存在的同名表，直接使用
+          console.log(`[闲鱼采集-飞书] 找到已存在的数据表: ${currentKeyword} (ID: ${existingTable.tableId})`);
+          productTable = {
+            tableId: existingTable.tableId,
+            name: existingTable.tableName
+          };
         } else {
-          // 2. 创建新的多维表格
-          console.log(`[闲鱼采集-飞书] 创建新表格: ${currentKeyword}`);
-          spreadsheet = await createSpreadsheet(currentKeyword, feishuConfig.parentFolderToken || '');
+          // 不存在，创建新的数据表
+          console.log(`[闲鱼采集-飞书] 创建新的商品数据表: ${currentKeyword}`);
+          productTable = await createDataTable(feishuConfig.spreadsheetToken, currentKeyword, PRODUCT_FIELD_CONFIGS);
+          console.log(`[闲鱼采集-飞书] 商品表创建成功:`, productTable);
         }
 
-        // 3. 创建商品表
-        console.log('[闲鱼采集-飞书] 创建商品数据表...');
-        const productTable = await createDataTable(spreadsheet.appToken, '商品表', PRODUCT_FIELD_CONFIGS);
-
-        // 4. 创建商家表
-        console.log('[闲鱼采集-飞书] 创建商家数据表...');
-        const sellerTable = await createDataTable(spreadsheet.appToken, '商家表', SELLER_FIELD_CONFIGS);
-
-        // 5. 保存映射关系
+        // 保存映射关系
         keywordTableMap[currentKeyword] = {
-          spreadsheetToken: spreadsheet.spreadsheetToken,
-          appToken: spreadsheet.appToken,
-          spreadsheetUrl: spreadsheet.url,
+          spreadsheetToken: feishuConfig.spreadsheetToken,
           productTableId: productTable.tableId,
-          sellerTableId: sellerTable.tableId,
+          productTableName: productTable.name,
           createTime: Date.now(),
           updateTime: Date.now()
         };
 
+        console.log(`[闲鱼采集-飞书] 映射关系:`, keywordTableMap[currentKeyword]);
+
         // 持久化到 storage
         chrome.storage.local.set({ keywordTableMap });
 
-        console.log('[闲鱼采集-飞书] 表格创建完成，映射关系已保存');
+        console.log('[闲鱼采集-飞书] 数据表准备完成，映射关系已保存');
       } catch (error) {
-        console.error('[闲鱼采集-飞书] 自动创建表格失败:', error);
+        console.error('[闲鱼采集-飞书] 自动创建数据表失败:', error);
+        console.error('[闲鱼采集-飞书] 错误堆栈:', error.stack);
         // 如果自动创建失败，返回错误
-        return { success: false, error: `自动创建表格失败: ${error.message}` };
+        return { success: false, error: `自动创建数据表失败: ${error.message}` };
       }
     } else {
-      console.log(`[闲鱼采集-飞书] 使用已存在的表格: ${currentKeyword}`);
+      console.log(`[闲鱼采集-飞书] 使用已存在的数据表: ${currentKeyword}`);
+      console.log(`[闲鱼采集-飞书] 映射信息:`, keywordTableMap[currentKeyword]);
     }
 
-    // 6. 更新当前使用的配置为关键词对应的表格配置
+    // 更新当前使用的配置为关键词对应的数据表配置
     const mapping = keywordTableMap[currentKeyword];
-    feishuConfig.spreadsheetToken = mapping.spreadsheetToken;
     feishuConfig.productTableId = mapping.productTableId;
-    feishuConfig.sellerTableId = mapping.sellerTableId;
+    console.log(`[闲鱼采集-飞书] 当前使用的商品表ID: ${feishuConfig.productTableId}`);
   }
 
   // 检查必要的配置
@@ -1404,7 +1545,6 @@ async function sendToFeishu(processedData) {
       const itemId = record.fields['商品ID'];
       const wantCnt = record.fields['想要人数'] || 0;
       const priceNum = record.fields['价格'] || 0;
-      // 注意：这里需要使用价格数值构建组合键，但在获取已存在记录时也需要使用数值
       const compositeKey = `${itemId}_${wantCnt}_${priceNum}`;
       const isNew = !existingItemKeys.has(compositeKey);
       if (!isNew) {
@@ -1421,7 +1561,6 @@ async function sendToFeishu(processedData) {
       return {
         success: true,
         productCount: 0,
-        sellerCount: 0,
         message: '所有商品已存在，未添加新记录'
       };
     }
@@ -1429,28 +1568,9 @@ async function sendToFeishu(processedData) {
     // 创建商品记录
     const productResults = await batchCreateRecords(feishuConfig.productTableId, newProductRecords);
 
-    let sellerResults = [];
-    if (feishuConfig.sellerTableId) {
-      // 自动创建商家表字段
-      console.log('[闲鱼采集-飞书] 开始检查并创建商家表字段...');
-      await ensureTableFields(feishuConfig.sellerTableId, SELLER_FIELD_CONFIGS);
-
-      // 去重商家记录
-      const sellerMap = new Map();
-      processedData.forEach(item => {
-        if (item.sellerNick && !sellerMap.has(item.sellerNick)) {
-          sellerMap.set(item.sellerNick, item);
-        }
-      });
-
-      const sellerRecords = Array.from(sellerMap.values()).map(convertSellerToFeishuRecord);
-      sellerResults = await batchCreateRecords(feishuConfig.sellerTableId, sellerRecords);
-    }
-
     return {
       success: true,
-      productCount: productResults.length,
-      sellerCount: sellerResults.length
+      productCount: productResults.length
     };
   } catch (error) {
     console.error('[闲鱼采集-飞书] 发送数据失败:', error);
@@ -1460,35 +1580,34 @@ async function sendToFeishu(processedData) {
 
 // ==================== 飞书表格创建 API ====================
 
-// 存储关键词与表格的映射关系
+// 存储关键词与数据表的映射关系（改为一个多维表格下的多个数据表）
 let keywordTableMap = {};
 
 // 从 storage 恢复映射关系
 chrome.storage.local.get(['keywordTableMap'], (result) => {
   if (result.keywordTableMap) {
     keywordTableMap = result.keywordTableMap;
-    console.log('[闲鱼采集-飞书] 恢复关键词-表格映射:', Object.keys(keywordTableMap));
+    console.log('[闲鱼采集-飞书] 恢复关键词-数据表映射:', Object.keys(keywordTableMap));
   }
 });
 
-// 获取用户的所有多维表格列表
-async function getSpreadsheetList() {
+// 获取指定多维表格下的所有数据表列表
+async function getDataTableList(appToken) {
   const token = await getTenantAccessToken();
 
   try {
     let hasMore = true;
     let pageToken = undefined;
-    const spreadsheets = [];
+    const tables = [];
 
     while (hasMore) {
-      const url = new URL(`${FEISHU_API_BASE}/open-apis/bitable/v1/apps`);
+      const url = new URL(`${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${appToken}/tables`);
       url.searchParams.append('page_size', '100');
       if (pageToken) {
         url.searchParams.append('page_token', pageToken);
       }
 
-      console.log(`[闲鱼采集-飞书] 获取表格列表请求 URL:`, url.toString());
-      console.log(`[闲鱼采集-飞书] 使用的 token:`, token ? `${token.substring(0, 20)}...` : 'null');
+      console.log(`[闲鱼采集-飞书] 获取数据表列表请求 URL:`, url.toString());
 
       const response = await fetch(url.toString(), {
         method: 'GET',
@@ -1497,59 +1616,37 @@ async function getSpreadsheetList() {
         }
       });
 
-      console.log(`[闲鱼采集-飞书] 获取表格列表 HTTP 状态: ${response.status} ${response.statusText}`);
+      console.log(`[闲鱼采集-飞书] 获取数据表列表 HTTP 状态: ${response.status} ${response.statusText}`);
 
       const text = await response.text();
-      console.log(`[闲鱼采集-飞书] 响应类型: ${response.headers.get('content-type')}`);
-      console.log(`[闲鱼采集-飞书] 完整响应内容:`, text);
-      console.log(`[闲鱼采集-飞书] 响应前200字符:`, text.substring(0, 200));
 
       // 检查响应是否为 HTML（错误页面）
       if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html>') || text.trim().startsWith('<HTML>')) {
-        console.error(`[闲鱼采集-飞书] 获取表格列表收到 HTML 响应`);
-        console.error(`[闲鱼采集-飞书] 响应前500字符:`, text.substring(0, 500));
-        throw new Error('飞书 API 返回错误页面。请检查应用权限：\n' +
-          '1. 多维表格权限：创建、获取、更新多维表格\n' +
-          '2. 数据表权限：创建、获取数据表\n' +
-          '3. 字段权限：创建、获取字段\n' +
-          '4. 记录权限：创建、获取记录\n' +
-          '请前往飞书开放平台，在【应用配置】-【权限管理】中添加以上所有权限。');
+        throw new Error('飞书 API 返回错误页面，请检查应用权限');
       }
 
-      // 检查响应是否为空
       if (!text || text.trim() === '') {
-        throw new Error('飞书 API 返回空响应，可能网络连接异常');
+        throw new Error('飞书 API 返回空响应');
       }
 
       let data;
       try {
         data = JSON.parse(text);
       } catch (parseError) {
-        console.error(`[闲鱼采集-飞书] JSON 解析失败:`, parseError);
-        console.error(`[闲鱼采集-飞书] 响应内容(前500字符):`, text.substring(0, 500));
-        throw new Error(`飞书 API 返回无效 JSON。请检查：\n` +
-          `1. 应用权限是否包含：\n` +
-          `   - 多维表格：创建、获取、更新\n` +
-          `   - 数据表：创建、获取\n` +
-          `   - 字段：创建、获取\n` +
-          `   - 记录：创建、获取\n` +
-          `2. App ID 和 App Secret 是否正确\n` +
-          `3. 网络连接是否正常\n` +
-          `响应内容: ${text.substring(0, 100)}`);
+        throw new Error(`飞书 API 返回无效 JSON: ${text.substring(0, 100)}`);
       }
 
       if (data.code !== 0) {
-        console.error('[闲鱼采集-飞书] 获取表格列表失败:', data);
-        throw new Error(data.msg || '获取表格列表失败');
+        console.error('[闲鱼采集-飞书] 获取数据表列表失败:', data);
+        throw new Error(data.msg || '获取数据表列表失败');
       }
 
-      // 收集表格信息
-      (data.data?.items || []).forEach(app => {
-        spreadsheets.push({
-          appToken: app.app_token,
-          spreadsheetToken: app.spreadsheet_token,
-          title: app.name,
-          url: app.url
+      // 收集数据表信息
+      (data.data?.items || []).forEach(table => {
+        tables.push({
+          tableId: table.table_id,
+          tableName: table.name,
+          revision: table.revision
         });
       });
 
@@ -1561,10 +1658,10 @@ async function getSpreadsheetList() {
       }
     }
 
-    console.log(`[闲鱼采集-飞书] 获取到 ${spreadsheets.length} 个表格`);
-    return spreadsheets;
+    console.log(`[闲鱼采集-飞书] 获取到 ${tables.length} 个数据表`);
+    return tables;
   } catch (error) {
-    console.error('[闲鱼采集-飞书] 获取表格列表异常:', error);
+    console.error('[闲鱼采集-飞书] 获取数据表列表异常:', error);
     throw error;
   }
 }
@@ -1687,7 +1784,7 @@ async function createSpreadsheet(title, folderToken = '') {
 }
 
 // 创建数据表（先创建空表，再添加字段）
-// 注意：appToken 是多维表格的应用 token，不是 spreadsheetToken
+// 注意：appToken 就是多维表格的 spreadsheetToken，可以互换使用
 async function createDataTable(appToken, tableName, fieldConfigs) {
   const accessToken = await getTenantAccessToken();
 
@@ -1706,29 +1803,27 @@ async function createDataTable(appToken, tableName, fieldConfigs) {
     };
     console.log(`[闲鱼采集-飞书] 请求体:`, JSON.stringify(requestBody));
 
-    const response = await fetch(
-      `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${appToken}/tables`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-      }
-    );
+    const url = `${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${appToken}/tables`;
+    console.log(`[闲鱼采集-飞书] 请求 URL:`, url);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
 
     console.log(`[闲鱼采集-飞书] 创建数据表 HTTP 状态: ${response.status} ${response.statusText}`);
 
     const text = await response.text();
     console.log(`[闲鱼采集-飞书] 响应类型: ${response.headers.get('content-type')}`);
     console.log(`[闲鱼采集-飞书] 完整响应内容:`, text);
-    console.log(`[闲鱼采集-飞书] 响应前100个字符:`, text.substring(0, 100));
 
     // 检查响应是否为 HTML（错误页面）
     if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html>') || text.trim().startsWith('<HTML>')) {
       console.error(`[闲鱼采集-飞书] 收到 HTML 响应，可能 API URL 或权限有问题`);
-      console.error(`[闲鱼采集-飞书] 响应前500字符:`, text.substring(0, 500));
       throw new Error('飞书 API 返回错误页面，请检查应用权限是否包含「查看、创建、编辑和删除多维表格」权限');
     }
 
@@ -1742,8 +1837,7 @@ async function createDataTable(appToken, tableName, fieldConfigs) {
       data = JSON.parse(text);
     } catch (parseError) {
       console.error(`[闲鱼采集-飞书] JSON 解析失败:`, parseError);
-      console.error(`[闲鱼采集-飞书] 响应内容(完整):`, text);
-      throw new Error(`飞书 API 返回无效 JSON。请检查: 1)应用权限是否包含「查看、创建、编辑和删除多维表格」 2)appToken是否正确 3)网络是否正常。响应: ${text.substring(0, 100)}`);
+      throw new Error(`飞书 API 返回无效 JSON: ${text.substring(0, 100)}`);
     }
 
     if (data.code !== 0) {
@@ -1751,7 +1845,13 @@ async function createDataTable(appToken, tableName, fieldConfigs) {
       throw new Error(data.msg || `创建数据表失败: ${tableName}`);
     }
 
-    const tableId = data.data.table.table_id;
+    // 安全地获取 tableId - 响应结构是 data.data.table_id，不是 data.data.table.table_id
+    const tableId = data.data?.table_id;
+    if (!tableId) {
+      console.error(`[闲鱼采集-飞书] 响应数据结构异常:`, data);
+      throw new Error('创建数据表成功，但无法获取表ID。响应数据: ' + JSON.stringify(data));
+    }
+
     console.log(`[闲鱼采集-飞书] 成功创建空数据表: ${tableName} (ID: ${tableId})`);
 
     // 步骤2: 使用 ensureTableFields 添加字段（传递 appToken）
