@@ -233,11 +233,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // 打开表格管理控制台
-  document.getElementById('openConsoleBtn')?.addEventListener('click', () => {
-    chrome.tabs.create({ url: 'console.html' });
-  });
-
   // Ctrl+S 快捷保存
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {

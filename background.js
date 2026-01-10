@@ -103,7 +103,8 @@ const PRODUCT_SCHEMA = {
   freeShip: { type: 'string', label: '包邮', csvOrder: 9, feishuType: 1 },
   tags: { type: 'string', label: '商品标签', csvOrder: 10, feishuType: 1 },
   coverUrl: { type: 'string', label: '封面URL', csvOrder: 11, feishuType: 15 },
-  detailUrl: { type: 'string', label: '商品详情URL', csvOrder: 12, feishuType: 15 }
+  detailUrl: { type: 'string', label: '商品详情URL', csvOrder: 12, feishuType: 15 },
+  exposureHeat: { type: 'number', label: '曝光热度', csvOrder: 0, feishuType: 2 } // 不导出到CSV，仅用于飞书
 };
 
 // 从 SCHEMA 生成 CSV 表头（按 csvOrder 排序，跳过 csvOrder 为 0 的字段）
@@ -159,7 +160,8 @@ let capturedItemIds = new Set(); // 用于采集时去重的商品组合键集�
 let requestLogs = []; // 存储每次请求的URL、参数和返回值
 let currentKeyword = ''; // 当前搜索关键词
 let statistics = {
-  pageCount: 0,        // 采集页数
+  pageCount: 0,        // 有效采集页数（有新商品的页面）
+  requestCount: 0,     // 实际请求页数（总请求数）
   itemCount: 0,        // 商品总数
   lastCaptureTime: null
 };
@@ -207,7 +209,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'CLEAR_DATA') {
     capturedData = [];
     capturedItemIds = new Set();
-    statistics = { pageCount: 0, itemCount: 0, lastCaptureTime: null };
+    statistics = { pageCount: 0, requestCount: 0, itemCount: 0, lastCaptureTime: null };
     chrome.storage.local.set({
       capturedData: [],
       capturedItemIds: [],
@@ -221,8 +223,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // 获取统计信息
   if (request.type === 'GET_STATS') {
     sendResponse({
-      itemCount: capturedData.length,
+      itemCount: statistics.itemCount,  // 使用 statistics.itemCount 而不是 capturedData.length
       pageCount: statistics.pageCount,
+      requestCount: statistics.requestCount,
       lastCaptureTime: statistics.lastCaptureTime
     });
     return true;
@@ -373,12 +376,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const previousTotal = statistics.itemCount;
     const newTotal = previousTotal + newItemCount;
 
+    // 增加请求计数（每次API调用都计数）
+    statistics.requestCount++;
+
     console.log('[闲鱼采集] ========== 页面采集结果 ==========');
     console.log('[闲鱼采集] 本页返回商品总数:', resultList.length);
     console.log('[闲鱼采集] 条件过滤掉:', filteredByConditions, '个商品');
     console.log('[闲鱼采集] 去重过滤掉:', filteredByDuplicate, '个商品');
     console.log('[闲鱼采集] 实际新增商品数:', newItemCount);
     console.log('[闲鱼采集] 累计总商品数:', newTotal, '(之前:', previousTotal, '+ 新增:', newItemCount, ')');
+    console.log('[闲鱼采集] 已请求页数:', statistics.requestCount);
     console.log('[闲鱼采集] ========================================');
 
     // 只有新商品时才保存商品数据
@@ -413,6 +420,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({
       success: true,
       pageCount: statistics.pageCount,
+      requestCount: statistics.requestCount,
       itemCount: statistics.itemCount,
       newItems: newItemCount
     });
@@ -424,6 +432,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'GET_STATS') {
     sendResponse({
       pageCount: statistics.pageCount,
+      requestCount: statistics.requestCount,
       itemCount: statistics.itemCount,
       lastCaptureTime: statistics.lastCaptureTime || '无'
     });
@@ -439,6 +448,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // 重置统计信息
     statistics = {
       pageCount: 0,
+      requestCount: 0,
       itemCount: 0,
       lastCaptureTime: null
     };
@@ -568,54 +578,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // ========== 关键词-数据表映射相关消息处理 ==========
-
-  // 获取关键词-数据表映射列表
-  if (request.type === 'GET_KEYWORD_TABLE_MAP') {
-    sendResponse({ success: true, map: keywordTableMap });
-    return true;
-  }
-
-  // 获取所有数据表列表（用于控制台展示）
-  if (request.type === 'GET_ALL_DATA_TABLES') {
-    (async () => {
-      try {
-        if (!feishuConfig.spreadsheetToken) {
-          sendResponse({ success: false, error: '未配置表格 Token' });
-          return;
-        }
-        const tables = await getDataTableList(feishuConfig.spreadsheetToken);
-        sendResponse({ success: true, tables: tables, spreadsheetToken: feishuConfig.spreadsheetToken });
-      } catch (error) {
-        sendResponse({ success: false, error: error.message });
-      }
-    })();
-    return true;
-  }
-
-  // 删除单个映射记录
-  if (request.type === 'DELETE_KEYWORD_MAPPING') {
-    const keyword = request.keyword;
-    if (keyword && keywordTableMap[keyword]) {
-      delete keywordTableMap[keyword];
-      chrome.storage.local.set({ keywordTableMap });
-      console.log(`[闲鱼采集-控制台] 已删除关键词映射: ${keyword}`);
-      sendResponse({ success: true });
-    } else {
-      sendResponse({ success: false, error: '关键词不存在' });
-    }
-    return true;
-  }
-
-  // 清空所有映射记录
-  if (request.type === 'CLEAR_KEYWORD_MAPPING') {
-    keywordTableMap = {};
-    chrome.storage.local.remove('keywordTableMap');
-    console.log('[闲鱼采集-控制台] 已清空所有关键词映射');
-    sendResponse({ success: true });
-    return true;
-  }
-
   return true; // 保持消息通道开启，用于异步响应
 });
 // 从 storage 恢复数据
@@ -730,6 +692,15 @@ function processListData(capturedData) {
         // 构建组合键：商品ID + 想要数 + 价格
         const compositeKey = `${itemId}_${wantCnt}_${priceStr}`;
 
+        // 计算曝光热度：(想要人数*100) / (DAYS(采集时间,发布时间)/24+1)
+        let exposureHeat = 0;
+        if (publishTimeMs > 0) {
+          const daysDiff = (currentTime - publishTimeMs) / (1000 * 60 * 60 * 24); // 天数差
+          exposureHeat = (wantCnt * 100) / (daysDiff + 1);
+          // 保留两位小数
+          exposureHeat = Math.round(exposureHeat * 100) / 100;
+        }
+
         // 构建符合 PRODUCT_SCHEMA 的标准数据结构
         processedMap.set(compositeKey, {
           // 基本信息
@@ -761,7 +732,10 @@ function processListData(capturedData) {
           
           // URL
           coverUrl: normalizeUrl(picUrl),
-          detailUrl: normalizeUrl(`https://www.goofish.com/item?id=${itemId}`)
+          detailUrl: normalizeUrl(`https://www.goofish.com/item?id=${itemId}`),
+          
+          // 曝光热度
+          exposureHeat: exposureHeat
         });
       } catch (error) {
         console.error('[闲鱼采集] 处理列表数据出错:', error);

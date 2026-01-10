@@ -39,6 +39,12 @@
       "matches": ["https://www.goofish.com/publish*"],
       "js": ["publish-helper.js"],
       "run_at": "document_end"
+    },
+    {
+      "matches": ["https://www.goofish.com/", "https://www.goofish.com/search*"],
+      "js": ["search-page-buttons.js"],
+      "css": ["search-page-buttons.css"],
+      "run_at": "document_end"
     }
   ],
   "action": {

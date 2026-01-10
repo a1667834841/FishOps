@@ -161,15 +161,6 @@ document.addEventListener('DOMContentLoaded', function() {
     window.close();
   });
 
-  // 打开表格管理按钮
-  const tableManageBtn = document.getElementById('tableManage');
-  if (tableManageBtn) {
-    tableManageBtn.addEventListener('click', function() {
-      chrome.tabs.create({ url: 'console.html' });
-      window.close();
-    });
-  }
-
   // 开始/停止爬取按钮
   let isCrawling = false;
   let currentTabId = null;

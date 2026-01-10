@@ -1,0 +1,182 @@
+/* search-page-buttons.css - 搜索页面按钮样式 */
+
+/* 按钮容器 */
+.xianyu-collect-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+
+/* 按钮基础样式 - 与搜索按钮保持一致 */
+.xianyu-btn {
+  height: 40px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: #ffe60f;  /* 黄色背景 */
+  color: #333;          /* 黑色字体 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+  white-space: nowrap;
+  outline: none;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.xianyu-btn:hover {
+  background: #ffd700;  /* 深黄色 */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+.xianyu-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.xianyu-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 按钮完成状态 */
+.xianyu-btn.completed {
+  background: #52c41a;  /* 绿色背景 */
+  color: #fff;          /* 白色字体 */
+}
+
+.xianyu-btn.completed:hover {
+  background: #73d13d;  /* 浅绿色 */
+}
+
+/* 清空按钮特殊样式 */
+.xianyu-btn-clear {
+  background: #f5f5f5;
+  color: #666;
+}
+
+.xianyu-btn-clear:hover {
+  background: #e0e0e0;
+  color: #333;
+}
+
+/* 数量显示容器（一直显示） */
+.xianyu-stats-container {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: rgba(255, 230, 15, 0.1);
+  border: 1px solid #ffe60f;
+  border-radius: 4px;
+  font-size: 13px;
+  margin-left: 8px;
+}
+
+.stats-text {
+  color: #333;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.stats-count {
+  color: #ff9800;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* 加载状态 */
+.xianyu-btn.loading {
+  pointer-events: none;
+}
+
+.xianyu-btn.loading .loading-icon {
+  animation: rotate 1s linear infinite;
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Toast 提示 */
+.xianyu-toast {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-100px);
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  padding: 12px 24px;
+  border-radius: 6px;
+  font-size: 14px;
+  z-index: 100000;
+  opacity: 0;
+  transition: all 0.3s ease;
+  pointer-events: none;
+  max-width: 400px;
+  word-break: break-word;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+}
+
+.xianyu-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.xianyu-toast-success {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+}
+
+.xianyu-toast-error {
+  background: linear-gradient(135deg, #f44336 0%, #e91e63 100%);
+}
+
+.xianyu-toast-warning {
+  background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%);
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .xianyu-collect-buttons {
+    margin-left: 4px;
+    gap: 4px;
+  }
+
+  .xianyu-btn {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .xianyu-stats-container {
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+
+  .stats-text {
+    font-size: 12px;
+  }
+
+  .stats-count {
+    font-size: 13px;
+  }
+}
+
+/* 确保按钮在搜索框同一行 */
+.search-container--mD4RMUzE {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
