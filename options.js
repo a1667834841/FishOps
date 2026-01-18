@@ -24,7 +24,9 @@ const DEFAULT_FEISHU_CONFIG = {
   sellerTableId: '',
   enabled: false,
   autoCreateTable: false,      // 是否自动创建表格
-  parentFolderToken: ''        // 父文件夹 token（可选）
+  parentFolderToken: '',       // 父文件夹 token（可选）
+  realtimeSync: false,         // 边爬边同步
+  batchSize: 100               // 批量发送大小
 };
 
 // Toast 提示
@@ -52,17 +54,20 @@ function loadConfig() {
     document.getElementById('onlyFreeShipInput').checked = result.onlyFreeShip || DEFAULT_FILTER_CONFIG.onlyFreeShip;
   });
 
-  // 加载飞书配置 - 使用数组指定键名，确保与保存时一致
-  chrome.storage.local.get(['appId', 'appSecret', 'spreadsheetToken', 'productTableId', 'sellerTableId', 'enabled', 'autoCreateTable', 'parentFolderToken'], (result) => {
-    document.getElementById('feishuAppId').value = result.appId || '';
-    document.getElementById('feishuAppSecret').value = result.appSecret || '';
-    document.getElementById('feishuSpreadsheetToken').value = result.spreadsheetToken || '';
-    document.getElementById('feishuProductTableId').value = result.productTableId || '';
-    document.getElementById('feishuSellerTableId').value = result.sellerTableId || '';
-    document.getElementById('feishuEnabled').checked = result.enabled || false;
-    document.getElementById('feishuAutoCreateTable').checked = result.autoCreateTable || false;
-    document.getElementById('feishuParentFolderToken').value = result.parentFolderToken || '';
-    console.log('[配置页面] 飞书配置已加载:', result);
+  // 加载飞书配置
+  chrome.storage.local.get(['feishuConfig'], (result) => {
+    const config = result.feishuConfig || DEFAULT_FEISHU_CONFIG;
+    document.getElementById('feishuAppId').value = config.appId || '';
+    document.getElementById('feishuAppSecret').value = config.appSecret || '';
+    document.getElementById('feishuSpreadsheetToken').value = config.spreadsheetToken || '';
+    document.getElementById('feishuProductTableId').value = config.productTableId || '';
+    document.getElementById('feishuSellerTableId').value = config.sellerTableId || '';
+    document.getElementById('feishuEnabled').checked = config.enabled || false;
+    document.getElementById('feishuAutoCreateTable').checked = config.autoCreateTable || false;
+    document.getElementById('feishuParentFolderToken').value = config.parentFolderToken || '';
+    document.getElementById('feishuRealtimeSync').checked = config.realtimeSync || false;
+    document.getElementById('feishuBatchSize').value = config.batchSize || DEFAULT_FEISHU_CONFIG.batchSize;
+    console.log('[配置页面] 飞书配置已加载:', config);
   });
 }
 
@@ -103,7 +108,7 @@ function saveConfig() {
     if (chrome.runtime.lastError) {
       showToast('保存失败', 'error');
     } else {
-      showToast('配置已保存', 'success');
+      showToast('常规配置已保存', 'success');
     }
   });
 
@@ -122,7 +127,7 @@ function saveConfig() {
     }
   });
 
-  // 保存飞书配置
+  // 保存飞书配置 (结构化存储)
   const feishuConfig = {
     appId: document.getElementById('feishuAppId').value.trim(),
     appSecret: document.getElementById('feishuAppSecret').value.trim(),
@@ -131,13 +136,27 @@ function saveConfig() {
     sellerTableId: document.getElementById('feishuSellerTableId').value.trim(),
     enabled: document.getElementById('feishuEnabled').checked,
     autoCreateTable: document.getElementById('feishuAutoCreateTable').checked,
-    parentFolderToken: document.getElementById('feishuParentFolderToken').value.trim()
+    parentFolderToken: document.getElementById('feishuParentFolderToken').value.trim(),
+    realtimeSync: document.getElementById('feishuRealtimeSync').checked,
+    batchSize: parseInt(document.getElementById('feishuBatchSize').value) || DEFAULT_FEISHU_CONFIG.batchSize
   };
-  chrome.storage.local.set(feishuConfig, () => {
+
+  chrome.storage.local.set({ feishuConfig }, () => {
     if (chrome.runtime.lastError) {
       console.error('[配置页面] 保存飞书配置失败:', chrome.runtime.lastError);
+      showToast('飞书配置保存失败', 'error');
     } else {
       console.log('[配置页面] 飞书配置已保存:', feishuConfig);
+      // 通知 background.js 更新配置（特别是 realtimeSync 和 batchSize）
+      chrome.runtime.sendMessage({
+        type: 'UPDATE_FEISHU_CONFIG',
+        config: feishuConfig
+      }, (response) => {
+        if (response?.success) {
+          console.log('[配置页面] background.js 配置已更新');
+        }
+      });
+      showToast('全部配置已保存', 'success');
     }
   });
 
@@ -166,6 +185,8 @@ function resetConfig() {
     document.getElementById('feishuEnabled').checked = DEFAULT_FEISHU_CONFIG.enabled;
     document.getElementById('feishuAutoCreateTable').checked = DEFAULT_FEISHU_CONFIG.autoCreateTable;
     document.getElementById('feishuParentFolderToken').value = DEFAULT_FEISHU_CONFIG.parentFolderToken;
+    document.getElementById('feishuRealtimeSync').checked = DEFAULT_FEISHU_CONFIG.realtimeSync;
+    document.getElementById('feishuBatchSize').value = DEFAULT_FEISHU_CONFIG.batchSize;
 
     saveConfig();
   }

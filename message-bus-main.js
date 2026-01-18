@@ -3,7 +3,7 @@
  * 用于在页面上下文（inject.js）中发送数据到 DOM 事件
  */
 
-(function() {
+(function () {
   'use strict';
 
   // ==================== 配置区 ====================
@@ -32,7 +32,14 @@
       return;
     }
 
-    // 通过 DOM 事件发送
+    // 通过 postMessage 发送（更可靠，避免 MV3 中的数据清理）
+    window.postMessage({
+      source: 'XIANYU_COLLECT_MAIN',
+      eventName: eventName,
+      detail: data
+    }, '*');
+
+    // 同时也保留 DOM 事件监听，用于兼容旧代码（如果需要）
     const event = new CustomEvent(eventName, {
       detail: data
     });

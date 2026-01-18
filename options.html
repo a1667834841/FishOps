@@ -445,6 +445,28 @@
             <div class="form-help">父文件夹的 token（可选），新表格将创建在此文件夹下（注：当前版本不支持）</div>
           </div>
 
+          <div class="section-title" style="margin-top: 24px;">实时同步设置</div>
+          <div class="form-help" style="margin-bottom: 16px; margin-left: 0;">
+            启用后，爬取过程中自动批量同步数据到飞书，无需等待爬取完成
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">边爬边同步</label>
+              <input type="checkbox" id="feishuRealtimeSync" style="width: auto;" />
+            </div>
+            <div class="form-help">勾选后，爬取过程中自动批量同步数据到飞书</div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">批量大小</label>
+              <input type="number" class="form-input" id="feishuBatchSize" min="10" max="500" value="100" style="width: 120px;" />
+              <span class="form-unit">条</span>
+            </div>
+            <div class="form-help">每采集多少条数据后自动发送一批（推荐50-200条）</div>
+          </div>
+
           <div class="form-group">
             <div class="form-row">
               <label class="form-label"></label>

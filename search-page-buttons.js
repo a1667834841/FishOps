@@ -1,6 +1,6 @@
 // search-page-buttons.js - 搜索页面爬取和飞书按钮功能
 
-(function() {
+(function () {
   'use strict';
 
   console.log('[闲鱼采集-搜索页面] 按钮脚本已加载');
@@ -27,7 +27,7 @@
     const container = document.createElement('div');
     container.id = CONFIG.buttonContainerId;
     container.className = 'xianyu-collect-buttons';
-    
+
     // 创建爬取按钮
     const crawlBtn = document.createElement('button');
     crawlBtn.className = 'xianyu-btn xianyu-btn-crawl';
@@ -53,7 +53,7 @@
     const statsContainer = document.createElement('div');
     statsContainer.className = 'xianyu-stats-container';
     statsContainer.innerHTML = `
-      <span class="stats-text">已爬取: <strong class="stats-count">0</strong> 件商品</span>
+      <span class="stats-text">已爬取: <strong class="stats-count">0</strong> | 已同步: <strong class="sync-count">0</strong></span>
     `;
 
     // 添加按钮到容器
@@ -94,13 +94,13 @@
     try {
       // 获取配置
       const config = await getStorageConfig();
-      
+
       // 在开始爬取前，先清空数据（确保从0开始计数）
       await new Promise((resolve) => {
         chrome.runtime.sendMessage({ type: 'CLEAR_DATA' }, resolve);
       });
       console.log('[闲鱼采集-搜索页面] 已清空历史数据');
-      
+
       // 初始化爬取状态
       crawlState = {
         isRunning: true,
@@ -109,7 +109,7 @@
         itemCount: 0,
         isCompleted: false
       };
-      
+
       // 先设置关键词
       await new Promise((resolve) => {
         chrome.runtime.sendMessage({
@@ -231,12 +231,33 @@
   // 更新数量显示
   function updateStatsDisplay() {
     chrome.runtime.sendMessage({ type: 'GET_STATS' }, (response) => {
+      if (!response) return;
+
       const statsCount = document.querySelector('.stats-count');
-      if (statsCount && response) {
+      const syncCount = document.querySelector('.sync-count');
+
+      if (statsCount) {
         const itemCount = response.itemCount || 0;
         statsCount.textContent = itemCount;
-        console.log('[闲鱼采集-搜索页面] 更新数量显示:', itemCount, '件商品');
       }
+
+      if (syncCount && response.asyncSyncState) {
+        const syncedCount = response.asyncSyncState.syncedCount || 0;
+        syncCount.textContent = syncedCount;
+
+        // 如果启用了异步同步，显示更多信息
+        if (response.asyncSyncState.enabled) {
+          const pendingCount = response.asyncSyncState.pendingCount || 0;
+          const isSending = response.asyncSyncState.isSending;
+          if (isSending) {
+            syncCount.textContent = `${syncedCount} (同步中...)`;
+          } else if (pendingCount > 0) {
+            syncCount.textContent = `${syncedCount} (待: ${pendingCount})`;
+          }
+        }
+      }
+
+      console.log('[闲鱼采集-搜索页面] 更新数量显示:', response.itemCount || 0, '件商品,', response.asyncSyncState?.syncedCount || 0, '已同步');
     });
   }
 
@@ -246,70 +267,107 @@
     let lastRequestCount = 0;
     let lastItemCount = 0;
     let stableCount = 0; // 连续稳定次数（用于检测爬取完成）
-      
+
     const monitorInterval = setInterval(() => {
       if (!crawlState.isRunning) {
         clearInterval(monitorInterval);
         return;
       }
-  
+
       // 获取当前统计信息
       chrome.runtime.sendMessage({ type: 'GET_STATS' }, (response) => {
         if (!response) return;
-  
+
         const currentRequestCount = response.requestCount || 0;
         const currentItemCount = response.itemCount || 0;
-  
+
         // 更新爬取状态
         crawlState.currentPage = currentRequestCount;
         crawlState.itemCount = currentItemCount;
-  
+
         // 更新显示
         updateStatsDisplay();
-          
+
         // 更新按钮文案，显示进度
         const crawlBtn = document.querySelector('.xianyu-btn-crawl');
         if (crawlBtn && crawlBtn.classList.contains('loading')) {
           crawlBtn.innerHTML = `<span>爬取中 ${currentRequestCount}/${crawlState.totalPages} 页...</span>`;
         }
-  
+
         // 检测变化
         const hasChange = currentRequestCount !== lastRequestCount || currentItemCount !== lastItemCount;
-          
+
         if (hasChange) {
           console.log(`[闲鱼采集-搜索页面] 进度更新: ${crawlState.currentPage}/${crawlState.totalPages} 页, ${crawlState.itemCount} 件商品`);
           stableCount = 0; // 重置稳定计数
         } else {
           stableCount++;
         }
-  
+
         lastRequestCount = currentRequestCount;
         lastItemCount = currentItemCount;
-  
+
         // 判断是否完成：
         // 1. 达到预期页数
-        // 2. 或者连续3秒没有变化且已经有请求（可能爬取已结束）
-        const shouldComplete = crawlState.currentPage >= crawlState.totalPages || 
-                              (stableCount >= 3 && crawlState.currentPage > 0);
-  
+        // 2. 或者连续10秒没有变化且已经有请求（可能爬取已结束）
+        //    注意：3秒太短，网络延迟或API响应慢可能导致误判
+        const shouldComplete = crawlState.currentPage >= crawlState.totalPages ||
+          (stableCount >= 10 && crawlState.currentPage > 0);
+
         if (shouldComplete) {
-          console.log(`[闲鱼采集-搜索页面] 爬取完成检测: currentPage=${crawlState.currentPage}, totalPages=${crawlState.totalPages}, stableCount=${stableCount}`);
-            
+          const completionReason = crawlState.currentPage >= crawlState.totalPages
+            ? `达到预期页数 (${crawlState.currentPage}/${crawlState.totalPages})`
+            : `连续${stableCount}秒无变化`;
+          console.log(`[闲鱼采集-搜索页面] 爬取完成检测: ${completionReason}, currentPage=${crawlState.currentPage}, totalPages=${crawlState.totalPages}, stableCount=${stableCount}`);
+
           // 延迟一秒后标记完成
-          setTimeout(() => {
+          setTimeout(async () => {
             crawlState.isRunning = false;
             crawlState.isCompleted = true;
+
+            // 重新获取最新的统计信息，确保获取到正确的 pendingCount
+            const latestStats = await new Promise((resolve) => {
+              chrome.runtime.sendMessage({ type: 'GET_STATS' }, resolve);
+            });
+
+            // 如果启用了异步同步，发送剩余的待同步数据
+            if (latestStats?.asyncSyncState?.enabled && latestStats?.asyncSyncState?.pendingCount > 0) {
+              const pendingCount = latestStats.asyncSyncState.pendingCount;
+              console.log(`[闲鱼采集-搜索页面] 发送剩余数据: ${pendingCount} 条`);
+              showToast(`正在同步剩余 ${pendingCount} 条数据...`, 'info');
+
+              try {
+                // 使用 Promise 包装，但不等待响应（避免消息通道超时）
+                chrome.runtime.sendMessage({ type: 'FLUSH_PENDING_ITEMS' }, (flushResult) => {
+                  if (chrome.runtime.lastError) {
+                    console.error('[闲鱼采集-搜索页面] 发送剩余数据失败:', chrome.runtime.lastError);
+                    return;
+                  }
+
+                  if (flushResult?.success) {
+                    const totalSynced = (latestStats.asyncSyncState.syncedCount || 0) + (flushResult.count || 0);
+                    showToast(`同步完成！共同步 ${totalSynced} 条数据`, 'success');
+                    updateStatsDisplay();
+                  } else {
+                    console.error('[闲鱼采集-搜索页面] 剩余数据发送结果:', flushResult);
+                  }
+                });
+              } catch (error) {
+                console.error('[闲鱼采集-搜索页面] 发送剩余数据失败:', error);
+              }
+            }
+
             updateStatsDisplay();
-              
+
             // 恢复按钮状态，显示为"重新爬取"
             const crawlBtn = document.querySelector('.xianyu-btn-crawl');
             if (crawlBtn) {
               resetCrawlButton(crawlBtn, true);
             }
-              
+
             showToast(`爬取完成！共采集 ${crawlState.itemCount} 件商品`, 'success');
           }, 1000);
-            
+
           clearInterval(monitorInterval);
         }
       });
@@ -392,10 +450,10 @@
       }
 
       const buttonContainer = createButtonContainer();
-      
+
       // 在搜索按钮后面插入按钮容器
       searchButton.parentNode.insertBefore(buttonContainer, searchButton.nextSibling);
-      
+
       console.log('[闲鱼采集-搜索页面] 按钮已添加');
       buttonsAdded = true;
     } else {
@@ -428,7 +486,7 @@
   // 初始化
   function init() {
     console.log('[闲鱼采集-搜索页面] 初始化开始');
-    
+
     // 检查当前页面是否是搜索页或首页
     const pathname = window.location.pathname;
     if (pathname === '/search' || pathname === '/') {

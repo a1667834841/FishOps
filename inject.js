@@ -3,7 +3,7 @@
  * 这是一个兼容层，用于在开发模式下加载模块化代码
  */
 
-(function() {
+(function () {
   'use strict';
   console.log('[闲鱼采集] inject.js 已注入到页面上下文');
 
@@ -11,23 +11,23 @@
   // 必须在任何其他代码之前 hook WebSocket，确保在 WebSocket 被创建之前拦截
 
   const originalWebSocket = window.WebSocket;
-  
-  window.WebSocket = function(url, protocols) {
+
+  window.WebSocket = function (url, protocols) {
     console.log('[闲鱼采集] WebSocket 连接创建:', url);
-    
+
     // 创建原始 WebSocket 实例
     const ws = new originalWebSocket(url, protocols);
-    
+
     // 判断是否是闲鱼聊天的 WebSocket
     if (url.includes('wss-goofish.dingtalk.com')) {
       console.log('[闲鱼采集] 🎯 检测到闲鱼聊天 WebSocket 连接');
-      
+
       // Hook send 方法（发送的消息）
       const originalSend = ws.send;
-      ws.send = function(data) {
+      ws.send = function (data) {
         try {
           // console.log('[闲鱼采集] 📤 发送消息:', data);
-          
+
           // 尝试解析 JSON
           if (typeof data === 'string') {
             try {
@@ -40,23 +40,23 @@
         } catch (error) {
           console.error('[闲鱼采集] 处理发送消息失败:', error);
         }
-        
+
         return originalSend.apply(this, arguments);
       };
-      
-      
+
+
       // Hook onmessage 属性（关键！）
       let actualOnMessageHandler = null;
       Object.defineProperty(ws, 'onmessage', {
-        get: function() {
+        get: function () {
           return actualOnMessageHandler;
         },
-        set: function(handler) {
+        set: function (handler) {
           console.log('[闲鱼采集] 🎯 检测到 onmessage 被设置');
           actualOnMessageHandler = handler;
-          
+
           // 包装原始 handler
-          const wrappedHandler = function(event) {
+          const wrappedHandler = function (event) {
             // 关键：始终先调用原始 handler，确保闲鱼功能正常
             const result = handler ? handler.call(this, event) : undefined;
 
@@ -68,39 +68,39 @@
             } catch (error) {
               console.error('[闲鱼采集] 处理接收消息失败(onmessage):', error);
             }
-            
+
             // 返回原始 handler 的返回值
             return result;
           };
-          
+
           // 使用原型链上的原始 setter 设置包装后的 handler
           Object.getOwnPropertyDescriptor(originalWebSocket.prototype, 'onmessage').set.call(ws, wrappedHandler);
         },
         configurable: true
       });
-      
+
       // 监听连接事件
       const originalOpen = ws.addEventListener.bind(ws);
-      originalOpen('open', function(event) {
+      originalOpen('open', function (event) {
         console.log('[闲鱼采集] ✅ WebSocket 连接已建立:', url);
       });
-      
-      originalOpen('close', function(event) {
+
+      originalOpen('close', function (event) {
         console.log('[闲鱼采集] ❌ WebSocket 连接已关闭:', {
           code: event.code,
           reason: event.reason,
           wasClean: event.wasClean
         });
       });
-      
-      originalOpen('error', function(event) {
+
+      originalOpen('error', function (event) {
         console.error('[闲鱼采集] ⚠️ WebSocket 连接错误:', event);
       });
     }
-    
+
     return ws;
   };
-  
+
   // 复制原始 WebSocket 的属性
   window.WebSocket.prototype = originalWebSocket.prototype;
   window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
@@ -121,14 +121,15 @@
   // 这里暂时保留原有的实现，或者等待打包工具处理
   // 开发模式建议使用 npm run dev + 打包后的文件
 
-  // 目标API URL特征
-  const TARGET_API_URL = 'h5api.m.goofish.com/h5/mtop.taobao.idlemtopsearch.pc.search/1.0/';
-  const DETAIL_API_URL = 'h5api.m.goofish.com/h5/mtop.taobao.idle.pc.detail/1.0/';
+  // 目标API名称特征
+  const SEARCH_API_NAME = 'mtop.taobao.idlemtopsearch.pc.search';
+  const DETAIL_API_NAME = 'mtop.taobao.idle.pc.detail';
 
   // 判断API类型
   function getApiType(url) {
-    if (url.includes(DETAIL_API_URL)) return 'DETAIL';
-    if (url.includes(TARGET_API_URL)) return 'SEARCH';
+    if (!url || typeof url !== 'string') return null;
+    if (url.includes(DETAIL_API_NAME)) return 'DETAIL';
+    if (url.includes(SEARCH_API_NAME)) return 'SEARCH';
     return null;
   }
 
@@ -136,110 +137,131 @@
   const originalXHROpen = XMLHttpRequest.prototype.open;
   const originalXHRSend = XMLHttpRequest.prototype.send;
 
-  XMLHttpRequest.prototype.open = function(method, url, ...args) {
+  XMLHttpRequest.prototype.open = function (method, url, ...args) {
     this._url = url;
     this._method = method;
     return originalXHROpen.apply(this, [method, url, ...args]);
   };
 
-  XMLHttpRequest.prototype.send = function(body) {
-    const apiType = getApiType(this._url);
+  XMLHttpRequest.prototype.send = function (body) {
+    try {
+      const apiType = getApiType(this._url);
 
-    if (apiType) {
-      const eventName = apiType === 'DETAIL' ? 'XIANYU_DETAIL_DATA' : 'XIANYU_API_DATA';
+      if (apiType) {
+        const eventName = apiType === 'DETAIL' ? 'XIANYU_DETAIL_DATA' : 'XIANYU_API_DATA';
 
-      // 保存请求体以便后续使用
-      this._requestBody = body;
-      this._apiType = apiType;
+        // 保存请求体以便后续使用
+        this._requestBody = body;
+        this._apiType = apiType;
 
-      this.addEventListener('load', function() {
-        if (this.status === 200) {
-          try {
-            const responseData = JSON.parse(this.responseText);
+        this.addEventListener('load', function () {
+          if (this.status === 200) {
+            try {
+              const responseData = JSON.parse(this.responseText);
 
-            // 使用消息总线发送数据
-            const dataToSend = {
-              url: this._url,
-              method: this._method,
-              requestBody: this._requestBody,
-              response: responseData,
-              timestamp: Date.now(),
-              apiType: this._apiType
-            };
+              // 使用消息总线发送数据
+              const dataToSend = {
+                url: this._url,
+                method: this._method,
+                requestBody: this._requestBody,
+                response: responseData,
+                timestamp: Date.now(),
+                apiType: this._apiType
+              };
 
-            console.log(`[闲鱼采集] ${apiType === 'DETAIL' ? '详情' : '搜索'}API已拦截`);
-
-            if (window.MessageBus) {
-              window.MessageBus.send(eventName, dataToSend);
-            } else {
-              console.error(`[闲鱼采集] ❌ MessageBus 未找到`);
+              console.log(`[闲鱼采集] ${apiType === 'DETAIL' ? '详情' : '搜索'}API已拦截, 准备发送消息`);
+              if (window.MessageBus) {
+                window.MessageBus.send(eventName, dataToSend);
+                console.log(`[闲鱼采集] 消息已通过 MessageBus 发送: ${eventName}`);
+              } else {
+                console.error(`[闲鱼采集] ❌ MessageBus 未找到`);
+              }
+            } catch (e) {
+              console.error('[闲鱼采集] 解析响应数据失败:', e);
             }
-          } catch (e) {
-            console.error('[闲鱼采集] 解析响应数据失败:', e);
+          } else {
+            console.warn(`[闲鱼采集] API 响应状态异常: ${this.status}`, this._url);
           }
-        }
-      });
+        });
+      }
+    } catch (error) {
+      console.error('[闲鱼采集] XHR hook 错误:', error);
     }
+
+    // 无论是否出错，都要调用原始 send 方法，确保用户页面功能不受影响
     return originalXHRSend.apply(this, [body]);
   };
 
   // Hook Fetch API
   const originalFetch = window.fetch;
-  window.fetch = function(...args) {
-    const url = args[0];
-    const options = args[1] || {};
+  window.fetch = function (...args) {
+    try {
+      const url = args[0];
+      const options = args[1] || {};
 
-    if (typeof url === 'string') {
-      const apiType = getApiType(url);
+      if (typeof url === 'string') {
+        const apiType = getApiType(url);
 
-      if (apiType) {
-        const eventName = apiType === 'DETAIL' ? 'XIANYU_DETAIL_DATA' : 'XIANYU_API_DATA';
+        if (apiType) {
+          const eventName = apiType === 'DETAIL' ? 'XIANYU_DETAIL_DATA' : 'XIANYU_API_DATA';
 
-        // 解析请求体数据（URL编码格式，类似formdata）
-        let parsedRequestData = null;
-        if (options.body instanceof FormData) {
+          // 解析请求体数据（URL编码格式，类似formdata）
+          let parsedRequestData = null;
+          if (options.body instanceof FormData) {
 
-        } else if (typeof options.body === 'string') {
-          // 解析URL编码数据 (如: data=%7B%22itemId%22%3A%22...)
-          const urlParams = new URLSearchParams(options.body);
-          parsedRequestData = {};
-          for (let [key, value] of urlParams.entries()) {
-            parsedRequestData[key] = value;
-          }
-        }
-
-        return originalFetch.apply(this, args).then(response => {
-          // 克隆response以便我们可以读取它
-          const clonedResponse = response.clone();
-
-          clonedResponse.json().then(data => {
-            // 使用消息总线发送数据
-            const dataToSend = {
-              url: url,
-              method: options.method || 'GET',
-              requestBody: options.body,
-              requestData: parsedRequestData,  // 解析后的请求数据
-              response: data,
-              timestamp: Date.now(),
-              apiType: apiType
-            };
-
-            console.log(`[闲鱼采集] ${apiType === 'DETAIL' ? '详情' : '搜索'}API已拦截`);
-
-            if (window.MessageBus) {
-              window.MessageBus.send(eventName, dataToSend);
-            } else {
-              console.error(`[闲鱼采集] ❌ MessageBus 未找到`);
+          } else if (typeof options.body === 'string') {
+            // 解析URL编码数据 (如: data=%7B%22itemId%22%3A%22...)
+            const urlParams = new URLSearchParams(options.body);
+            parsedRequestData = {};
+            for (let [key, value] of urlParams.entries()) {
+              parsedRequestData[key] = value;
             }
-          }).catch(e => {
-            console.error('[闲鱼采集] 解析Fetch响应数据失败:', e);
-          });
+          }
 
-          return response;
-        });
+          return originalFetch.apply(this, args).then(response => {
+            // 克隆response以便我们可以读取它
+            const clonedResponse = response.clone();
+
+            clonedResponse.json().then(data => {
+              try {
+                // 使用消息总线发送数据
+                const dataToSend = {
+                  url: url,
+                  method: options.method || 'GET',
+                  requestBody: options.body,
+                  requestData: parsedRequestData,  // 解析后的请求数据
+                  response: data,
+                  timestamp: Date.now(),
+                  apiType: apiType
+                };
+
+                console.log(`[闲鱼采集] ${apiType === 'DETAIL' ? '详情' : '搜索'}API已拦截 (Fetch), 准备发送消息`);
+
+                if (window.MessageBus) {
+                  window.MessageBus.send(eventName, dataToSend);
+                  console.log(`[闲鱼采集] 消息已通过 MessageBus 发送 (Fetch): ${eventName}`);
+                } else {
+                  console.error(`[闲鱼采集] ❌ MessageBus 未找到`);
+                }
+              } catch (e) {
+                console.error('[闲鱼采集] Fetch 数据处理失败:', e);
+              }
+            }).catch(e => {
+              console.error('[闲鱼采集] 解析Fetch响应数据失败:', e);
+            });
+
+            return response;
+          }).catch(error => {
+            console.error('[闲鱼采集] Fetch 请求失败:', error);
+            throw error; // 重新抛出错误，保持原始行为
+          });
+        }
       }
+    } catch (error) {
+      console.error('[闲鱼采集] Fetch hook 错误:', error);
     }
 
+    // 无论是否出错，都要调用原始 fetch，确保用户页面功能不受影响
     return originalFetch.apply(this, args);
   };
 
@@ -284,26 +306,33 @@
     const endPage = startPage + pageCount - 1;
 
     try {
-      for (let i = 0; i < pageCount; i++) {
+      for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
         // 检查是否需要停止
         if (shouldStopCrawling) {
           console.log('[闲鱼采集] 爬取已被用户停止');
           break;
         }
 
-        const currentPage = startPage + i;
+        const currentPage = startPage + pageIndex;
 
-        console.log(`[闲鱼采集] 正在爬取第 ${currentPage} 页... (${i + 1}/${pageCount})`);
+        console.log(`[闲鱼采集] 正在爬取第 ${currentPage} 页... (${pageIndex + 1}/${pageCount})`);
 
         try {
           // 调用 API 模块的搜索方法
+          console.log(`[闲鱼采集] 发起请求: 第 ${currentPage} 页, 关键词: ${keyword}`);
           const result = await apiModule.fetchSearchData(currentPage, keyword);
+
+          if (!result) {
+            console.error(`[闲鱼采集] 第 ${currentPage} 页请求返回为空`);
+          } else if (result.error || (result.ret && result.ret.some(msg => msg.includes('FAIL')))) {
+            console.error(`[闲鱼采集] 第 ${currentPage} 页请求失败 (API返回错误):`, result);
+          }
 
           const itemCount = result?.data?.resultList?.length || 0;
           console.log(`[闲鱼采集] ✅ 第 ${currentPage} 页采集完成，商品数：${itemCount}`);
 
           // 如果不是最后一页，等待一段时间
-          if (i < pageCount - 1 && !shouldStopCrawling) {
+          if (pageIndex < pageCount - 1 && !shouldStopCrawling) {
             console.log(`[闲鱼采集] 等待 ${delayMs}ms 后继续...`);
             await new Promise(resolve => setTimeout(resolve, delayMs));
           }
@@ -340,7 +369,7 @@
   }
 
   // 监听来自 content script 的 DOM 事件（开始爬取）
-  document.addEventListener('XIANYU_START_AUTO_CRAWL', function(event) {
+  document.addEventListener('XIANYU_START_AUTO_CRAWL', function (event) {
     console.log('[闲鱼采集] 收到自动爬取指令（DOM事件）:', event.detail);
 
     const { keyword, startPage, pageCount, delay } = event.detail;
@@ -350,7 +379,7 @@
   });
 
   // 监听来自 content script 的 DOM 事件（停止爬取）
-  document.addEventListener('XIANYU_STOP_AUTO_CRAWL', function(event) {
+  document.addEventListener('XIANYU_STOP_AUTO_CRAWL', function (event) {
     console.log('[闲鱼采集] 收到停止爬取指令（DOM事件）');
 
     if (isAutoCrawling) {
@@ -364,7 +393,7 @@
   // ==================== 流量词功能 ====================
 
   // 监听来自 content script 的 DOM 事件（获取流量词）
-  document.addEventListener('XIANYU_FETCH_SUGGEST_WORDS', async function(event) {
+  document.addEventListener('XIANYU_FETCH_SUGGEST_WORDS', async function (event) {
     console.log('[闲鱼采集] 收到流量词请求（DOM事件）:', event.detail);
 
     const { keyword } = event.detail;

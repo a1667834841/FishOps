@@ -6,7 +6,8 @@
   "permissions": [
     "storage",
     "activeTab",
-    "downloads"
+    "downloads",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "https://h5api.m.goofish.com/*",
@@ -19,31 +20,60 @@
   "options_page": "options.html",
   "content_scripts": [
     {
-      "matches": ["https://www.goofish.com/*"],
-      "js": ["message-bus-content.js", "content.js"],
+      "matches": [
+        "https://www.goofish.com/*"
+      ],
+      "js": [
+        "message-bus-content.js",
+        "content.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.goofish.com/*"],
-      "js": ["message-bus-main.js", "xianyu-api.js", "inject.js"],
+      "matches": [
+        "https://www.goofish.com/*"
+      ],
+      "js": [
+        "utils.js",
+        "message-bus-main.js",
+        "xianyu-api.js",
+        "inject.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://www.goofish.com/item*"],
-      "js": ["item-download.js"],
-      "css": ["item-download.css"],
+      "matches": [
+        "https://www.goofish.com/item*"
+      ],
+      "js": [
+        "item-download.js"
+      ],
+      "css": [
+        "item-download.css"
+      ],
       "run_at": "document_end"
     },
     {
-      "matches": ["https://www.goofish.com/publish*"],
-      "js": ["publish-helper.js"],
+      "matches": [
+        "https://www.goofish.com/publish*"
+      ],
+      "js": [
+        "publish-helper.js"
+      ],
       "run_at": "document_end"
     },
     {
-      "matches": ["https://www.goofish.com/", "https://www.goofish.com/search*"],
-      "js": ["search-page-buttons.js"],
-      "css": ["search-page-buttons.css"],
+      "matches": [
+        "https://www.goofish.com/",
+        "https://www.goofish.com/search*"
+      ],
+      "js": [
+        "search-page-buttons.js"
+      ],
+      "css": [
+        "search-page-buttons.css"
+      ],
       "run_at": "document_end"
     }
   ],
