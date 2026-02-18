@@ -1,31 +1,42 @@
 {
   "manifest_version": 3,
-  "name": "闲鱼数据采集助手",
-  "version": "1.5.1",
-  "description": "闲鱼商品数据采集Chrome插件",
+  "name": "闲鱼聊天监听助手",
+  "version": "2.0.0",
+  "description": "监听闲鱼聊天WebSocket消息，解析并存储聊天记录",
   "permissions": [
     "storage",
-    "activeTab",
-    "downloads",
-    "unlimitedStorage"
+    "activeTab"
   ],
   "host_permissions": [
-    "https://h5api.m.goofish.com/*",
-    "https://www.goofish.com/*",
-    "https://open.feishu.cn/*"
+    "https://www.goofish.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background/index.js"
   },
-  "options_page": "options.html",
+  "options_page": "options/options.html",
+  "web_accessible_resources": [{
+    "resources": [
+      "inject/api/chat-sender.js",
+      "inject/api/test-send-message.js",
+      "inject/api/test-fix.js",
+      "inject/api/test-config-flow.js",
+      "inject/api/test-websocket-send.js",
+      "inject/api/test-id-generator.js",
+      "inject/api/test-actual-receivers.js",
+      "inject/api/find-my-id.js",
+      "inject/api/user-api.js",
+      "inject/api/test-get-user-id.js"
+    ],
+    "matches": ["https://www.goofish.com/*"]
+  }],
   "content_scripts": [
     {
       "matches": [
         "https://www.goofish.com/*"
       ],
       "js": [
-        "message-bus-content.js",
-        "content.js"
+        "content/bus-isolated.js",
+        "content/index.js"
       ],
       "run_at": "document_start"
     },
@@ -34,51 +45,21 @@
         "https://www.goofish.com/*"
       ],
       "js": [
-        "utils.js",
-        "message-bus-main.js",
-        "xianyu-api.js",
-        "inject.js"
+        "inject/core/event-bus.js",
+        "content/bus-main.js",
+        "inject/chat-parser.js",
+        "inject/processors/print-processor.js",
+        "inject/processors/auto-reply-processor.js",
+        "inject/core/message-bridge.js",
+        "inject/data-sources/websocket-data-source.js",
+        "inject/api/chat-sender.js"
       ],
       "run_at": "document_start",
       "world": "MAIN"
-    },
-    {
-      "matches": [
-        "https://www.goofish.com/item*"
-      ],
-      "js": [
-        "item-download.js"
-      ],
-      "css": [
-        "item-download.css"
-      ],
-      "run_at": "document_end"
-    },
-    {
-      "matches": [
-        "https://www.goofish.com/publish*"
-      ],
-      "js": [
-        "publish-helper.js"
-      ],
-      "run_at": "document_end"
-    },
-    {
-      "matches": [
-        "https://www.goofish.com/",
-        "https://www.goofish.com/search*"
-      ],
-      "js": [
-        "search-page-buttons.js"
-      ],
-      "css": [
-        "search-page-buttons.css"
-      ],
-      "run_at": "document_end"
     }
   ],
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

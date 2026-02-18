@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>配置 - 闲鱼聊天监听</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+      background: white; color: #333; height: 100vh;
+      display: flex; flex-direction: column;
+    }
+    .header {
+      height: 40px; padding: 0 20px;
+      display: flex; align-items: center;
+      border-bottom: 1px solid #f0f0f0; flex-shrink: 0;
+    }
+    .header h1 { font-size: 16px; font-weight: 600; color: #2c3e50; }
+    .main { flex: 1; display: flex; overflow: hidden; }
+    .sidebar {
+      width: 140px; background: white;
+      border-right: 1px solid #f0f0f0; flex-shrink: 0;
+    }
+    .nav-item {
+      height: 36px; padding: 0 16px;
+      display: flex; align-items: center;
+      font-size: 14px; color: #666; cursor: pointer;
+      position: relative; transition: all 0.2s;
+    }
+    .nav-item:hover { background: #fafafa; }
+    .nav-item.active { color: #333; font-weight: 500; background: #fafafa; }
+    .nav-item.active::before {
+      content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+      width: 2px; background: #ffe60f;
+    }
+    .content { flex: 1; padding: 20px 24px; overflow-y: auto; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .section-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+    .form-group { margin-bottom: 10px; }
+    .form-row { display: flex; align-items: center; gap: 12px; }
+    .form-label { width: 100px; font-size: 14px; color: #666; flex-shrink: 0; }
+    .form-input {
+      width: 160px; height: 32px; padding: 0 12px;
+      border: 1px solid #e0e0e0; border-radius: 4px;
+      font-size: 14px; outline: none;
+    }
+    .form-input:focus { border-color: #ffe60f; }
+    .form-help { font-size: 12px; color: #999; margin-top: 4px; margin-left: 112px; }
+    .form-unit { font-size: 13px; color: #999; }
+    .msg-table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    .msg-table th {
+      text-align: left; padding: 8px 10px; background: #fafafa;
+      border-bottom: 2px solid #f0f0f0; color: #666; font-weight: 500;
+      position: sticky; top: 0; z-index: 1;
+    }
+    .msg-table td {
+      padding: 6px 10px; border-bottom: 1px solid #f5f5f5;
+      max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .msg-table tr:hover td { background: #fafbfc; }
+    .table-actions {
+      display: flex; gap: 8px; margin-bottom: 12px; align-items: center;
+    }
+    .table-info { font-size: 13px; color: #999; margin-left: auto; }
+    .footer {
+      height: 48px; padding: 0 24px;
+      border-top: 1px solid #f0f0f0;
+      display: flex; align-items: center; justify-content: flex-end;
+      gap: 12px; flex-shrink: 0; background: white;
+    }
+    .btn {
+      height: 32px; padding: 0 20px;
+      border: 1px solid #e0e0e0; border-radius: 4px;
+      font-size: 14px; cursor: pointer; background: white; color: #666;
+      transition: all 0.2s;
+    }
+    .btn:hover { border-color: #bbb; background: #fafafa; }
+    .btn-primary {
+      border-color: #ffe60f;
+      background: linear-gradient(135deg, #ffe60f, #ffed4e);
+      color: #333; font-weight: 500;
+    }
+    .btn-primary:hover {
+      border-color: #ffd700;
+      background: linear-gradient(135deg, #ffd700, #ffe60f);
+    }
+    .btn-danger { color: #f44336; border-color: #ffcdd2; }
+    .btn-danger:hover { background: #fff5f5; }
+    .empty-state {
+      text-align: center; padding: 60px 20px; color: #bbb; font-size: 14px;
+    }
+    .toast {
+      position: fixed; top: 30px; left: 50%;
+      transform: translateX(-50%) translateY(-100px);
+      background: rgba(0,0,0,0.85); color: white;
+      padding: 12px 24px; border-radius: 6px; font-size: 14px;
+      z-index: 10000; opacity: 0; transition: all 0.3s;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.success { background: linear-gradient(135deg, #28a745, #20c997); }
+    .toast.error { background: linear-gradient(135deg, #f44336, #e91e63); }
+    .confirm-dialog {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5); display: none;
+      align-items: center; justify-content: center; z-index: 10001;
+    }
+    .confirm-dialog.show { display: flex; }
+    .confirm-content { background: white; border-radius: 8px; padding: 20px; width: 280px; }
+    .confirm-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+    .confirm-message { font-size: 13px; color: #666; margin-bottom: 16px; }
+    .confirm-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+    .confirm-btn {
+      padding: 6px 16px; border: 1px solid #e0e0e0; border-radius: 4px;
+      font-size: 13px; cursor: pointer; background: white;
+    }
+    .confirm-btn-confirm { background: #f44336; color: white; border-color: #f44336; }
+  </style>
+</head>
+<body>
+  <div class="header"><h1>聊天监听 - 配置中心</h1></div>
+  <div class="main">
+    <div class="sidebar">
+      <div class="nav-item active" data-panel="messages">消息列表</div>
+      <div class="nav-item" data-panel="auto-reply">自动回复</div>
+      <div class="nav-item" data-panel="settings">监听设置</div>
+    </div>
+    <div class="content">
+      <!-- 消息列表面板 -->
+      <div class="panel active" id="panel-messages">
+        <div class="table-actions">
+          <button class="btn" id="refreshBtn">刷新</button>
+          <button class="btn" id="exportCsvBtn">导出CSV</button>
+          <button class="btn btn-danger" id="clearAllBtn">清空全部</button>
+          <span class="table-info" id="tableInfo">共 0 条消息</span>
+        </div>
+        <div style="overflow-y: auto; max-height: calc(100vh - 160px);">
+          <table class="msg-table" id="msgTable">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>发送人</th>
+                <th>内容</th>
+                <th>商品ID</th>
+                <th>会话ID</th>
+              </tr>
+            </thead>
+            <tbody id="msgTableBody">
+              <tr><td colspan="5" style="text-align:center;color:#bbb;padding:40px;">暂无消息</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <!-- 自动回复配置面板 -->
+      <div class="panel" id="panel-auto-reply">
+        <div class="form-section" style="max-width: 600px;">
+          <div class="section-title">自动回复设置</div>
+          
+          <!-- 启用开关 -->
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">启用自动回复</label>
+              <input type="checkbox" id="autoReplyEnabled" />
+            </div>
+            <div class="form-help">开启后自动回复匹配关键字的消息</div>
+          </div>
+          
+          <!-- 冷却时间 -->
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">冷却时间</label>
+              <input type="number" class="form-input" id="cooldownInput" min="1000" max="3600000" step="1000" />
+              <span class="form-unit">毫秒</span>
+            </div>
+            <div class="form-help">同一用户两次回复的最小间隔 (1000-3600000)</div>
+          </div>
+          
+          <!-- 延迟发送 -->
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">延迟发送</label>
+              <input type="number" class="form-input" id="delayInput" min="0" max="60000" step="100" />
+              <span class="form-unit">毫秒</span>
+            </div>
+            <div class="form-help">匹配到关键字后延迟回复的时间 (0-60000)</div>
+          </div>
+          
+          <!-- 关键字列表 -->
+          <div class="section-title" style="margin-top: 24px;">关键字回复规则</div>
+          <div class="table-actions">
+            <button class="btn btn-primary" id="addKeywordBtn">添加规则</button>
+            <span class="table-info" id="keywordCount">共 0 条规则</span>
+          </div>
+          
+          <div style="overflow-y: auto; max-height: calc(100vh - 280px);">
+            <table class="msg-table" id="keywordTable">
+              <thead>
+                <tr>
+                  <th style="width: 40%;">触发关键字</th>
+                  <th style="width: 40%;">回复内容</th>
+                  <th style="width: 20%;">操作</th>
+                </tr>
+              </thead>
+              <tbody id="keywordTableBody">
+                <tr><td colspan="3" style="text-align:center;color:#bbb;padding:40px;">暂无规则</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <!-- 监听设置面板 -->
+      <div class="panel" id="panel-settings">
+        <div class="form-section" style="max-width: 500px;">
+          <div class="section-title">监听设置</div>
+          <div class="form-group">
+            <div class="form-row">
+              <label class="form-label">最大存储消息数</label>
+              <input type="number" class="form-input" id="maxMessagesInput" min="100" max="10000" step="100" />
+              <span class="form-unit">条</span>
+            </div>
+            <div class="form-help">超过此数量后自动删除最旧的消息 (100-10000)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer">
+    <button class="btn btn-primary" id="saveBtn">保存配置</button>
+  </div>
+  <div id="toast" class="toast"></div>
+  <div id="confirmDialog" class="confirm-dialog">
+    <div class="confirm-content">
+      <div class="confirm-title" id="confirmTitle">确认操作</div>
+      <div class="confirm-message" id="confirmMessage"></div>
+      <div class="confirm-buttons">
+        <button class="confirm-btn" id="confirmCancel">取消</button>
+        <button class="confirm-btn confirm-btn-confirm" id="confirmOk">确定</button>
+      </div>
+    </div>
+  </div>
+  <script src="../shared/ui-helpers.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
