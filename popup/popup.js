@@ -1,73 +1,57 @@
-// popup.js - 聊天监听 Popup 页面
-document.addEventListener('DOMContentLoaded', function () {
-  var msgCountEl = document.getElementById('msgCount');
-  var msgListEl = document.getElementById('msgList');
-  var openConfigBtn = document.getElementById('openConfig');
-  var clearDataBtn = document.getElementById('clearData');
+/**
+ * popup.js - 插件弹窗逻辑
+ */
 
-  function loadMessages() {
-    chrome.runtime.sendMessage({ type: 'GET_CHAT_MESSAGES', limit: 20 }, function(response) {
-      if (chrome.runtime.lastError || !response) return;
-
-      msgCountEl.textContent = response.total || 0;
-
-      if (!response.messages || response.messages.length === 0) {
-        msgListEl.innerHTML = '';
-        var empty = document.createElement('div');
-        empty.className = 'empty-msg';
-        empty.textContent = '暂无聊天消息';
-        msgListEl.appendChild(empty);
-        return;
-      }
-
-      msgListEl.innerHTML = '';
-      response.messages.forEach(function(msg) {
-        var item = document.createElement('div');
-        item.className = 'msg-item';
-
-        var senderSpan = document.createElement('span');
-        senderSpan.className = 'msg-sender';
-        senderSpan.textContent = msg.senderName || msg.senderId || '未知';
-
-        var contentSpan = document.createElement('span');
-        contentSpan.className = 'msg-content';
-        var contentText = msg.content || '';
-        contentSpan.textContent = contentText.length > 60 ? contentText.substring(0, 60) + '...' : contentText;
-
-        var timeDiv = document.createElement('div');
-        timeDiv.className = 'msg-time';
-        var parts = [];
-        if (msg.timestamp) parts.push(msg.timestamp);
-        if (msg.itemId) parts.push('商品:' + msg.itemId);
-        timeDiv.textContent = parts.join(' | ');
-
-        item.appendChild(senderSpan);
-        item.appendChild(contentSpan);
-        item.appendChild(timeDiv);
-        msgListEl.appendChild(item);
+document.addEventListener('DOMContentLoaded', function() {
+  const statusEl = document.getElementById('status');
+  const openOptionsBtn = document.getElementById('openOptions');
+  
+  // 检查闲鱼页面是否打开
+  checkIdlefishStatus();
+  
+  // 打开设置页面
+  openOptionsBtn.addEventListener('click', function() {
+    if (chrome.tabs) {
+      chrome.tabs.create({
+        url: chrome.runtime.getURL('options/options.html')
       });
-    });
-  }
-
-  loadMessages();
-  setInterval(loadMessages, 2000);
-
-  openConfigBtn.addEventListener('click', function () {
-    chrome.runtime.openOptionsPage();
-    window.close();
-  });
-
-  clearDataBtn.addEventListener('click', async function () {
-    var confirmed = await showConfirm('确定要清空所有聊天消息吗？', { title: '清空消息' });
-    if (confirmed) {
-      chrome.runtime.sendMessage({ type: 'CLEAR_CHAT_MESSAGES' }, function(response) {
-        if (response && response.success) {
-          loadMessages();
-          showToast('消息已清空', 'success');
-        } else {
-          showToast('清空失败', 'error');
-        }
-      });
+    } else if (chrome.runtime) {
+      // 如果是 extension service worker 环境
+      window.open(chrome.runtime.getURL('options/options.html'));
     }
   });
+  
+  /**
+   * 检查闲鱼页面状态
+   */
+  async function checkIdlefishStatus() {
+    try {
+      // 查询闲鱼标签页
+      const tabs = await chrome.tabs.query({ 
+        url: 'https://www.goofish.com/*' 
+      });
+      
+      if (tabs && tabs.length > 0) {
+        updateStatus(true, tabs.length);
+      } else {
+        updateStatus(false, 0);
+      }
+    } catch (error) {
+      console.error('[Popup] 检查状态失败:', error);
+      updateStatus(false, 0);
+    }
+  }
+  
+  /**
+   * 更新状态显示
+   */
+  function updateStatus(isActive, tabCount) {
+    if (isActive) {
+      statusEl.className = 'status active';
+      statusEl.textContent = `✅ 已检测到 ${tabCount} 个闲鱼页面`;
+    } else {
+      statusEl.className = 'status inactive';
+      statusEl.textContent = '⚠️ 请打开闲鱼聊天页面';
+    }
+  }
 });

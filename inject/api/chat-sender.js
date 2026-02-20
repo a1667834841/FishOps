@@ -130,7 +130,10 @@ window.XianyuSender = (function() {
           text: options.content
         }
       };
-      var messageDataBase = btoa(JSON.stringify(messageContent));
+      
+      // 使用 UTF-8 编码的 base64 转换（支持中文）
+      var messageDataStr = JSON.stringify(messageContent);
+      var messageDataBase = btoa(unescape(encodeURIComponent(messageDataStr)));
 
       // 构建请求体（和你提供的抓包数据一致）
       // 关键：actualReceivers 必须包含双方 ID（对方 + 自己）

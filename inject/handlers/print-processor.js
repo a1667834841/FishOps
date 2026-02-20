@@ -19,12 +19,35 @@
       return;
     }
 
+    // 修复内容编码，防止乱码
+    var content = message.content;
+    if (typeof content === 'string') {
+      try {
+        // 尝试修复 UTF-8 编码问题
+        var hasMojibake =
+          /[\u00C0-\u00FF]{2,}/.test(content) ||
+          /[\u00C2-\u00DF][\u0080-\u00BF]/.test(content) ||
+          /[\u00E0-\u00EF][\u0080-\u00BF]{2}/.test(content);
+
+        if (hasMojibake) {
+          var bytes = [];
+          for (let i = 0; i < content.length; i++) {
+            bytes.push(content.charCodeAt(i) & 0xff);
+          }
+          content = new TextDecoder('utf-8').decode(new Uint8Array(bytes));
+        }
+      } catch (error) {
+        console.warn(LOG_PREFIX, '内容编码修复失败:', error);
+        content = message.content;
+      }
+    }
+
     console.log('\n' + '='.repeat(60));
     console.log(LOG_PREFIX + ' 📩 收到新消息');
     console.log('='.repeat(60));
     console.log(LOG_PREFIX + ' 👤 发送人:', message.senderName || '未知');
     console.log(LOG_PREFIX + ' 🆔 发送人 ID:', message.senderId);
-    console.log(LOG_PREFIX + ' 💬 消息内容:', message.content);
+    console.log(LOG_PREFIX + ' 💬 消息内容:', content);
     console.log(LOG_PREFIX + ' 🕐 发送时间:', message.timestamp);
     console.log(LOG_PREFIX + ' 🏷️  消息类型:', message.contentType);
     console.log(LOG_PREFIX + ' 🔗 会话 ID:', message.sessionId);

@@ -39,14 +39,15 @@
     .section-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
     .form-group { margin-bottom: 10px; }
     .form-row { display: flex; align-items: center; gap: 12px; }
-    .form-label { width: 100px; font-size: 14px; color: #666; flex-shrink: 0; }
+    .form-label { width: 120px; font-size: 14px; color: #666; flex-shrink: 0; }
     .form-input {
-      width: 160px; height: 32px; padding: 0 12px;
+      width: 200px; height: 32px; padding: 0 12px;
       border: 1px solid #e0e0e0; border-radius: 4px;
       font-size: 14px; outline: none;
     }
     .form-input:focus { border-color: #ffe60f; }
-    .form-help { font-size: 12px; color: #999; margin-top: 4px; margin-left: 112px; }
+    .form-input-wide { width: 360px; }
+    .form-help { font-size: 12px; color: #999; margin-top: 4px; margin-left: 132px; }
     .form-unit { font-size: 13px; color: #999; }
     .msg-table {
       width: 100%; border-collapse: collapse; font-size: 13px;
@@ -58,7 +59,7 @@
     }
     .msg-table td {
       padding: 6px 10px; border-bottom: 1px solid #f5f5f5;
-      max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .msg-table tr:hover td { background: #fafbfc; }
     .table-actions {
@@ -89,19 +90,115 @@
     }
     .btn-danger { color: #f44336; border-color: #ffcdd2; }
     .btn-danger:hover { background: #fff5f5; }
+    .btn-small { height: 26px; padding: 0 12px; font-size: 12px; }
+    .btn-success { color: #28a745; border-color: #c3e6cb; }
+    .btn-success:hover { background: #f0fff0; }
     .empty-state {
       text-align: center; padding: 60px 20px; color: #bbb; font-size: 14px;
     }
+    /* 规则类型标签 */
+    .rule-type-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 11px; font-weight: 500;
+    }
+    .badge-keyword { background: #e3f2fd; color: #1565c0; }
+    .badge-ai { background: #f3e5f5; color: #7b1fa2; }
+    /* 开关 */
+    .switch {
+      position: relative; width: 40px; height: 22px;
+      background: #ccc; border-radius: 11px; cursor: pointer;
+      transition: background 0.3s;
+    }
+    .switch.on { background: #4caf50; }
+    .switch::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: white; transition: transform 0.3s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .switch.on::after { transform: translateX(18px); }
+    /* 弹窗 */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.4); display: none;
+      align-items: center; justify-content: center; z-index: 10001;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: white; border-radius: 8px; width: 580px;
+      max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+    }
+    .modal-header {
+      padding: 16px 20px; border-bottom: 1px solid #f0f0f0;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .modal-title { font-size: 16px; font-weight: 600; }
+    .modal-close {
+      width: 28px; height: 28px; border: none; background: none;
+      font-size: 18px; color: #999; cursor: pointer; border-radius: 4px;
+    }
+    .modal-close:hover { background: #f5f5f5; color: #333; }
+    .modal-body { padding: 20px; }
+    .modal-footer {
+      padding: 12px 20px; border-top: 1px solid #f0f0f0;
+      display: flex; gap: 8px; justify-content: flex-end;
+    }
+    .modal-form-group { margin-bottom: 16px; }
+    .modal-form-label {
+      display: block; font-size: 13px; color: #666;
+      margin-bottom: 6px; font-weight: 500;
+    }
+    .modal-form-input {
+      width: 100%; height: 34px; padding: 0 12px;
+      border: 1px solid #e0e0e0; border-radius: 4px;
+      font-size: 14px; outline: none;
+    }
+    .modal-form-input:focus { border-color: #ffe60f; }
+    .modal-form-textarea {
+      width: 100%; min-height: 80px; padding: 10px 12px;
+      border: 1px solid #e0e0e0; border-radius: 4px;
+      font-size: 13px; outline: none; resize: vertical;
+      font-family: inherit; line-height: 1.5;
+    }
+    .modal-form-textarea:focus { border-color: #ffe60f; }
+    .modal-form-select {
+      width: 200px; height: 34px; padding: 0 12px;
+      border: 1px solid #e0e0e0; border-radius: 4px;
+      font-size: 14px; outline: none; background: white;
+    }
+    .modal-form-help { font-size: 12px; color: #999; margin-top: 4px; }
+    .modal-form-error { font-size: 12px; color: #f44336; margin-top: 4px; }
+    .type-fields { display: none; }
+    .type-fields.show { display: block; }
+    .regex-preview {
+      padding: 6px 10px; background: #f8f9fa; border-radius: 4px;
+      font-size: 12px; color: #666; margin-top: 4px;
+    }
+    .regex-preview.error { background: #fff5f5; color: #f44336; }
+    .regex-preview.success { background: #f0fff0; color: #28a745; }
+    /* 折叠面板 */
+    .collapse-header {
+      cursor: pointer; padding: 10px 0; display: flex;
+      align-items: center; gap: 8px; user-select: none;
+    }
+    .collapse-header .arrow {
+      font-size: 10px; transition: transform 0.2s; color: #999;
+    }
+    .collapse-header.open .arrow { transform: rotate(90deg); }
+    .collapse-body { display: none; padding: 0 0 10px 0; }
+    .collapse-body.show { display: block; }
+    /* Toast */
     .toast {
       position: fixed; top: 30px; left: 50%;
       transform: translateX(-50%) translateY(-100px);
       background: rgba(0,0,0,0.85); color: white;
       padding: 12px 24px; border-radius: 6px; font-size: 14px;
-      z-index: 10000; opacity: 0; transition: all 0.3s;
+      z-index: 10002; opacity: 0; transition: all 0.3s;
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .toast.success { background: linear-gradient(135deg, #28a745, #20c997); }
     .toast.error { background: linear-gradient(135deg, #f44336, #e91e63); }
+    /* Confirm */
     .confirm-dialog {
       position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       background: rgba(0,0,0,0.5); display: none;
@@ -117,6 +214,7 @@
       font-size: 13px; cursor: pointer; background: white;
     }
     .confirm-btn-confirm { background: #f44336; color: white; border-color: #f44336; }
+    .form-row-inline { display: flex; align-items: center; gap: 8px; }
   </style>
 </head>
 <body>
@@ -153,63 +251,132 @@
           </table>
         </div>
       </div>
+
       <!-- 自动回复配置面板 -->
       <div class="panel" id="panel-auto-reply">
-        <div class="form-section" style="max-width: 600px;">
-          <div class="section-title">自动回复设置</div>
-          
-          <!-- 启用开关 -->
+        <div style="max-width: 800px;">
+          <!-- 全局配置 -->
+          <div class="section-title">全局配置</div>
           <div class="form-group">
             <div class="form-row">
               <label class="form-label">启用自动回复</label>
-              <input type="checkbox" id="autoReplyEnabled" />
+              <div class="switch" id="globalEnabledSwitch"></div>
             </div>
-            <div class="form-help">开启后自动回复匹配关键字的消息</div>
           </div>
-          
-          <!-- 冷却时间 -->
           <div class="form-group">
             <div class="form-row">
-              <label class="form-label">冷却时间</label>
-              <input type="number" class="form-input" id="cooldownInput" min="1000" max="3600000" step="1000" />
+              <label class="form-label">默认冷却时间</label>
+              <input type="number" class="form-input" id="defaultCooldownInput" min="1000" max="3600000" step="1000" />
               <span class="form-unit">毫秒</span>
             </div>
-            <div class="form-help">同一用户两次回复的最小间隔 (1000-3600000)</div>
+            <div class="form-help">同一用户两次回复的最小间隔</div>
           </div>
-          
-          <!-- 延迟发送 -->
           <div class="form-group">
             <div class="form-row">
-              <label class="form-label">延迟发送</label>
-              <input type="number" class="form-input" id="delayInput" min="0" max="60000" step="100" />
+              <label class="form-label">默认延迟发送</label>
+              <input type="number" class="form-input" id="defaultDelayInput" min="0" max="60000" step="100" />
               <span class="form-unit">毫秒</span>
             </div>
-            <div class="form-help">匹配到关键字后延迟回复的时间 (0-60000)</div>
+            <div class="form-help">匹配到规则后延迟回复的时间</div>
           </div>
-          
-          <!-- 关键字列表 -->
-          <div class="section-title" style="margin-top: 24px;">关键字回复规则</div>
+
+          <!-- AI 配置（折叠） -->
+          <div style="margin-top: 20px;">
+            <div class="collapse-header" id="aiConfigToggle">
+              <span class="arrow">▶</span>
+              <span class="section-title" style="margin-bottom: 0;">AI 连接配置</span>
+            </div>
+            <div class="collapse-body" id="aiConfigBody">
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label">API Key</label>
+                  <input type="password" class="form-input form-input-wide" id="aiApiKeyInput" placeholder="sk-..." />
+                </div>
+              </div>
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label">Base URL</label>
+                  <input type="text" class="form-input form-input-wide" id="aiBaseUrlInput" placeholder="https://api.openai.com/v1" />
+                </div>
+                <div class="form-help">OpenAI 兼容接口地址</div>
+              </div>
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label">默认模型</label>
+                  <input type="text" class="form-input" id="aiModelInput" placeholder="gpt-4o-mini" />
+                </div>
+              </div>
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label"></label>
+                  <button class="btn btn-success btn-small" id="testAiBtn">测试连接</button>
+                  <span class="form-unit" id="testAiResult"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- AI 暂停配置（折叠） -->
+          <div style="margin-top: 20px;">
+            <div class="collapse-header" id="aiPauseConfigToggle">
+              <span class="arrow">▶</span>
+              <span class="section-title" style="margin-bottom: 0;">AI 人工介入配置</span>
+            </div>
+            <div class="collapse-body" id="aiPauseConfigBody">
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label">启用人工优先</label>
+                  <div class="switch" id="aiPauseEnabledSwitch"></div>
+                </div>
+                <div class="form-help">检测到非 Web 端（如手机 APP）人工回复时，自动暂停 AI 回复</div>
+              </div>
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label">暂停时长</label>
+                  <input type="number" class="form-input" id="aiPauseDurationInput" min="60000" max="3600000" step="60000" />
+                  <span class="form-unit">毫秒</span>
+                </div>
+                <div class="form-help">每次检测到人工回复后，AI 暂停的时长（默认 300000 毫秒=5 分钟）</div>
+              </div>
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label">状态监控</label>
+                  <span class="form-unit" id="aiPauseStatusDisplay">未激活</span>
+                  <button class="btn btn-small" id="refreshAiPauseStatusBtn" style="margin-left: 8px;">刷新状态</button>
+                </div>
+                <div class="form-help" id="aiPauseStatusHelp">当检测到非 Web 端消息时，AI 将自动暂停指定时长</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 规则列表 -->
+          <div class="section-title" style="margin-top: 24px;">回复规则</div>
           <div class="table-actions">
-            <button class="btn btn-primary" id="addKeywordBtn">添加规则</button>
-            <span class="table-info" id="keywordCount">共 0 条规则</span>
+            <button class="btn btn-primary" id="addRuleBtn">添加规则</button>
+            <span class="table-info" id="ruleCount">共 0 条规则</span>
           </div>
-          
-          <div style="overflow-y: auto; max-height: calc(100vh - 280px);">
-            <table class="msg-table" id="keywordTable">
+
+          <div style="overflow-y: auto; max-height: calc(100vh - 420px);">
+            <table class="msg-table" id="ruleTable">
               <thead>
                 <tr>
-                  <th style="width: 40%;">触发关键字</th>
-                  <th style="width: 40%;">回复内容</th>
-                  <th style="width: 20%;">操作</th>
+                  <th style="width: 20%;">名称</th>
+                  <th style="width: 10%;">类型</th>
+                  <th style="width: 8%;">优先级</th>
+                  <th style="width: 25%;">匹配/提示词</th>
+                  <th style="width: 12%;">绑定商品</th>
+                  <th style="width: 8%;">状态</th>
+                  <th style="width: 17%;">操作</th>
                 </tr>
               </thead>
-              <tbody id="keywordTableBody">
-                <tr><td colspan="3" style="text-align:center;color:#bbb;padding:40px;">暂无规则</td></tr>
+              <tbody id="ruleTableBody">
+                <tr><td colspan="7" style="text-align:center;color:#bbb;padding:40px;">暂无规则</td></tr>
               </tbody>
             </table>
           </div>
         </div>
       </div>
+
       <!-- 监听设置面板 -->
       <div class="panel" id="panel-settings">
         <div class="form-section" style="max-width: 500px;">
@@ -229,6 +396,84 @@
   <div class="footer">
     <button class="btn btn-primary" id="saveBtn">保存配置</button>
   </div>
+
+  <!-- 规则编辑弹窗 -->
+  <div class="modal-overlay" id="ruleModal">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title" id="ruleModalTitle">添加规则</span>
+        <button class="modal-close" id="ruleModalClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-form-group">
+          <label class="modal-form-label">规则名称</label>
+          <input type="text" class="modal-form-input" id="ruleNameInput" placeholder="如：欢迎语、AI 客服" />
+        </div>
+        <div class="modal-form-group">
+          <label class="modal-form-label">回复类型</label>
+          <select class="modal-form-select" id="ruleTypeSelect">
+            <option value="keyword">关键词正则匹配</option>
+            <option value="ai">AI 读取聊天记录</option>
+          </select>
+        </div>
+
+        <!-- 关键词类型字段 -->
+        <div class="type-fields show" id="keywordFields">
+          <div class="modal-form-group">
+            <label class="modal-form-label">正则表达式</label>
+            <input type="text" class="modal-form-input" id="rulePatternInput" placeholder="如：你好|在吗|有货吗" />
+            <div class="regex-preview" id="regexPreview">输入正则表达式后实时校验</div>
+          </div>
+          <div class="modal-form-group">
+            <label class="modal-form-label">回复内容</label>
+            <textarea class="modal-form-textarea" id="ruleReplyInput" placeholder="匹配到关键词后自动回复的内容"></textarea>
+          </div>
+        </div>
+
+        <!-- AI 类型字段 -->
+        <div class="type-fields" id="aiFields">
+          <div class="modal-form-group">
+            <label class="modal-form-label">提示词 (System Prompt)</label>
+            <textarea class="modal-form-textarea" id="rulePromptInput" style="min-height: 120px;" placeholder="如：你是一个闲鱼卖家客服，请根据聊天记录回复用户。回复要简洁、友好。"></textarea>
+          </div>
+          <div class="modal-form-group">
+            <label class="modal-form-label">读取历史消息条数</label>
+            <input type="number" class="modal-form-input" id="ruleMaxHistoryInput" min="1" max="50" value="10" style="width: 100px;" />
+            <div class="modal-form-help">AI 会读取最近 N 条聊天记录作为上下文</div>
+          </div>
+        </div>
+
+        <!-- 通用字段 -->
+        <div class="modal-form-group">
+          <label class="modal-form-label">绑定商品 ID</label>
+          <input type="text" class="modal-form-input" id="ruleItemIdsInput" placeholder="多个用逗号分隔，留空=匹配全部" />
+          <div class="modal-form-help">仅对指定商品的聊天生效，留空表示所有商品</div>
+        </div>
+        <div class="form-row-inline">
+          <div class="modal-form-group" style="flex: 1;">
+            <label class="modal-form-label">优先级</label>
+            <input type="number" class="modal-form-input" id="rulePriorityInput" min="0" max="100" value="10" style="width: 80px;" />
+            <div class="modal-form-help">数字越大越优先</div>
+          </div>
+          <div class="modal-form-group" style="flex: 1;">
+            <label class="modal-form-label">冷却时间 (毫秒)</label>
+            <input type="number" class="modal-form-input" id="ruleCooldownInput" min="0" max="3600000" step="1000" style="width: 120px;" placeholder="0=用全局" />
+            <div class="modal-form-help">0 表示使用全局默认值</div>
+          </div>
+          <div class="modal-form-group" style="flex: 1;">
+            <label class="modal-form-label">延迟 (毫秒)</label>
+            <input type="number" class="modal-form-input" id="ruleDelayInput" min="0" max="60000" step="100" style="width: 120px;" placeholder="0=用全局" />
+            <div class="modal-form-help">0 表示使用全局默认值</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="ruleModalCancelBtn">取消</button>
+        <button class="btn btn-primary" id="ruleModalSaveBtn">保存</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
   <div id="confirmDialog" class="confirm-dialog">
     <div class="confirm-content">

@@ -2,119 +2,80 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>闲鱼聊天监听</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>闲鱼聊天监听助手</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 360px;
-      font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
-      background: #f5f7fa;
+      width: 300px;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      text-align: center;
+    }
+    h1 {
+      font-size: 16px;
+      margin-bottom: 10px;
       color: #333;
     }
-    .container { background: white; padding: 14px; }
-    .header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 10px;
+    .status {
+      padding: 10px;
+      margin: 15px 0;
+      border-radius: 4px;
+      background-color: #f0f0f0;
+      font-size: 14px;
     }
-    .header h1 { font-size: 15px; font-weight: 600; color: #2c3e50; }
-    .header .badge { font-size: 11px; color: #999; }
-    .status-bar {
-      height: 30px; background: #fafafa; border-radius: 4px;
-      display: flex; align-items: center; padding: 0 12px;
-      gap: 8px; font-size: 13px; margin-bottom: 10px;
+    .status.active {
+      background-color: #e6f4ea;
+      color: #1e7e34;
     }
-    .indicator {
-      width: 6px; height: 6px; border-radius: 50%;
-      background: #4caf50; animation: pulse 2s infinite;
+    .status.inactive {
+      background-color: #fce8e6;
+      color: #c5221f;
     }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-    .status-text { color: #666; }
-    .status-text span { color: #ff9800; font-weight: 600; margin: 0 2px; }
-    .action-bar {
-      display: flex; gap: 8px; margin-bottom: 10px;
+    button {
+      width: 100%;
+      padding: 10px;
+      margin: 5px 0;
+      border: none;
+      border-radius: 4px;
+      background-color: #1a73e8;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background-color 0.2s;
     }
-    .btn {
-      flex: 1; height: 30px; border: 1px solid #e0e0e0; border-radius: 4px;
-      font-size: 13px; cursor: pointer; background: white; color: #666;
-      transition: all 0.2s;
+    button:hover {
+      background-color: #1557b0;
     }
-    .btn:hover { border-color: #bbb; background: #fafafa; }
-    .btn-danger { border: none; background: transparent; color: #f44336; }
-    .btn-danger:hover { background: #fff5f5; }
-    .msg-list { max-height: 280px; overflow-y: auto; }
-    .msg-item {
-      padding: 8px 10px; border-bottom: 1px solid #f5f5f5;
-      font-size: 12px; line-height: 1.5;
+    button.secondary {
+      background-color: #f0f0f0;
+      color: #333;
     }
-    .msg-item:last-child { border-bottom: none; }
-    .msg-sender {
-      font-weight: 500; color: #1976d2; margin-right: 6px;
+    button.secondary:hover {
+      background-color: #e0e0e0;
     }
-    .msg-content { color: #333; word-break: break-all; }
-    .msg-time { color: #999; font-size: 11px; margin-top: 2px; }
-    .msg-item-id { color: #999; font-size: 11px; }
-    .empty-msg {
-      text-align: center; color: #bbb; padding: 30px 0; font-size: 13px;
+    .info {
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px solid #e0e0e0;
+      font-size: 12px;
+      color: #666;
     }
-    .toast {
-      position: fixed; top: 20px; left: 50%;
-      transform: translateX(-50%) translateY(-100px);
-      background: rgba(0,0,0,0.85); color: white;
-      padding: 10px 20px; border-radius: 6px; font-size: 13px;
-      z-index: 10000; opacity: 0; transition: all 0.3s; pointer-events: none;
-    }
-    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-    .toast.success { background: linear-gradient(135deg, #28a745, #20c997); }
-    .toast.error { background: linear-gradient(135deg, #f44336, #e91e63); }
-    .confirm-dialog {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.5); display: none;
-      align-items: center; justify-content: center; z-index: 10001;
-    }
-    .confirm-dialog.show { display: flex; }
-    .confirm-content { background: white; border-radius: 8px; padding: 20px; width: 260px; }
-    .confirm-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
-    .confirm-message { font-size: 13px; color: #666; margin-bottom: 16px; }
-    .confirm-buttons { display: flex; gap: 8px; justify-content: flex-end; }
-    .confirm-btn {
-      padding: 6px 14px; border: 1px solid #e0e0e0; border-radius: 4px;
-      font-size: 13px; cursor: pointer; background: white;
-    }
-    .confirm-btn-confirm { background: #f44336; color: white; border-color: #f44336; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>闲鱼聊天监听</h1>
-      <span class="badge">v2.0.0</span>
-    </div>
-    <div class="status-bar">
-      <span class="indicator"></span>
-      <span class="status-text">
-        监听中 · 已收 <span id="msgCount">0</span> 条消息
-      </span>
-    </div>
-    <div class="action-bar">
-      <button class="btn" id="openConfig">配置</button>
-      <button class="btn btn-danger" id="clearData">清空</button>
-    </div>
-    <div class="msg-list" id="msgList">
-      <div class="empty-msg">暂无聊天消息</div>
-    </div>
+  <h1>🐟 闲鱼聊天监听助手</h1>
+  
+  <div id="status" class="status inactive">
+    状态：检查中...
   </div>
-  <div id="toast" class="toast"></div>
-  <div id="confirmDialog" class="confirm-dialog">
-    <div class="confirm-content">
-      <div class="confirm-title" id="confirmTitle">确认操作</div>
-      <div class="confirm-message" id="confirmMessage"></div>
-      <div class="confirm-buttons">
-        <button class="confirm-btn" id="confirmCancel">取消</button>
-        <button class="confirm-btn confirm-btn-confirm" id="confirmOk">确定</button>
-      </div>
-    </div>
+  
+  <button id="openOptions">⚙️ 打开设置页面</button>
+  
+  <div class="info">
+    <div id="version">版本：2.0.0</div>
+    <div id="pageInfo">请在闲鱼聊天页面使用</div>
   </div>
-  <script src="../shared/ui-helpers.js"></script>
+
   <script src="popup.js"></script>
 </body>
 </html>

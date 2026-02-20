@@ -1,5 +1,31 @@
 # Changelog - FishOps (闲鱼数据采集助手)
 
+## [3.0.0] - 2026-02-20
+### ✨ 新增
+- **自动回复规则引擎**：全新架构，支持多条规则按优先级匹配
+- **关键词正则匹配回复**：支持正则表达式匹配消息，自动回复固定内容
+- **AI 读取聊天记录回复**：通过 ChatHistoryAPI 实时拉取最新聊天记录，结合自定义提示词调用 AI（OpenAI 兼容接口）生成智能回复
+- **商品 ID 绑定**：规则可绑定多个商品 ID，仅对指定商品聊天生效
+- **规则优先级**：支持数字优先级，高优先级规则优先匹配
+- **AI 连接测试**：Options 页面支持一键测试 AI API 连接
+- **规则管理 UI**：全新 Options 面板，支持规则增删改查、编辑弹窗、正则校验
+
+### 🎨 优化
+- **Options 页面重构**：新增规则管理表格、AI 配置折叠面板
+- **架构升级**：background 支持规则 CRUD、AI API 代理
+
+---
+
+## [2.2.1] - 2026-02-19
+### ✨ 新增
+- **聊天记录获取 API**: 新增 `inject/api/chat-history.js`，通过 WebSocket LWP 协议实现以下能力：
+  - `ChatHistoryAPI.getConversationList()` — 分页获取全部会话列表
+  - `ChatHistoryAPI.getMessageHistory(sessionId)` — 获取指定用户的消息历史记录
+  - `ChatHistoryAPI.getCurrentChatItemId()` — 获取当前聊天关联的商品 ID
+- 为后续自动对话功能提供数据基础
+
+---
+
 ## [2.1.1] - 2026-01-18
 ### 🔧 代码质量修复
 - **删除重复代码**: 移除 `background.js` 中重复的 `CLEAR_DATA` 消息处理器

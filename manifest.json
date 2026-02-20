@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "闲鱼聊天监听助手",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "监听闲鱼聊天WebSocket消息，解析并存储聊天记录",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
   "host_permissions": [
     "https://www.goofish.com/*"
@@ -14,21 +15,21 @@
     "service_worker": "background/index.js"
   },
   "options_page": "options/options.html",
-  "web_accessible_resources": [{
-    "resources": [
-      "inject/api/chat-sender.js",
-      "inject/api/test-send-message.js",
-      "inject/api/test-fix.js",
-      "inject/api/test-config-flow.js",
-      "inject/api/test-websocket-send.js",
-      "inject/api/test-id-generator.js",
-      "inject/api/test-actual-receivers.js",
-      "inject/api/find-my-id.js",
-      "inject/api/user-api.js",
-      "inject/api/test-get-user-id.js"
-    ],
-    "matches": ["https://www.goofish.com/*"]
-  }],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "inject/api/chat-sender.js",
+        "inject/api/chat-history.js",
+        "inject/api/find-my-id.js",
+        "inject/api/user-api.js",
+        "inject/api/goods-api.js",
+        "test/test-ai-pause.js"
+      ],
+      "matches": [
+        "https://www.goofish.com/*"
+      ]
+    }
+  ],
   "content_scripts": [
     {
       "matches": [
@@ -45,14 +46,18 @@
         "https://www.goofish.com/*"
       ],
       "js": [
-        "inject/core/event-bus.js",
+        "inject/events/event-bus.js",
         "content/bus-main.js",
+        "inject/api/find-my-id.js",
+        "inject/api/user-api.js",
+        "inject/api/goods-api.js",
         "inject/chat-parser.js",
-        "inject/processors/print-processor.js",
-        "inject/processors/auto-reply-processor.js",
-        "inject/core/message-bridge.js",
-        "inject/data-sources/websocket-data-source.js",
-        "inject/api/chat-sender.js"
+        "inject/handlers/print-processor.js",
+        "inject/handlers/auto-reply-processor.js",
+        "inject/events/message-bridge.js",
+        "inject/websocket/websocket-data-source.js",
+        "inject/api/chat-sender.js",
+        "inject/api/chat-history.js"
       ],
       "run_at": "document_start",
       "world": "MAIN"
@@ -64,7 +69,8 @@
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
-    }
+    },
+    "default_title": "闲鱼聊天监听助手"
   },
   "icons": {
     "16": "icons/icon16.png",
