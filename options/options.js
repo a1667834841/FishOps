@@ -2,9 +2,12 @@
 
 document.addEventListener('DOMContentLoaded', function () {
   // ==================== DOM 引用 ====================
-  var msgTableBody = document.getElementById('msgTableBody');
-  var tableInfo = document.getElementById('tableInfo');
-  var maxMessagesInput = document.getElementById('maxMessagesInput');
+  // 消息列表相关 DOM 已移除，仅保留同步和导出功能
+
+  // 同步
+  var syncBtn = document.getElementById('syncBtn');
+  var syncCountSelect = document.getElementById('syncCountSelect');
+  var syncStatusEl = document.getElementById('syncStatus');
 
   // 全局配置
   var globalEnabledSwitch = document.getElementById('globalEnabledSwitch');
@@ -16,7 +19,7 @@ document.addEventListener('DOMContentLoaded', function () {
   var aiBaseUrlInput = document.getElementById('aiBaseUrlInput');
   var aiModelInput = document.getElementById('aiModelInput');
   var testAiResult = document.getElementById('testAiResult');
-  
+
   // AI 暂停配置
   var aiPauseEnabledSwitch = document.getElementById('aiPauseEnabledSwitch');
   var aiPauseDurationInput = document.getElementById('aiPauseDurationInput');
@@ -42,6 +45,19 @@ document.addEventListener('DOMContentLoaded', function () {
   var regexPreview = document.getElementById('regexPreview');
   var keywordFields = document.getElementById('keywordFields');
   var aiFields = document.getElementById('aiFields');
+
+  // 商品选择器
+  var goodsSelector = document.getElementById('goodsSelector');
+  var goodsSelectedTags = document.getElementById('goodsSelectedTags');
+  var goodsSearchInput = document.getElementById('goodsSearchInput');
+  var goodsDropdown = document.getElementById('goodsDropdown');
+
+  // 商品列表缓存和状态
+  var goodsListCache = [];
+  var goodsCurrentPage = 1;
+  var goodsHasMore = true;
+  var goodsIsLoading = false;
+  var selectedItemIds = [];
 
   // 当前编辑的规则 ID（null 表示新增）
   var editingRuleId = null;
@@ -72,16 +88,16 @@ document.addEventListener('DOMContentLoaded', function () {
     aiConfigToggle.classList.toggle('open');
     aiConfigBody.classList.toggle('show');
   });
-  
+
   // ==================== AI 暂停配置折叠 ====================
   var aiPauseConfigToggle = document.getElementById('aiPauseConfigToggle');
   var aiPauseConfigBody = document.getElementById('aiPauseConfigBody');
-  
+
   aiPauseConfigToggle.addEventListener('click', function () {
     aiPauseConfigToggle.classList.toggle('open');
     aiPauseConfigBody.classList.toggle('show');
   });
-  
+
   // AI 暂停开关
   if (aiPauseEnabledSwitch) {
     aiPauseEnabledSwitch.addEventListener('click', function () {
@@ -94,67 +110,8 @@ document.addEventListener('DOMContentLoaded', function () {
     globalEnabledSwitch.classList.toggle('on');
   });
 
-  // ==================== 加载消息列表 ====================
-  function loadMessages() {
-    chrome.runtime.sendMessage({ type: 'GET_CHAT_MESSAGES', limit: 500 }, function (response) {
-      if (chrome.runtime.lastError || !response) return;
-
-      tableInfo.textContent = '共 ' + (response.total || 0) + ' 条消息';
-
-      if (!response.messages || response.messages.length === 0) {
-        msgTableBody.textContent = '';
-        var tr = document.createElement('tr');
-        var td = document.createElement('td');
-        td.setAttribute('colspan', '5');
-        td.style.cssText = 'text-align:center;color:#bbb;padding:40px;';
-        td.textContent = '暂无消息';
-        tr.appendChild(td);
-        msgTableBody.appendChild(tr);
-        return;
-      }
-
-      msgTableBody.textContent = '';
-      response.messages.forEach(function (msg) {
-        var tr = document.createElement('tr');
-
-        var tdTime = document.createElement('td');
-        tdTime.textContent = msg.timestamp || '';
-        tdTime.style.whiteSpace = 'nowrap';
-
-        var tdSender = document.createElement('td');
-        tdSender.textContent = msg.senderName || msg.senderId || '';
-
-        var tdContent = document.createElement('td');
-        tdContent.textContent = msg.content || '';
-        tdContent.title = msg.content || '';
-
-        var tdItem = document.createElement('td');
-        tdItem.textContent = msg.itemId || '';
-
-        var tdSession = document.createElement('td');
-        tdSession.textContent = msg.sessionId || '';
-        tdSession.title = msg.sessionId || '';
-
-        tr.appendChild(tdTime);
-        tr.appendChild(tdSender);
-        tr.appendChild(tdContent);
-        tr.appendChild(tdItem);
-        tr.appendChild(tdSession);
-        msgTableBody.appendChild(tr);
-      });
-    });
-  }
-
   // ==================== 加载配置 ====================
-  function loadConfig() {
-    chrome.runtime.sendMessage({ type: 'GET_CHAT_CONFIG' }, function (response) {
-      if (response && response.success && response.config) {
-        maxMessagesInput.value = response.config.maxStoredMessages || 1000;
-      } else {
-        maxMessagesInput.value = 1000;
-      }
-    });
-  }
+  // maxMessages 配置已不再使用
 
   // ==================== 加载自动回复数据 ====================
   function loadAutoReplyData() {
@@ -180,7 +137,7 @@ document.addEventListener('DOMContentLoaded', function () {
       aiApiKeyInput.value = config.aiApiKey || '';
       aiBaseUrlInput.value = config.aiBaseUrl || 'https://api.openai.com/v1';
       aiModelInput.value = config.aiModel || 'gpt-4o-mini';
-      
+
       // 加载 AI 暂停配置
       loadAiPauseConfig();
 
@@ -188,7 +145,7 @@ document.addEventListener('DOMContentLoaded', function () {
       renderRuleTable(rules);
     });
   }
-  
+
   // ==================== 加载 AI 暂停配置 ====================
   function loadAiPauseConfig() {
     chrome.runtime.sendMessage({ type: 'GET_AI_PAUSE_CONFIG' }, function (response) {
@@ -196,28 +153,28 @@ document.addEventListener('DOMContentLoaded', function () {
         console.warn('加载 AI 暂停配置失败:', response);
         return;
       }
-      
+
       var config = response.config || {};
-      
+
       if (config.enabled) {
         aiPauseEnabledSwitch.classList.add('on');
       } else {
         aiPauseEnabledSwitch.classList.remove('on');
       }
       aiPauseDurationInput.value = config.pauseDuration || 300000;
-      
+
       // 刷新状态显示
       refreshAiPauseStatus();
     });
   }
-  
+
   // ==================== 刷新 AI 暂停状态 ====================
   function refreshAiPauseStatus() {
     chrome.runtime.sendMessage({ type: 'GET_AI_PAUSE_STATUS' }, function (response) {
       if (chrome.runtime.lastError || !response || !response.success) {
         return;
       }
-      
+
       var status = response.status || {};
       if (status.isPaused) {
         var remainingSeconds = status.remainingSeconds || 0;
@@ -385,6 +342,233 @@ document.addEventListener('DOMContentLoaded', function () {
       });
   }
 
+  // ==================== 商品选择器 ====================
+
+  /**
+   * 加载商品列表
+   */
+  function loadGoodsList(pageNumber, append = false) {
+    if (goodsIsLoading) return;
+    if (!append && pageNumber === 1) {
+      goodsListCache = [];
+      goodsCurrentPage = 1;
+    }
+
+    goodsIsLoading = true;
+
+    // 显示加载状态
+    if (!append) {
+      goodsDropdown.innerHTML = '<div class="goods-dropdown-loading">加载中...</div>';
+    }
+
+    // 通过 background 获取商品列表
+    chrome.runtime.sendMessage({
+      type: 'FETCH_GOODS_LIST',
+      pageNumber: pageNumber,
+      pageSize: 20
+    }, function (result) {
+      goodsIsLoading = false;
+
+      if (chrome.runtime.lastError) {
+        console.error('加载商品列表失败:', chrome.runtime.lastError);
+        goodsDropdown.innerHTML = '<div class="goods-dropdown-empty">加载失败，请重试</div>';
+        return;
+      }
+
+      if (result && result.success) {
+        if (append) {
+          goodsListCache = goodsListCache.concat(result.goodsList);
+        } else {
+          goodsListCache = result.goodsList;
+        }
+        goodsHasMore = result.hasMore;
+        goodsCurrentPage = pageNumber;
+        renderGoodsDropdown(goodsListCache);
+      } else {
+        console.error('加载商品列表失败:', result ? result.error : '未知错误');
+        goodsDropdown.innerHTML = '<div class="goods-dropdown-empty">' + (result && result.error ? result.error : '加载失败') + '</div>';
+      }
+    });
+  }
+
+  /**
+   * 渲染下拉列表选项
+   */
+  function renderGoodsDropdown(goodsList) {
+    if (!goodsList || goodsList.length === 0) {
+      goodsDropdown.innerHTML = '<div class="goods-dropdown-empty">暂无商品</div>';
+      return;
+    }
+
+    var html = '';
+    goodsList.forEach(function (goods) {
+      var isSelected = selectedItemIds.indexOf(goods.itemId) !== -1;
+      var selectedClass = isSelected ? ' selected' : '';
+      var priceText = goods.price ? '¥' + goods.price : '';
+      var imgSrc = goods.picUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="40" height="40"%3E%3Crect fill="%23f5f5f5" width="40" height="40"/%3E%3C/svg%3E';
+
+      html += '<div class="goods-option' + selectedClass + '" data-item-id="' + goods.itemId + '">' +
+        '<img class="goods-option-img" src="' + imgSrc + '" alt="" onerror="this.src=\'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22%3E%3Crect fill=%22%23f5f5f5%22 width=%2240%22 height=%2240%22/%3E%3C/svg%3E\'" />' +
+        '<div class="goods-option-info">' +
+        '<div class="goods-option-title">' + (goods.title || '未命名商品') + '</div>' +
+        '<div class="goods-option-price">' + priceText + '</div>' +
+        '</div>' +
+        '<div class="goods-option-check">✓</div>' +
+        '</div>';
+    });
+
+    if (goodsHasMore) {
+      html += '<div class="goods-dropdown-loading" id="loadMoreGoods">滚动加载更多...</div>';
+    }
+
+    goodsDropdown.innerHTML = html;
+
+    // 绑定选项点击事件
+    var options = goodsDropdown.querySelectorAll('.goods-option');
+    options.forEach(function (option) {
+      option.addEventListener('click', function () {
+        var itemId = this.getAttribute('data-item-id');
+        toggleGoodsSelection(itemId);
+      });
+    });
+  }
+
+  /**
+   * 渲染已选商品标签
+   */
+  function renderSelectedTags() {
+    goodsSelectedTags.innerHTML = '';
+
+    if (selectedItemIds.length === 0) return;
+
+    selectedItemIds.forEach(function (itemId) {
+      // 从缓存中查找商品信息
+      var goods = goodsListCache.find(function (g) { return g.itemId === itemId; });
+      var title = goods ? goods.title : itemId;
+      var displayTitle = title.length > 10 ? title.substring(0, 10) + '...' : title;
+      var imgSrc = goods && goods.picUrl ? goods.picUrl : 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="24" height="24"%3E%3Crect fill="%23f5f5f5" width="24" height="24"/%3E%3C/svg%3E';
+
+      var tag = document.createElement('div');
+      tag.className = 'goods-tag';
+      tag.innerHTML = '<img class="goods-tag-img" src="' + imgSrc + '" alt="" onerror="this.src=\'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22%3E%3Crect fill=%22%23f5f5f5%22 width=%2224%22 height=%2224%22/%3E%3C/svg%3E\'" />' +
+        '<span class="goods-tag-text" title="' + title + '">' + displayTitle + '</span>' +
+        '<span class="goods-tag-remove" data-item-id="' + itemId + '">×</span>';
+
+      var removeBtn = tag.querySelector('.goods-tag-remove');
+      removeBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var id = this.getAttribute('data-item-id');
+        removeGoodsSelection(id);
+      });
+
+      goodsSelectedTags.appendChild(tag);
+    });
+  }
+
+  /**
+   * 切换商品选中状态
+   */
+  function toggleGoodsSelection(itemId) {
+    var index = selectedItemIds.indexOf(itemId);
+    if (index === -1) {
+      selectedItemIds.push(itemId);
+    } else {
+      selectedItemIds.splice(index, 1);
+    }
+    renderGoodsDropdown(goodsListCache);
+    renderSelectedTags();
+  }
+
+  /**
+   * 移除商品选中
+   */
+  function removeGoodsSelection(itemId) {
+    var index = selectedItemIds.indexOf(itemId);
+    if (index !== -1) {
+      selectedItemIds.splice(index, 1);
+    }
+    renderGoodsDropdown(goodsListCache);
+    renderSelectedTags();
+  }
+
+  /**
+   * 根据关键字过滤商品
+   */
+  function filterGoods(keyword) {
+    if (!keyword || keyword.trim() === '') {
+      renderGoodsDropdown(goodsListCache);
+      return;
+    }
+
+    keyword = keyword.toLowerCase().trim();
+    var filtered = goodsListCache.filter(function (goods) {
+      return (goods.title && goods.title.toLowerCase().indexOf(keyword) !== -1) ||
+        (goods.itemId && goods.itemId.indexOf(keyword) !== -1);
+    });
+
+    renderGoodsDropdown(filtered);
+  }
+
+  /**
+   * 初始化商品选择器
+   */
+  function initGoodsSelector(itemIds = []) {
+    selectedItemIds = itemIds.slice();
+    goodsCurrentPage = 1;
+    goodsHasMore = true;
+    renderSelectedTags();
+    loadGoodsList(1);
+  }
+
+  /**
+   * 重置商品选择器
+   */
+  function resetGoodsSelector() {
+    selectedItemIds = [];
+    goodsCurrentPage = 1;
+    goodsHasMore = true;
+    goodsSearchInput.value = '';
+    goodsDropdown.classList.remove('show');
+    goodsSelectedTags.innerHTML = '';
+  }
+
+  // 商品选择器事件绑定
+  if (goodsSearchInput) {
+    // 搜索框聚焦时显示下拉列表
+    goodsSearchInput.addEventListener('focus', function () {
+      goodsDropdown.classList.add('show');
+      if (goodsListCache.length === 0) {
+        loadGoodsList(1);
+      }
+    });
+
+    // 搜索框输入时过滤
+    var searchTimeout = null;
+    goodsSearchInput.addEventListener('input', function () {
+      if (searchTimeout) clearTimeout(searchTimeout);
+      var keyword = this.value;
+      searchTimeout = setTimeout(function () {
+        filterGoods(keyword);
+      }, 300);
+    });
+
+    // 滚动加载更多
+    goodsDropdown.addEventListener('scroll', function () {
+      if (goodsDropdown.scrollTop + goodsDropdown.clientHeight >= goodsDropdown.scrollHeight - 20) {
+        if (goodsHasMore && !goodsIsLoading) {
+          loadGoodsList(goodsCurrentPage + 1, true);
+        }
+      }
+    });
+  }
+
+  // 点击外部关闭下拉列表
+  document.addEventListener('click', function (e) {
+    if (goodsSelector && !goodsSelector.contains(e.target)) {
+      goodsDropdown.classList.remove('show');
+    }
+  });
+
   // ==================== 规则弹窗 ====================
 
   function openRuleModal(rule) {
@@ -398,10 +582,11 @@ document.addEventListener('DOMContentLoaded', function () {
       ruleReplyInput.value = rule.reply || '';
       rulePromptInput.value = rule.prompt || '';
       ruleMaxHistoryInput.value = rule.maxHistoryMessages || 10;
-      ruleItemIdsInput.value = (rule.itemIds || []).join(', ');
       rulePriorityInput.value = rule.priority || 10;
       ruleCooldownInput.value = rule.cooldown || 0;
       ruleDelayInput.value = rule.delay || 0;
+      // 初始化商品选择器（回显已选中的商品）
+      initGoodsSelector(rule.itemIds || []);
     } else {
       // 新增模式
       editingRuleId = null;
@@ -412,10 +597,11 @@ document.addEventListener('DOMContentLoaded', function () {
       ruleReplyInput.value = '';
       rulePromptInput.value = '';
       ruleMaxHistoryInput.value = 10;
-      ruleItemIdsInput.value = '';
       rulePriorityInput.value = 10;
       ruleCooldownInput.value = 0;
       ruleDelayInput.value = 0;
+      // 重置商品选择器
+      resetGoodsSelector();
     }
 
     updateTypeFields();
@@ -426,6 +612,8 @@ document.addEventListener('DOMContentLoaded', function () {
   function closeRuleModal() {
     ruleModal.classList.remove('show');
     editingRuleId = null;
+    // 重置商品选择器
+    resetGoodsSelector();
   }
 
   function updateTypeFields() {
@@ -489,14 +677,8 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     }
 
-    // 解析商品 ID
-    var itemIdsStr = ruleItemIdsInput.value.trim();
-    var itemIds = [];
-    if (itemIdsStr) {
-      itemIds = itemIdsStr.split(/[,，\s]+/).filter(function (id) {
-        return id.trim().length > 0;
-      }).map(function (id) { return id.trim(); });
-    }
+    // 从商品选择器获取选中的商品ID
+    var itemIds = selectedItemIds.slice();
 
     var rule = {
       name: name,
@@ -551,17 +733,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // ==================== 保存配置 ====================
   document.getElementById('saveBtn').addEventListener('click', function () {
-    // 保存监听设置
-    var maxMessages = parseInt(maxMessagesInput.value) || 1000;
-    if (maxMessages < 100) maxMessages = 100;
-    if (maxMessages > 10000) maxMessages = 10000;
-    maxMessagesInput.value = maxMessages;
-
-    chrome.runtime.sendMessage({
-      type: 'UPDATE_CHAT_CONFIG',
-      config: { maxStoredMessages: maxMessages }
-    });
-
     // 保存自动回复全局配置
     var cooldown = parseInt(defaultCooldownInput.value) || 60000;
     var delay = parseInt(defaultDelayInput.value) || 1000;
@@ -645,7 +816,7 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
   });
-  
+
   // ==================== 刷新 AI 暂停状态 ====================
   if (document.getElementById('refreshAiPauseStatusBtn')) {
     document.getElementById('refreshAiPauseStatusBtn').addEventListener('click', function () {
@@ -655,31 +826,79 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   // ==================== 刷新 ====================
-  document.getElementById('refreshBtn').addEventListener('click', function () {
-    loadMessages();
-    showToast('已刷新', 'success');
+  // 刷新功能已移除，无需刷新列表
+  
+  // ==================== 同步消息 ====================
+  syncBtn.addEventListener('click', function () {
+    var count = parseInt(syncCountSelect.value) || 50;
+    var messageCount = 20; // 每个会话默认获取20条消息
+    syncBtn.disabled = true;
+    syncBtn.textContent = '同步中...';
+    syncStatusEl.textContent = '正在获取 ' + count + ' 个会话列表...';
+  
+    chrome.runtime.sendMessage({
+      type: 'SYNC_CHAT_HISTORY',
+      conversationCount: count,
+      messageCount: messageCount
+    }, function (response) {
+      syncBtn.disabled = false;
+      syncBtn.textContent = '🔄 同步消息';
+  
+      if (response && response.success) {
+        var s = response.stats || {};
+        syncStatusEl.textContent = '✅ 同步完成！获取 ' + (s.syncedConversations || 0) + ' 个会话，共 ' + (s.totalMessages || 0) + ' 条消息（每会话 ' + messageCount + ' 条）';
+        syncStatusEl.style.color = '#28a745';
+      } else {
+        syncStatusEl.textContent = '❌ ' + (response && response.error || '同步失败');
+        syncStatusEl.style.color = '#f44336';
+      }
+  
+      // 5 秒后清除状态文字
+      setTimeout(function () {
+        syncStatusEl.textContent = '';
+        syncStatusEl.style.color = '#1a73e8';
+      }, 5000);
+    });
   });
+  
+  // ==================== 分页 ====================
+  // 分页功能已移除
 
-  // ==================== 导出CSV ====================
+  // ==================== 导出CSV（实时获取） ====================
   document.getElementById('exportCsvBtn').addEventListener('click', function () {
-    chrome.runtime.sendMessage({ type: 'GET_CHAT_MESSAGES', limit: 10000 }, function (response) {
-      if (!response || !response.messages || response.messages.length === 0) {
+    var count = parseInt(syncCountSelect.value) || 50;
+    var messageCount = 20;
+    
+    showToast('正在实时获取消息...', 'info');
+    
+    // 直接调用同步接口获取消息
+    chrome.runtime.sendMessage({
+      type: 'SYNC_CHAT_HISTORY',
+      conversationCount: count,
+      messageCount: messageCount
+    }, function (response) {
+      if (!response || !response.success || !response.stats || !response.stats.allMessages) {
+        showToast('获取消息失败', 'error');
+        return;
+      }
+      
+      var messages = response.stats.allMessages;
+      
+      if (messages.length === 0) {
         showToast('没有数据可导出', 'error');
         return;
       }
 
-      var header = '时间,发送人ID,发送人昵称,接收人ID,内容,内容类型,商品ID,会话ID,消息ID,方向\n';
-      var rows = response.messages.map(function (msg) {
+      var header = '时间,发送人,接收人,会话ID,商品名称,商品ID,内容,方向\n';
+      var rows = messages.map(function (msg) {
         return [
           '"' + (msg.timestamp || '').replace(/"/g, '""') + '"',
-          '"' + (msg.senderId || '').replace(/"/g, '""') + '"',
-          '"' + (msg.senderName || '').replace(/"/g, '""') + '"',
-          '"' + (msg.receiverId || '').replace(/"/g, '""') + '"',
-          '"' + (msg.content || '').replace(/"/g, '""') + '"',
-          msg.contentType || '',
+          '"' + (msg.senderName || msg.senderId || '').replace(/"/g, '""') + '"',
+          '"' + (msg.receiverName || msg.receiverId || '').replace(/"/g, '""') + '"',
+          '"' + (msg.chatId || msg.cid || '').replace(/"/g, '""') + '"',
+          '"' + (msg.itemTitle || '').replace(/"/g, '""') + '"',
           '"' + (msg.itemId || '').replace(/"/g, '""') + '"',
-          '"' + (msg.sessionId || '').replace(/"/g, '""') + '"',
-          '"' + (msg.messageId || '').replace(/"/g, '""') + '"',
+          '"' + (msg.content || '').replace(/"/g, '""') + '"',
           msg.direction || ''
         ].join(',');
       }).join('\n');
@@ -692,24 +911,61 @@ document.addEventListener('DOMContentLoaded', function () {
       a.download = '闲鱼聊天消息_' + new Date().toISOString().slice(0, 10) + '.csv';
       a.click();
       URL.revokeObjectURL(url);
-      showToast('CSV 导出成功', 'success');
+      showToast('CSV 导出成功（共 ' + messages.length + ' 条）', 'success');
+    });
+  });
+
+  // ==================== 导出TXT（实时获取） ====================
+  document.getElementById('exportTxtBtn').addEventListener('click', function () {
+    var count = parseInt(syncCountSelect.value) || 50;
+    var messageCount = 20;
+    
+    showToast('正在实时获取消息...', 'info');
+    
+    // 直接调用同步接口获取消息
+    chrome.runtime.sendMessage({
+      type: 'SYNC_CHAT_HISTORY',
+      conversationCount: count,
+      messageCount: messageCount
+    }, function (response) {
+      if (!response || !response.success || !response.stats || !response.stats.allMessages) {
+        showToast('获取消息失败', 'error');
+        return;
+      }
+      
+      var messages = response.stats.allMessages;
+      
+      if (messages.length === 0) {
+        showToast('没有数据可导出', 'error');
+        return;
+      }
+
+      var lines = messages.map(function (msg) {
+        var sender = msg.senderName || msg.senderId || '未知';
+        var receiver = msg.receiverName || msg.receiverId || '未知';
+        var sessionId = msg.chatId || msg.cid || '';
+        var itemName = msg.itemTitle || msg.itemId || '';
+        var content = (msg.content || '').replace(/\n/g, ' ');
+        return '[' + (msg.timestamp || '') + '] '
+          + sender + ' → ' + receiver
+          + ' | 会话:' + sessionId
+          + ' | 商品:' + itemName
+          + ' | ' + content;
+      }).join('\n');
+
+      var blob = new Blob([lines], { type: 'text/plain;charset=utf-8;' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = '闲鱼聊天消息_' + new Date().toISOString().slice(0, 10) + '.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('TXT 导出成功（共 ' + messages.length + ' 条）', 'success');
     });
   });
 
   // ==================== 清空全部 ====================
-  document.getElementById('clearAllBtn').addEventListener('click', async function () {
-    var confirmed = await showConfirm('确定要清空所有聊天消息吗？此操作不可恢复。', { title: '清空全部消息' });
-    if (confirmed) {
-      chrome.runtime.sendMessage({ type: 'CLEAR_CHAT_MESSAGES' }, function (response) {
-        if (response && response.success) {
-          loadMessages();
-          showToast('消息已清空', 'success');
-        } else {
-          showToast('清空失败', 'error');
-        }
-      });
-    }
-  });
+  // 清空功能已移除，无消息存储
 
   // ==================== Ctrl+S 快捷保存 ====================
   document.addEventListener('keydown', function (e) {
@@ -726,7 +982,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   });
 
-  // 初始化
-  loadMessages();
-  loadConfig();
+  // 初始化（不再需要 loadMessages 和 loadConfig）
+  loadAutoReplyData();
 });

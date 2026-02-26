@@ -397,11 +397,12 @@
       // 如果有商品详情，注入到 prompt 中
       if (goodsDetail) {
         var goodsInfo = '\n\n【当前咨询商品】\n' +
+
           '商品名称：' + goodsDetail.title + '\n' +
-          '商品价格：' + (goodsDetail.price || '未设置') + '\n' +
+          '**商品价格**：' + (goodsDetail.skuList && goodsDetail.skuList.length > 0 ? goodsDetail.skuList.map(function(s) { return (s.propertyText || '规格') + ': ' + '价格：'+(s.price + '元' || '未设置'); }).join('、') : (goodsDetail.price + '元'  || '未设置')) + '\n' +
           '商品描述：' + (goodsDetail.description || '无详细描述') + '\n' +
           '商品所在地：' + (goodsDetail.city || '未设置') + '\n' +
-          '请根据以上商品信息，专业地回答用户关于该商品的问题。';
+          '请根据以上商品信息，严格以商品价格为准，专业地回答用户关于该商品的问题。';
           
         basePrompt += goodsInfo;
         console.log(LOG_PREFIX, '📝 已注入商品信息到 prompt');

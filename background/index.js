@@ -8,6 +8,7 @@
 try {
   importScripts('../shared/config.js');
   importScripts('ai-service.js');
+  importScripts('goods-list-service.js');
 } catch (e) {
   console.error('[Background] 模块加载失败:', e);
 }
@@ -29,9 +30,6 @@ var RULES_KEY = (typeof AUTO_REPLY_RULES_KEY !== 'undefined') ? AUTO_REPLY_RULES
 var GLOBAL_CONFIG_KEY = (typeof AUTO_REPLY_GLOBAL_CONFIG_KEY !== 'undefined') ? AUTO_REPLY_GLOBAL_CONFIG_KEY : 'autoReplyGlobalConfig';
 var AI_PAUSE_CONFIG_KEY = 'aiPauseConfig';
 
-// 内存中的去重 Set（messageId）
-var seenMessageIds = new Set();
-
 // AI 暂停状态管理
 var aiPauseState = {
   isPaused: false,
@@ -39,17 +37,6 @@ var aiPauseState = {
   pauseReason: null,  // 'manual_reply' | 'config'
   lastManualMessageTime: 0
 };
-
-// 启动时从 storage 恢复已有消息的 messageId
-chrome.storage.local.get({ chatMessages: [] }, function (result) {
-  var messages = result.chatMessages || [];
-  messages.forEach(function (msg) {
-    if (msg.messageId) {
-      seenMessageIds.add(msg.messageId);
-    }
-  });
-  console.log('[Background] 已恢复', seenMessageIds.size, '条消息ID用于去重');
-});
 
 // ==================== 辅助函数 ====================
 
@@ -109,7 +96,7 @@ async function saveAiPauseConfig(config) {
  */
 function isAiPaused() {
   if (!aiPauseState.isPaused) return false;
-  
+
   var now = Date.now();
   if (now >= aiPauseState.pausedUntil) {
     // 暂停时间已过，自动恢复
@@ -119,7 +106,7 @@ function isAiPaused() {
     console.log('[Background] ✅ AI 暂停结束，已自动恢复');
     return false;
   }
-  
+
   var remainingSeconds = Math.ceil((aiPauseState.pausedUntil - now) / 1000);
   console.log('[Background] ⏸️ AI 暂停中，剩余', remainingSeconds, '秒');
   return true;
@@ -134,13 +121,13 @@ async function setAiPause(duration, reason) {
   aiPauseState.pausedUntil = now + duration;
   aiPauseState.pauseReason = reason;
   aiPauseState.lastManualMessageTime = now;
-  
+
   var minutes = Math.ceil(duration / 60000);
   console.log('[Background] ⏸️ AI 已暂停，时长:', minutes, '分钟，原因:', reason);
-  
+
   // 同步到所有 content script
   var tabs = await chrome.tabs.query({ url: 'https://www.goofish.com/*' });
-  tabs.forEach(function(tab) {
+  tabs.forEach(function (tab) {
     chrome.tabs.sendMessage(tab.id, {
       type: 'AI_PAUSE_STATUS_CHANGED',
       detail: {
@@ -148,7 +135,7 @@ async function setAiPause(duration, reason) {
         pausedUntil: aiPauseState.pausedUntil,
         reason: reason
       }
-    }).catch(() => {}); // 忽略错误
+    }).catch(() => { }); // 忽略错误
   });
 }
 
@@ -299,14 +286,14 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
       }
 
       // ==================== AI 暂停管理 ====================
-      
+
       // 获取 AI 暂停配置
       if (request.type === 'GET_AI_PAUSE_CONFIG') {
         var config = await getAiPauseConfig();
         sendResponse({ success: true, config: config });
         return;
       }
-      
+
       // 更新 AI 暂停配置
       if (request.type === 'UPDATE_AI_PAUSE_CONFIG') {
         var currentConfig = await getAiPauseConfig();
@@ -315,13 +302,13 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         sendResponse({ success: true, config: newConfig });
         return;
       }
-      
+
       // 获取 AI 暂停状态
       if (request.type === 'GET_AI_PAUSE_STATUS') {
         sendResponse({ success: true, status: getAiPauseStatus() });
         return;
       }
-      
+
       // 手动控制 AI 暂停/恢复
       if (request.type === 'SET_AI_PAUSE') {
         if (request.enabled) {
@@ -332,37 +319,52 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
           aiPauseState.pausedUntil = 0;
           aiPauseState.pauseReason = null;
           console.log('[Background] ✅ AI 已手动恢复');
-          
+
           // 通知所有 content script
           var tabs = await chrome.tabs.query({ url: 'https://www.goofish.com/*' });
-          tabs.forEach(function(tab) {
+          tabs.forEach(function (tab) {
             chrome.tabs.sendMessage(tab.id, {
               type: 'AI_PAUSE_STATUS_CHANGED',
               detail: { isPaused: false }
-            }).catch(() => {});
+            }).catch(() => { });
           });
         }
         sendResponse({ success: true, status: getAiPauseStatus() });
         return;
       }
-      
+
       // 检测非 Web 端消息（用于自动触发 AI 暂停）
       if (request.type === 'REPORT_NON_WEB_MESSAGE') {
         var pauseConfig = await getAiPauseConfig();
-        
+
         if (!pauseConfig.enabled) {
           sendResponse({ success: true, paused: false, reason: 'feature_disabled' });
           return;
         }
-        
+
         // 检测到非 Web 端消息，触发 AI 暂停
         await setAiPause(pauseConfig.pauseDuration, 'manual_reply');
-        
+
         sendResponse({ success: true, paused: true, until: aiPauseState.pausedUntil });
         return;
       }
 
       // ==================== AI 聊天补全代理 ====================
+
+      // 获取商品列表
+      if (request.type === 'FETCH_GOODS_LIST') {
+        console.log('[Background] 📥 收到商品列表请求');
+        var pageNumber = request.pageNumber || 1;
+        var pageSize = request.pageSize || 20;
+
+        if (typeof fetchGoodsList === 'function') {
+          var result = await fetchGoodsList(pageNumber, pageSize);
+          sendResponse(result);
+        } else {
+          sendResponse({ success: false, error: '商品列表服务未加载', goodsList: [], hasMore: false });
+        }
+        return;
+      }
 
       if (request.type === 'AI_CHAT_COMPLETION') {
         console.log('[Background] 📤 收到 AI 补全请求');
@@ -491,74 +493,36 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         return;
       }
 
-      // ==================== 聊天消息存储 ====================
+      // ==================== 同步聊天记录（从 options 触发） ====================
 
-      if (request.type === 'CHAT_MESSAGE') {
-        var chatMsg = request.data;
+      if (request.type === 'SYNC_CHAT_HISTORY') {
+        var conversationCount = request.conversationCount || 50;
+        var messageCount = request.messageCount || 20;
+        console.log('[Background] 🔄 收到同步请求, 会话数:', conversationCount, '消息数:', messageCount);
 
-        if (!chatMsg) {
-          sendResponse({ success: false, error: '空消息' });
+        // 查找闲鱼聊天页 tab
+        var tabs = await chrome.tabs.query({ url: 'https://www.goofish.com/*' });
+        if (!tabs || tabs.length === 0) {
+          sendResponse({ success: false, error: '未找到闲鱼页面，请先打开闲鱼聊天页' });
           return;
         }
 
-        if (chatMsg.messageId && seenMessageIds.has(chatMsg.messageId)) {
-          sendResponse({ success: true, duplicate: true });
-          return;
-        }
-
-        var result = await chrome.storage.local.get({ chatMessages: [], chatStats: {} });
-        var messages = result.chatMessages || [];
-        var stats = result.chatStats || { messageCount: 0, lastMessageTime: null };
-
-        messages.push(chatMsg);
-        if (chatMsg.messageId) {
-          seenMessageIds.add(chatMsg.messageId);
-        }
-
-        var maxMessages = chatConfig.maxStoredMessages || 1000;
-        if (messages.length > maxMessages) {
-          var removed = messages.splice(0, messages.length - maxMessages);
-          removed.forEach(function (msg) {
-            if (msg.messageId) seenMessageIds.delete(msg.messageId);
+        // 向第一个闲鱼 tab 发送同步请求
+        try {
+          var response = await chrome.tabs.sendMessage(tabs[0].id, {
+            type: 'SYNC_CHAT_HISTORY_REQUEST',
+            conversationCount: conversationCount,
+            messageCount: messageCount
           });
+          sendResponse(response || { success: false, error: '未收到响应' });
+        } catch (err) {
+          sendResponse({ success: false, error: '通信失败: ' + err.message });
         }
-
-        stats.messageCount = messages.length;
-        stats.lastMessageTime = chatMsg.timestamp || new Date().toLocaleString();
-
-        await chrome.storage.local.set({ chatMessages: messages, chatStats: stats });
-        sendResponse({ success: true, messageCount: messages.length });
         return;
       }
 
-      // ==================== 统计与查询 ====================
-
-      if (request.type === 'GET_CHAT_STATS') {
-        var result = await chrome.storage.local.get({ chatStats: {} });
-        sendResponse(result.chatStats || { messageCount: 0, lastMessageTime: null });
-        return;
-      }
-
-      if (request.type === 'GET_CHAT_MESSAGES') {
-        var result = await chrome.storage.local.get({ chatMessages: [] });
-        var messages = result.chatMessages || [];
-        var limit = request.limit || 10;
-        var offset = request.offset || 0;
-        var reversed = messages.slice().reverse();
-        var sliced = reversed.slice(offset, offset + limit);
-        sendResponse({ messages: sliced, total: messages.length });
-        return;
-      }
-
-      if (request.type === 'CLEAR_CHAT_MESSAGES') {
-        seenMessageIds.clear();
-        await chrome.storage.local.set({
-          chatMessages: [],
-          chatStats: { messageCount: 0, lastMessageTime: null }
-        });
-        sendResponse({ success: true });
-        return;
-      }
+      // ==================== 聊天消息存储 ====================
+      // 消息存储功能已移除，导出时直接实时获取
 
       if (request.type === 'GET_CHAT_CONFIG') {
         var result = await chrome.storage.local.get({ chatConfig: chatConfig });

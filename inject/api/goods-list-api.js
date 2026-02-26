@@ -1,21 +1,21 @@
 /**
- * goods-api.js - 闲鱼商品详情 API
- * 提供获取商品详细信息的功能，包含风控处理和缓存机制
+ * goods-list-api.js - 闲鱼商品列表 API
+ * 提供获取用户商品列表的功能，包含签名生成和缓存机制
  */
 
 (function () {
     'use strict';
 
-    var LOG_PREFIX = '[GoodsAPI]';
+    var LOG_PREFIX = '[GoodsListAPI]';
 
     // 固定配置
     var APP_KEY = '34839810';
     var API_VERSION = '1.0';
-    var API_NAME = 'mtop.taobao.idle.pc.detail'; // 用户指定的 API
+    var API_NAME = 'mtop.idle.web.xyh.item.list';
 
     // 缓存配置
-    var CACHE_PREFIX = 'fishops_goods_cache_';
-    var CACHE_EXPIRE_TIME = 24 * 60 * 60 * 1000; // 1天 (毫秒)
+    var CACHE_PREFIX = 'fishops_goods_list_cache_';
+    var CACHE_EXPIRE_TIME = 10 * 60 * 1000; // 10分钟 (毫秒)
 
     // ==================== 纯 JS MD5 实现 ====================
     // Chrome 的 crypto.subtle 不支持 MD5，必须使用纯 JS 实现
@@ -161,11 +161,11 @@
     // ==================== 缓存管理 ====================
 
     /**
-     * 获取缓存的商品详情
+     * 获取缓存的商品列表
      */
-    function getCachedGoods(itemId) {
+    function getCachedGoods(pageNumber) {
         try {
-            var cacheKey = CACHE_PREFIX + itemId;
+            var cacheKey = CACHE_PREFIX + pageNumber;
             var cachedStr = localStorage.getItem(cacheKey);
 
             if (!cachedStr) return null;
@@ -175,12 +175,12 @@
 
             // 检查过期
             if (now - cachedData.timestamp > CACHE_EXPIRE_TIME) {
-                console.log(LOG_PREFIX, '⚠️ 缓存已过期:', itemId);
+                console.log(LOG_PREFIX, '⚠️ 缓存已过期:', cacheKey);
                 localStorage.removeItem(cacheKey);
                 return null;
             }
 
-            console.log(LOG_PREFIX, '✅ 使用本地缓存:', itemId);
+            console.log(LOG_PREFIX, '✅ 使用本地缓存:', cacheKey);
             return cachedData.data;
         } catch (e) {
             console.warn(LOG_PREFIX, '⚠️ 读取缓存失败:', e);
@@ -189,11 +189,11 @@
     }
 
     /**
-     * 保存商品详情到缓存
+     * 保存商品列表到缓存
      */
-    function setCachedGoods(itemId, data) {
+    function setCachedGoods(pageNumber, data) {
         try {
-            var cacheKey = CACHE_PREFIX + itemId;
+            var cacheKey = CACHE_PREFIX + pageNumber;
             var cacheData = {
                 timestamp: Date.now(),
                 data: data
@@ -207,109 +207,68 @@
     // ==================== 核心 API ====================
 
     /**
-     * 解析 SKU 多规格信息
+     * 解析商品列表响应
+     * 从 data.cardList[].cardData 提取商品信息
      */
-    function parseSkuList(skuList) {
-        if (!skuList || !Array.isArray(skuList)) return [];
+    function parseGoodsListResponse(data) {
+        var goodsList = [];
 
-        return skuList.map(function (sku) {
-            // 解析规格属性
-            var properties = {};
-            if (sku.propertyList && Array.isArray(sku.propertyList)) {
-                sku.propertyList.forEach(function (prop) {
-                    if (prop.propertyText && prop.valueText) {
-                        properties[prop.propertyText] = prop.valueText;
-                    }
-                });
-            }
+        if (!data || !data.cardList || !Array.isArray(data.cardList)) {
+            console.warn(LOG_PREFIX, '⚠️ 响应数据格式不正确');
+            return goodsList;
+        }
 
-            return {
-                skuId: sku.skuId || '',
-                price: sku.price ? (sku.price / 100).toFixed(2) : '', // 分转元
-                priceInCent: sku.priceInCent || sku.price || 0,
-                quantity: sku.quantity || 0,
-                properties: properties, // { "款式": "心动信号-星星人..." }
-                propertyText: sku.propertyList && sku.propertyList[0] ?
-                    sku.propertyList.map(function (p) { return p.valueText; }).join(', ') : ''
+        data.cardList.forEach(function (card) {
+            var cardData = card.cardData;
+            if (!cardData) return;
+
+            var goods = {
+                itemId: cardData.id || '',
+                title: cardData.title || '',
+                price: '',
+                picUrl: ''
             };
-        });
-    }
 
-    /**
-     * 解析商品详情响应
-     */
-    function parseGoodsDetailResponse(data, fallbackItemId) {
-        // 解析商品基本信息 (实际返回是 itemDO)
-        var itemDO = data.itemDO || {};
-
-        // 处理图片列表
-        var picUrls = [];
-        if (itemDO.imageInfos) {
-            itemDO.imageInfos.forEach(function (pic) {
-                if (pic.url) {
-                    picUrls.push(pic.url);
-                }
-            });
-        }
-
-        // 处理多种价格字段 priority: soldPrice > minPrice > reservePrice
-        var price = itemDO.soldPrice || itemDO.minPrice || itemDO.reservePrice || '';
-        var originalPrice = itemDO.marketPrice || itemDO.maxPrice || '';
-
-        // 处理标签 (从desc中提取#标签#)
-        var tags = [];
-        if (itemDO.desc) {
-            var tagMatches = itemDO.desc.match(/#([^#]+)#/g);
-            if (tagMatches) {
-                tagMatches.forEach(function (tag) {
-                    tags.push(tag.replace(/#/g, ''));
-                });
+            // 提取价格
+            if (cardData.priceInfo && cardData.priceInfo.price) {
+                goods.price = cardData.priceInfo.price;
             }
-        }
 
-        // 解析 SKU 多规格信息
-        var skuList = parseSkuList(itemDO.skuList);
+            // 提取图片
+            if (cardData.picInfo && cardData.picInfo.picUrl) {
+                goods.picUrl = cardData.picInfo.picUrl;
+            }
 
-        return {
-            itemId: itemDO.id || fallbackItemId || '',
-            title: itemDO.title || '', // 标题
-            description: itemDO.desc || '', // 描述
-            price: price, // 当前价格
-            originalPrice: originalPrice, // 原价
-            picUrls: picUrls, // 图片列表
-            mainPic: picUrls[0] || '', // 主图
-            city: itemDO.prov || itemDO.city || '', // 城市
-            categoryId: itemDO.categoryId || '', // 分类ID
-            deprecated: itemDO.status !== 0 && itemDO.status !== 1, // 是否失效/下架
-            updatedAt: itemDO.gmtModified || Date.now(),
-            // 多规格信息
-            skuList: skuList,
-            hasSku: skuList.length > 0,
-            skuCount: skuList.length
-        };
+            if (goods.itemId) {
+                goodsList.push(goods);
+            }
+        });
+
+        return goodsList;
     }
 
     /**
-     * 获取商品详情
-     * @param {string} itemId - 商品 ID
+     * 获取商品列表
+     * @param {number} pageNumber - 页码（从1开始）
+     * @param {number} pageSize - 每页数量
      * @param {boolean} forceRefresh - 是否强制刷新（忽略缓存）
-     * @returns {Promise<Object>} 商品详情对象 or null
+     * @returns {Promise<Object>} { goodsList: [], currentPage: number, hasMore: boolean }
      */
-    function fetchGoodsDetail(itemId, forceRefresh) {
-        // 默认不强制刷新
+    function fetchGoodsList(pageNumber, pageSize, forceRefresh) {
+        pageNumber = pageNumber || 1;
+        pageSize = pageSize || 20;
         forceRefresh = forceRefresh || false;
 
-        if (!itemId) return Promise.reject('ItemId is required');
-
-        // 1. 检查缓存
-        if (!forceRefresh) {
-            var cached = getCachedGoods(itemId);
-            if (cached) {
-                return Promise.resolve(cached);
-            }
-        }
-
         return new Promise(function (resolve, reject) {
+            // 1. 检查缓存
+            if (!forceRefresh) {
+                var cached = getCachedGoods(pageNumber);
+                if (cached) {
+                    resolve(cached);
+                    return;
+                }
+            }
+
             var token = getTokenFromCookie();
             if (!token) {
                 console.error(LOG_PREFIX, '❌ 无法获取 Token');
@@ -319,7 +278,10 @@
 
             // 构造请求参数
             var timestamp = Date.now().toString();
-            var dataObj = { itemId: itemId };
+            var dataObj = {
+                pageNumber: pageNumber,
+                pageSize: pageSize
+            };
             var dataStr = JSON.stringify(dataObj);
 
             // 生成签名（同步）
@@ -339,7 +301,7 @@
                 data: dataStr
             };
 
-            console.log(LOG_PREFIX, '📝 准备获取商品详情:', itemId);
+            console.log(LOG_PREFIX, '📝 准备获取商品列表: 第', pageNumber, '页');
 
             // 构建完整 URL
             var queryString = Object.keys(queryParams).map(function (key) {
@@ -361,19 +323,24 @@
                 .then(function (response) { return response.json(); })
                 .then(function (data) {
                     if (data.ret && data.ret[0].includes('SUCCESS')) {
-                        var goodsDetail = parseGoodsDetailResponse(data.data || {}, itemId);
+                        var goodsList = parseGoodsListResponse(data.data || {});
+                        var result = {
+                            goodsList: goodsList,
+                            currentPage: pageNumber,
+                            hasMore: goodsList.length >= pageSize
+                        };
 
-                        console.log(LOG_PREFIX, '✅ 获取商品详情成功:', goodsDetail.title);
+                        console.log(LOG_PREFIX, '✅ 获取商品列表成功:', goodsList.length, '条');
 
                         // 写入缓存
-                        if (goodsDetail.title) {
-                            setCachedGoods(itemId, goodsDetail);
+                        if (goodsList.length > 0) {
+                            setCachedGoods(pageNumber, result);
                         }
 
-                        resolve(goodsDetail);
+                        resolve(result);
                     } else {
                         console.warn(LOG_PREFIX, '❌ API 返回错误:', data.ret);
-                        resolve(null);
+                        resolve({ goodsList: [], currentPage: pageNumber, hasMore: false });
                     }
                 })
                 .catch(function (err) {
@@ -384,12 +351,11 @@
     }
 
     // 导出到全局
-    window.GoodsAPI = {
-        fetchGoodsDetail: fetchGoodsDetail,
+    window.GoodsListAPI = {
+        fetchGoodsList: fetchGoodsList,
         getCachedGoods: getCachedGoods,
         clearCache: function () {
             var removedCount = 0;
-            // Object.keys 可能会受到 localStorage 变化的影响，还是遍历好
             for (var i = localStorage.length - 1; i >= 0; i--) {
                 var key = localStorage.key(i);
                 if (key && key.startsWith(CACHE_PREFIX)) {
@@ -401,5 +367,5 @@
         }
     };
 
-    console.log(LOG_PREFIX, '✅ GoodsAPI 已加载');
+    console.log(LOG_PREFIX, '✅ GoodsListAPI 已加载');
 })();

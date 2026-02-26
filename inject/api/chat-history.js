@@ -204,9 +204,20 @@ window.ChatHistoryAPI = (function () {
                 }
             }
 
-            // 判断消息方向
+            // 判断消息方向 & 接收人
             var myId = window.CURRENT_USER_ID || '';
             var direction = (senderId === myId) ? 'out' : 'in';
+
+            // 推断接收人：1v1 会话中，非发送方即为接收方
+            var receiverId = '';
+            var receiverName = '';
+            if (direction === 'out') {
+                // 我发出的消息，接收人是对方
+                receiverId = chatId || '';
+            } else {
+                // 对方发来的消息，接收人是我
+                receiverId = myId;
+            }
 
             // 更新缓存的商品 ID
             if (itemId) {
@@ -220,6 +231,8 @@ window.ChatHistoryAPI = (function () {
                 chatId: chatId,
                 senderId: senderId,
                 senderName: senderName,
+                receiverId: receiverId,
+                receiverName: receiverName,
                 content: content,
                 contentType: contentType,
                 rawData: rawData,
@@ -326,7 +339,17 @@ window.ChatHistoryAPI = (function () {
                         if (conv) conversations.push(conv);
                     });
 
-                    hasMore = conversations.length >= pageSize;
+                    // 优先使用服务器返回的 hasMore 标志
+                    if (typeof body.hasMore !== 'undefined') {
+                        hasMore = body.hasMore;
+                    } else if (typeof body.hasNextPage !== 'undefined') {
+                        hasMore = body.hasNextPage;
+                    } else {
+                        // 退而求其次：根据返回数量判断
+                        hasMore = conversations.length >= pageSize;
+                        console.log(LOG_PREFIX, '⚠️ 服务器未返回 hasMore，根据数量判断:', hasMore);
+                    }
+
                     if (conversations.length > 0) {
                         nextSortIndex = conversations[conversations.length - 1].sortIndex;
                     }
@@ -339,7 +362,7 @@ window.ChatHistoryAPI = (function () {
                     }
                 }
 
-                console.log(LOG_PREFIX, '📋 获取到', conversations.length, '个会话, hasMore:', hasMore);
+                console.log(LOG_PREFIX, '📋 获取到', conversations.length, '个会话, hasMore:', hasMore, ', nextSortIndex:', nextSortIndex);
 
                 return {
                     success: true,
@@ -395,6 +418,64 @@ window.ChatHistoryAPI = (function () {
         }
 
         console.log(LOG_PREFIX, '🚀 开始拉取全部会话列表...');
+        return fetchPage(MAX_SAFE_INTEGER);
+    }
+
+    /**
+     * 获取指定数量的会话 ID 列表（轻量级）
+     *
+     * @param {number} [count=50] - 需要获取的会话数量
+     * @returns {Promise<Object>} { success, conversationIds: [] }
+     *
+     * @example
+     * ChatHistoryAPI.getConversationIds(100).then(function(r) {
+     *   console.log('获取到', r.conversationIds.length, '个会话ID');
+     *   r.conversationIds.forEach(function(cid) {
+     *     console.log('会话ID:', cid);
+     *   });
+     * });
+     */
+    function getConversationIds(count) {
+        count = count || 50;
+        var allIds = [];
+
+        console.log(LOG_PREFIX, '🎯 开始获取', count, '个会话ID...');
+
+        function fetchPage(maxSortIndex) {
+            return getConversationList(maxSortIndex, 20).then(function (result) {
+                if (!result.success || !result.conversations) {
+                    return { success: false, error: '获取会话列表失败' };
+                }
+
+                // 提取会话 ID
+                result.conversations.forEach(function (conv) {
+                    if (conv.cid) {
+                        allIds.push(conv.cid);
+                    }
+                });
+
+                console.log(LOG_PREFIX, '📋 已获取', allIds.length, '个会话ID，hasMore:', result.hasMore);
+
+                // 如果还没达到目标数量，且还有更多数据，继续获取
+                if (allIds.length < count && result.hasMore && result.nextSortIndex) {
+                    console.log(LOG_PREFIX, '  ⏭️  继续获取下一页（目标:', count, '，当前:', allIds.length, '）');
+                    return sleep(FETCH_INTERVAL).then(function () {
+                        return fetchPage(result.nextSortIndex);
+                    });
+                }
+
+                // 截取指定数量
+                var slicedIds = allIds.slice(0, count);
+                console.log(LOG_PREFIX, '✅ 共获取', slicedIds.length, '个会话ID');
+
+                return {
+                    success: true,
+                    conversationIds: slicedIds,
+                    hasMore: result.hasMore || allIds.length > count
+                };
+            });
+        }
+
         return fetchPage(MAX_SAFE_INTEGER);
     }
 
@@ -635,7 +716,11 @@ window.ChatHistoryAPI = (function () {
 
     // ==================== 初始化 ====================
 
-    initItemIdTracker();
+    try {
+        initItemIdTracker();
+    } catch (e) {
+        console.warn(LOG_PREFIX, '⚠️ 商品 ID 追踪初始化失败:', e);
+    }
     console.log(LOG_PREFIX, '✅ ChatHistoryAPI 已加载');
 
     // ==================== 导出接口 ====================
@@ -647,6 +732,8 @@ window.ChatHistoryAPI = (function () {
         // 全量拉取 API
         getAllConversations: getAllConversations,
         getAllMessages: getAllMessages,
+        // 会话 ID 获取（轻量级）
+        getConversationIds: getConversationIds,
         // 商品 ID
         getCurrentChatItemId: getCurrentChatItemId,
         // 诊断工具

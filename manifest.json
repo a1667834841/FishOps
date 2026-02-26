@@ -6,10 +6,12 @@
   "permissions": [
     "storage",
     "activeTab",
-    "tabs"
+    "tabs",
+    "cookies"
   ],
   "host_permissions": [
-    "https://www.goofish.com/*"
+    "https://www.goofish.com/*",
+    "https://h5api.m.goofish.com/*"
   ],
   "background": {
     "service_worker": "background/index.js"
@@ -20,6 +22,7 @@
       "resources": [
         "inject/api/chat-sender.js",
         "inject/api/chat-history.js",
+        "inject/api/chat-sync.js",
         "inject/api/find-my-id.js",
         "inject/api/user-api.js",
         "inject/api/goods-api.js",
@@ -57,7 +60,8 @@
         "inject/events/message-bridge.js",
         "inject/websocket/websocket-data-source.js",
         "inject/api/chat-sender.js",
-        "inject/api/chat-history.js"
+        "inject/api/chat-history.js",
+        "inject/api/chat-sync.js"
       ],
       "run_at": "document_start",
       "world": "MAIN"

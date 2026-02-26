@@ -1,254 +1,859 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="UTF-8">
   <title>配置 - 闲鱼聊天监听</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
     body {
       font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
-      background: white; color: #333; height: 100vh;
-      display: flex; flex-direction: column;
+      background: white;
+      color: #333;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
+
     .header {
-      height: 40px; padding: 0 20px;
-      display: flex; align-items: center;
-      border-bottom: 1px solid #f0f0f0; flex-shrink: 0;
+      height: 40px;
+      padding: 0 20px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid #f0f0f0;
+      flex-shrink: 0;
     }
-    .header h1 { font-size: 16px; font-weight: 600; color: #2c3e50; }
-    .main { flex: 1; display: flex; overflow: hidden; }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #2c3e50;
+    }
+
+    .main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
     .sidebar {
-      width: 140px; background: white;
-      border-right: 1px solid #f0f0f0; flex-shrink: 0;
+      width: 140px;
+      background: white;
+      border-right: 1px solid #f0f0f0;
+      flex-shrink: 0;
     }
+
     .nav-item {
-      height: 36px; padding: 0 16px;
-      display: flex; align-items: center;
-      font-size: 14px; color: #666; cursor: pointer;
-      position: relative; transition: all 0.2s;
-    }
-    .nav-item:hover { background: #fafafa; }
-    .nav-item.active { color: #333; font-weight: 500; background: #fafafa; }
-    .nav-item.active::before {
-      content: ''; position: absolute; left: 0; top: 0; bottom: 0;
-      width: 2px; background: #ffe60f;
-    }
-    .content { flex: 1; padding: 20px 24px; overflow-y: auto; }
-    .panel { display: none; }
-    .panel.active { display: block; }
-    .section-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
-    .form-group { margin-bottom: 10px; }
-    .form-row { display: flex; align-items: center; gap: 12px; }
-    .form-label { width: 120px; font-size: 14px; color: #666; flex-shrink: 0; }
-    .form-input {
-      width: 200px; height: 32px; padding: 0 12px;
-      border: 1px solid #e0e0e0; border-radius: 4px;
-      font-size: 14px; outline: none;
-    }
-    .form-input:focus { border-color: #ffe60f; }
-    .form-input-wide { width: 360px; }
-    .form-help { font-size: 12px; color: #999; margin-top: 4px; margin-left: 132px; }
-    .form-unit { font-size: 13px; color: #999; }
-    .msg-table {
-      width: 100%; border-collapse: collapse; font-size: 13px;
-    }
-    .msg-table th {
-      text-align: left; padding: 8px 10px; background: #fafafa;
-      border-bottom: 2px solid #f0f0f0; color: #666; font-weight: 500;
-      position: sticky; top: 0; z-index: 1;
-    }
-    .msg-table td {
-      padding: 6px 10px; border-bottom: 1px solid #f5f5f5;
-      max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .msg-table tr:hover td { background: #fafbfc; }
-    .table-actions {
-      display: flex; gap: 8px; margin-bottom: 12px; align-items: center;
-    }
-    .table-info { font-size: 13px; color: #999; margin-left: auto; }
-    .footer {
-      height: 48px; padding: 0 24px;
-      border-top: 1px solid #f0f0f0;
-      display: flex; align-items: center; justify-content: flex-end;
-      gap: 12px; flex-shrink: 0; background: white;
-    }
-    .btn {
-      height: 32px; padding: 0 20px;
-      border: 1px solid #e0e0e0; border-radius: 4px;
-      font-size: 14px; cursor: pointer; background: white; color: #666;
+      height: 36px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      font-size: 14px;
+      color: #666;
+      cursor: pointer;
+      position: relative;
       transition: all 0.2s;
     }
-    .btn:hover { border-color: #bbb; background: #fafafa; }
+
+    .nav-item:hover {
+      background: #fafafa;
+    }
+
+    .nav-item.active {
+      color: #333;
+      font-weight: 500;
+      background: #fafafa;
+    }
+
+    .nav-item.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #ffe60f;
+    }
+
+    .content {
+      flex: 1;
+      padding: 20px 24px;
+      overflow-y: auto;
+    }
+
+    .panel {
+      display: none;
+    }
+
+    .panel.active {
+      display: block;
+    }
+
+    .section-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .form-group {
+      margin-bottom: 10px;
+    }
+
+    .form-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .form-label {
+      width: 120px;
+      font-size: 14px;
+      color: #666;
+      flex-shrink: 0;
+    }
+
+    .form-input {
+      width: 200px;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .form-input:focus {
+      border-color: #ffe60f;
+    }
+
+    .form-input-wide {
+      width: 360px;
+    }
+
+    .form-help {
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+      margin-left: 132px;
+    }
+
+    .form-unit {
+      font-size: 13px;
+      color: #999;
+    }
+
+    .msg-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .msg-table th {
+      text-align: left;
+      padding: 8px 10px;
+      background: #fafafa;
+      border-bottom: 2px solid #f0f0f0;
+      color: #666;
+      font-weight: 500;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .msg-table td {
+      padding: 6px 10px;
+      border-bottom: 1px solid #f5f5f5;
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .msg-table tr:hover td {
+      background: #fafbfc;
+    }
+
+    .table-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+
+    .table-info {
+      font-size: 13px;
+      color: #999;
+      margin-left: auto;
+    }
+
+    .footer {
+      height: 48px;
+      padding: 0 24px;
+      border-top: 1px solid #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      flex-shrink: 0;
+      background: white;
+    }
+
+    .btn {
+      height: 32px;
+      padding: 0 20px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      background: white;
+      color: #666;
+      transition: all 0.2s;
+    }
+
+    .btn:hover {
+      border-color: #bbb;
+      background: #fafafa;
+    }
+
     .btn-primary {
       border-color: #ffe60f;
       background: linear-gradient(135deg, #ffe60f, #ffed4e);
-      color: #333; font-weight: 500;
+      color: #333;
+      font-weight: 500;
     }
+
     .btn-primary:hover {
       border-color: #ffd700;
       background: linear-gradient(135deg, #ffd700, #ffe60f);
     }
-    .btn-danger { color: #f44336; border-color: #ffcdd2; }
-    .btn-danger:hover { background: #fff5f5; }
-    .btn-small { height: 26px; padding: 0 12px; font-size: 12px; }
-    .btn-success { color: #28a745; border-color: #c3e6cb; }
-    .btn-success:hover { background: #f0fff0; }
-    .empty-state {
-      text-align: center; padding: 60px 20px; color: #bbb; font-size: 14px;
+
+    .btn-danger {
+      color: #f44336;
+      border-color: #ffcdd2;
     }
+
+    .btn-danger:hover {
+      background: #fff5f5;
+    }
+
+    .btn-small {
+      height: 26px;
+      padding: 0 12px;
+      font-size: 12px;
+    }
+
+    .btn-success {
+      color: #28a745;
+      border-color: #c3e6cb;
+    }
+
+    .btn-success:hover {
+      background: #f0fff0;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #bbb;
+      font-size: 14px;
+    }
+
+    /* 分页 */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 12px 0;
+      border-top: 1px solid #f0f0f0;
+      margin-top: 8px;
+    }
+
+    .pagination select {
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 13px;
+      outline: none;
+      background: white;
+    }
+
+    .page-info {
+      font-size: 13px;
+      color: #666;
+    }
+
+    /* 同步区域 */
+    .sync-area {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .sync-area select {
+      height: 32px;
+      padding: 0 8px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 13px;
+      outline: none;
+      background: white;
+    }
+
+    .sync-status {
+      font-size: 12px;
+      color: #1a73e8;
+      margin-left: 4px;
+    }
+
     /* 规则类型标签 */
     .rule-type-badge {
-      display: inline-block; padding: 2px 8px; border-radius: 10px;
-      font-size: 11px; font-weight: 500;
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 500;
     }
-    .badge-keyword { background: #e3f2fd; color: #1565c0; }
-    .badge-ai { background: #f3e5f5; color: #7b1fa2; }
+
+    .badge-keyword {
+      background: #e3f2fd;
+      color: #1565c0;
+    }
+
+    .badge-ai {
+      background: #f3e5f5;
+      color: #7b1fa2;
+    }
+
     /* 开关 */
     .switch {
-      position: relative; width: 40px; height: 22px;
-      background: #ccc; border-radius: 11px; cursor: pointer;
+      position: relative;
+      width: 40px;
+      height: 22px;
+      background: #ccc;
+      border-radius: 11px;
+      cursor: pointer;
       transition: background 0.3s;
     }
-    .switch.on { background: #4caf50; }
-    .switch::after {
-      content: ''; position: absolute; top: 2px; left: 2px;
-      width: 18px; height: 18px; border-radius: 50%;
-      background: white; transition: transform 0.3s;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+
+    .switch.on {
+      background: #4caf50;
     }
-    .switch.on::after { transform: translateX(18px); }
+
+    .switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: white;
+      transition: transform 0.3s;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .switch.on::after {
+      transform: translateX(18px);
+    }
+
     /* 弹窗 */
     .modal-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.4); display: none;
-      align-items: center; justify-content: center; z-index: 10001;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.4);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10001;
     }
-    .modal-overlay.show { display: flex; }
+
+    .modal-overlay.show {
+      display: flex;
+    }
+
     .modal {
-      background: white; border-radius: 8px; width: 580px;
-      max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+      background: white;
+      border-radius: 8px;
+      width: 580px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     }
+
     .modal-header {
-      padding: 16px 20px; border-bottom: 1px solid #f0f0f0;
-      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
-    .modal-title { font-size: 16px; font-weight: 600; }
+
+    .modal-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
     .modal-close {
-      width: 28px; height: 28px; border: none; background: none;
-      font-size: 18px; color: #999; cursor: pointer; border-radius: 4px;
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: none;
+      font-size: 18px;
+      color: #999;
+      cursor: pointer;
+      border-radius: 4px;
     }
-    .modal-close:hover { background: #f5f5f5; color: #333; }
-    .modal-body { padding: 20px; }
+
+    .modal-close:hover {
+      background: #f5f5f5;
+      color: #333;
+    }
+
+    .modal-body {
+      padding: 20px;
+    }
+
     .modal-footer {
-      padding: 12px 20px; border-top: 1px solid #f0f0f0;
-      display: flex; gap: 8px; justify-content: flex-end;
+      padding: 12px 20px;
+      border-top: 1px solid #f0f0f0;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
     }
-    .modal-form-group { margin-bottom: 16px; }
+
+    .modal-form-group {
+      margin-bottom: 16px;
+    }
+
     .modal-form-label {
-      display: block; font-size: 13px; color: #666;
-      margin-bottom: 6px; font-weight: 500;
+      display: block;
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 6px;
+      font-weight: 500;
     }
+
     .modal-form-input {
-      width: 100%; height: 34px; padding: 0 12px;
-      border: 1px solid #e0e0e0; border-radius: 4px;
-      font-size: 14px; outline: none;
+      width: 100%;
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+      outline: none;
     }
-    .modal-form-input:focus { border-color: #ffe60f; }
+
+    .modal-form-input:focus {
+      border-color: #ffe60f;
+    }
+
     .modal-form-textarea {
-      width: 100%; min-height: 80px; padding: 10px 12px;
-      border: 1px solid #e0e0e0; border-radius: 4px;
-      font-size: 13px; outline: none; resize: vertical;
-      font-family: inherit; line-height: 1.5;
+      width: 100%;
+      min-height: 80px;
+      padding: 10px 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 13px;
+      outline: none;
+      resize: vertical;
+      font-family: inherit;
+      line-height: 1.5;
     }
-    .modal-form-textarea:focus { border-color: #ffe60f; }
+
+    .modal-form-textarea:focus {
+      border-color: #ffe60f;
+    }
+
     .modal-form-select {
-      width: 200px; height: 34px; padding: 0 12px;
-      border: 1px solid #e0e0e0; border-radius: 4px;
-      font-size: 14px; outline: none; background: white;
+      width: 200px;
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+      outline: none;
+      background: white;
     }
-    .modal-form-help { font-size: 12px; color: #999; margin-top: 4px; }
-    .modal-form-error { font-size: 12px; color: #f44336; margin-top: 4px; }
-    .type-fields { display: none; }
-    .type-fields.show { display: block; }
+
+    .modal-form-help {
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+    }
+
+    .modal-form-error {
+      font-size: 12px;
+      color: #f44336;
+      margin-top: 4px;
+    }
+
+    .type-fields {
+      display: none;
+    }
+
+    .type-fields.show {
+      display: block;
+    }
+
     .regex-preview {
-      padding: 6px 10px; background: #f8f9fa; border-radius: 4px;
-      font-size: 12px; color: #666; margin-top: 4px;
+      padding: 6px 10px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
     }
-    .regex-preview.error { background: #fff5f5; color: #f44336; }
-    .regex-preview.success { background: #f0fff0; color: #28a745; }
+
+    .regex-preview.error {
+      background: #fff5f5;
+      color: #f44336;
+    }
+
+    .regex-preview.success {
+      background: #f0fff0;
+      color: #28a745;
+    }
+
     /* 折叠面板 */
     .collapse-header {
-      cursor: pointer; padding: 10px 0; display: flex;
-      align-items: center; gap: 8px; user-select: none;
+      cursor: pointer;
+      padding: 10px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      user-select: none;
     }
+
     .collapse-header .arrow {
-      font-size: 10px; transition: transform 0.2s; color: #999;
+      font-size: 10px;
+      transition: transform 0.2s;
+      color: #999;
     }
-    .collapse-header.open .arrow { transform: rotate(90deg); }
-    .collapse-body { display: none; padding: 0 0 10px 0; }
-    .collapse-body.show { display: block; }
+
+    .collapse-header.open .arrow {
+      transform: rotate(90deg);
+    }
+
+    .collapse-body {
+      display: none;
+      padding: 0 0 10px 0;
+    }
+
+    .collapse-body.show {
+      display: block;
+    }
+
     /* Toast */
     .toast {
-      position: fixed; top: 30px; left: 50%;
+      position: fixed;
+      top: 30px;
+      left: 50%;
       transform: translateX(-50%) translateY(-100px);
-      background: rgba(0,0,0,0.85); color: white;
-      padding: 12px 24px; border-radius: 6px; font-size: 14px;
-      z-index: 10002; opacity: 0; transition: all 0.3s;
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 14px;
+      z-index: 10002;
+      opacity: 0;
+      transition: all 0.3s;
     }
-    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-    .toast.success { background: linear-gradient(135deg, #28a745, #20c997); }
-    .toast.error { background: linear-gradient(135deg, #f44336, #e91e63); }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .toast.success {
+      background: linear-gradient(135deg, #28a745, #20c997);
+    }
+
+    .toast.error {
+      background: linear-gradient(135deg, #f44336, #e91e63);
+    }
+
     /* Confirm */
     .confirm-dialog {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.5); display: none;
-      align-items: center; justify-content: center; z-index: 10001;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10001;
     }
-    .confirm-dialog.show { display: flex; }
-    .confirm-content { background: white; border-radius: 8px; padding: 20px; width: 280px; }
-    .confirm-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
-    .confirm-message { font-size: 13px; color: #666; margin-bottom: 16px; }
-    .confirm-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+
+    .confirm-dialog.show {
+      display: flex;
+    }
+
+    .confirm-content {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      width: 280px;
+    }
+
+    .confirm-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .confirm-message {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 16px;
+    }
+
+    .confirm-buttons {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
     .confirm-btn {
-      padding: 6px 16px; border: 1px solid #e0e0e0; border-radius: 4px;
-      font-size: 13px; cursor: pointer; background: white;
+      padding: 6px 16px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      background: white;
     }
-    .confirm-btn-confirm { background: #f44336; color: white; border-color: #f44336; }
-    .form-row-inline { display: flex; align-items: center; gap: 8px; }
+
+    .confirm-btn-confirm {
+      background: #f44336;
+      color: white;
+      border-color: #f44336;
+    }
+
+    .form-row-inline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 商品选择器样式 */
+    .goods-selector {
+      position: relative;
+      width: 100%;
+    }
+
+    .goods-selected-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 8px;
+      min-height: 28px;
+    }
+
+    .goods-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      background: #f5f5f5;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #333;
+      max-width: 200px;
+    }
+
+    .goods-tag-img {
+      width: 24px;
+      height: 24px;
+      border-radius: 3px;
+      object-fit: cover;
+      background: #eee;
+      flex-shrink: 0;
+    }
+
+    .goods-tag-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .goods-tag-remove {
+      cursor: pointer;
+      color: #999;
+      font-size: 14px;
+      line-height: 1;
+      margin-left: 2px;
+    }
+
+    .goods-tag-remove:hover {
+      color: #f44336;
+    }
+
+    .goods-search-input {
+      width: 100%;
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+      outline: none;
+      box-sizing: border-box;
+    }
+
+    .goods-search-input:focus {
+      border-color: #ffe60f;
+    }
+
+    .goods-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      max-height: 240px;
+      overflow-y: auto;
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      z-index: 100;
+      display: none;
+    }
+
+    .goods-dropdown.show {
+      display: block;
+    }
+
+    .goods-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .goods-option:hover {
+      background: #fafafa;
+    }
+
+    .goods-option.selected {
+      background: #fff8e1;
+    }
+
+    .goods-option-img {
+      width: 40px;
+      height: 40px;
+      border-radius: 4px;
+      object-fit: cover;
+      background: #f5f5f5;
+      flex-shrink: 0;
+    }
+
+    .goods-option-info {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .goods-option-title {
+      font-size: 13px;
+      color: #333;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .goods-option-price {
+      font-size: 12px;
+      color: #ff6b00;
+      margin-top: 2px;
+    }
+
+    .goods-option-check {
+      width: 16px;
+      height: 16px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 10px;
+      flex-shrink: 0;
+    }
+
+    .goods-option.selected .goods-option-check {
+      background: #ffe60f;
+      border-color: #ffe60f;
+    }
+
+    .goods-dropdown-empty {
+      padding: 20px;
+      text-align: center;
+      color: #999;
+      font-size: 13px;
+    }
+
+    .goods-dropdown-loading {
+      padding: 20px;
+      text-align: center;
+      color: #999;
+      font-size: 13px;
+    }
   </style>
 </head>
+
 <body>
-  <div class="header"><h1>聊天监听 - 配置中心</h1></div>
+  <div class="header">
+    <h1>聊天监听 - 配置中心</h1>
+  </div>
   <div class="main">
     <div class="sidebar">
-      <div class="nav-item active" data-panel="messages">消息列表</div>
+      <div class="nav-item active" data-panel="messages">消息导出</div>
       <div class="nav-item" data-panel="auto-reply">自动回复</div>
       <div class="nav-item" data-panel="settings">监听设置</div>
     </div>
     <div class="content">
-      <!-- 消息列表面板 -->
+      <!-- 消息导出面板 -->
       <div class="panel active" id="panel-messages">
-        <div class="table-actions">
-          <button class="btn" id="refreshBtn">刷新</button>
-          <button class="btn" id="exportCsvBtn">导出CSV</button>
-          <button class="btn btn-danger" id="clearAllBtn">清空全部</button>
-          <span class="table-info" id="tableInfo">共 0 条消息</span>
+        <div class="section-title">实时消息导出</div>
+        <div class="form-help" style="margin-bottom: 20px;">
+          点击导出按钮将实时从闲鱼获取最新消息，总消息数 = 会话数 × 每会话消息数
         </div>
-        <div style="overflow-y: auto; max-height: calc(100vh - 160px);">
-          <table class="msg-table" id="msgTable">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>发送人</th>
-                <th>内容</th>
-                <th>商品ID</th>
-                <th>会话ID</th>
-              </tr>
-            </thead>
-            <tbody id="msgTableBody">
-              <tr><td colspan="5" style="text-align:center;color:#bbb;padding:40px;">暂无消息</td></tr>
-            </tbody>
-          </table>
+        <div class="table-actions">
+          <div class="sync-area">
+            <select id="syncCountSelect">
+              <option value="20">20 个会话</option>
+              <option value="50" selected>50 个会话</option>
+              <option value="100">100 个会话</option>
+              <option value="200">200 个会话</option>
+            </select>
+            <button class="btn btn-primary" id="syncBtn">🔄 同步消息</button>
+            <span class="sync-status" id="syncStatus"></span>
+          </div>
+          <button class="btn" id="exportCsvBtn">导出CSV</button>
+          <button class="btn" id="exportTxtBtn">导出TXT</button>
+        </div>
+        <div style="padding: 40px; text-align: center; color: #666;">
+          <p style="font-size: 16px; margin-bottom: 10px;">📊 消息已不再存储在本地</p>
+          <p style="font-size: 14px; color: #999;">点击“导出”按钮可实时获取闲鱼聊天消息并导出</p>
+          <p style="font-size: 14px; color: #999; margin-top: 10px;">默认：50个会话 × 20条/会话 = 1000条消息</p>
         </div>
       </div>
 
@@ -296,7 +901,8 @@
               <div class="form-group">
                 <div class="form-row">
                   <label class="form-label">Base URL</label>
-                  <input type="text" class="form-input form-input-wide" id="aiBaseUrlInput" placeholder="https://api.openai.com/v1" />
+                  <input type="text" class="form-input form-input-wide" id="aiBaseUrlInput"
+                    placeholder="https://api.openai.com/v1" />
                 </div>
                 <div class="form-help">OpenAI 兼容接口地址</div>
               </div>
@@ -333,7 +939,8 @@
               <div class="form-group">
                 <div class="form-row">
                   <label class="form-label">暂停时长</label>
-                  <input type="number" class="form-input" id="aiPauseDurationInput" min="60000" max="3600000" step="60000" />
+                  <input type="number" class="form-input" id="aiPauseDurationInput" min="60000" max="3600000"
+                    step="60000" />
                   <span class="form-unit">毫秒</span>
                 </div>
                 <div class="form-help">每次检测到人工回复后，AI 暂停的时长（默认 300000 毫秒=5 分钟）</div>
@@ -370,7 +977,9 @@
                 </tr>
               </thead>
               <tbody id="ruleTableBody">
-                <tr><td colspan="7" style="text-align:center;color:#bbb;padding:40px;">暂无规则</td></tr>
+                <tr>
+                  <td colspan="7" style="text-align:center;color:#bbb;padding:40px;">暂无规则</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -381,13 +990,8 @@
       <div class="panel" id="panel-settings">
         <div class="form-section" style="max-width: 500px;">
           <div class="section-title">监听设置</div>
-          <div class="form-group">
-            <div class="form-row">
-              <label class="form-label">最大存储消息数</label>
-              <input type="number" class="form-input" id="maxMessagesInput" min="100" max="10000" step="100" />
-              <span class="form-unit">条</span>
-            </div>
-            <div class="form-help">超过此数量后自动删除最旧的消息 (100-10000)</div>
+          <div class="form-help">
+            消息不再存储在本地，无需配置存储限制。导出时实时获取最新消息。
           </div>
         </div>
       </div>
@@ -434,35 +1038,45 @@
         <div class="type-fields" id="aiFields">
           <div class="modal-form-group">
             <label class="modal-form-label">提示词 (System Prompt)</label>
-            <textarea class="modal-form-textarea" id="rulePromptInput" style="min-height: 120px;" placeholder="如：你是一个闲鱼卖家客服，请根据聊天记录回复用户。回复要简洁、友好。"></textarea>
+            <textarea class="modal-form-textarea" id="rulePromptInput" style="min-height: 120px;"
+              placeholder="如：你是一个闲鱼卖家客服，请根据聊天记录回复用户。回复要简洁、友好。"></textarea>
           </div>
           <div class="modal-form-group">
             <label class="modal-form-label">读取历史消息条数</label>
-            <input type="number" class="modal-form-input" id="ruleMaxHistoryInput" min="1" max="50" value="10" style="width: 100px;" />
+            <input type="number" class="modal-form-input" id="ruleMaxHistoryInput" min="1" max="50" value="10"
+              style="width: 100px;" />
             <div class="modal-form-help">AI 会读取最近 N 条聊天记录作为上下文</div>
           </div>
         </div>
 
         <!-- 通用字段 -->
         <div class="modal-form-group">
-          <label class="modal-form-label">绑定商品 ID</label>
-          <input type="text" class="modal-form-input" id="ruleItemIdsInput" placeholder="多个用逗号分隔，留空=匹配全部" />
+          <label class="modal-form-label">绑定商品</label>
+          <div class="goods-selector" id="goodsSelector">
+            <div class="goods-selected-tags" id="goodsSelectedTags"></div>
+            <input type="text" class="goods-search-input" id="goodsSearchInput" placeholder="搜索商品..." />
+            <div class="goods-dropdown" id="goodsDropdown"></div>
+          </div>
+          <input type="hidden" id="ruleItemIdsInput" />
           <div class="modal-form-help">仅对指定商品的聊天生效，留空表示所有商品</div>
         </div>
         <div class="form-row-inline">
           <div class="modal-form-group" style="flex: 1;">
             <label class="modal-form-label">优先级</label>
-            <input type="number" class="modal-form-input" id="rulePriorityInput" min="0" max="100" value="10" style="width: 80px;" />
+            <input type="number" class="modal-form-input" id="rulePriorityInput" min="0" max="100" value="10"
+              style="width: 80px;" />
             <div class="modal-form-help">数字越大越优先</div>
           </div>
           <div class="modal-form-group" style="flex: 1;">
             <label class="modal-form-label">冷却时间 (毫秒)</label>
-            <input type="number" class="modal-form-input" id="ruleCooldownInput" min="0" max="3600000" step="1000" style="width: 120px;" placeholder="0=用全局" />
+            <input type="number" class="modal-form-input" id="ruleCooldownInput" min="0" max="3600000" step="1000"
+              style="width: 120px;" placeholder="0=用全局" />
             <div class="modal-form-help">0 表示使用全局默认值</div>
           </div>
           <div class="modal-form-group" style="flex: 1;">
             <label class="modal-form-label">延迟 (毫秒)</label>
-            <input type="number" class="modal-form-input" id="ruleDelayInput" min="0" max="60000" step="100" style="width: 120px;" placeholder="0=用全局" />
+            <input type="number" class="modal-form-input" id="ruleDelayInput" min="0" max="60000" step="100"
+              style="width: 120px;" placeholder="0=用全局" />
             <div class="modal-form-help">0 表示使用全局默认值</div>
           </div>
         </div>
@@ -488,4 +1102,5 @@
   <script src="../shared/ui-helpers.js"></script>
   <script src="options.js"></script>
 </body>
+
 </html>
