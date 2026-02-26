@@ -9,6 +9,7 @@ try {
   importScripts('../shared/config.js');
   importScripts('ai-service.js');
   importScripts('goods-list-service.js');
+  importScripts('xiangguanjia-service.js');
 } catch (e) {
   console.error('[Background] 模块加载失败:', e);
 }
@@ -390,6 +391,102 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
           sendResponse(result);
         } else {
           sendResponse({ success: false, error: 'AI 服务模块未加载' });
+        }
+        return;
+      }
+
+      // ==================== 闲管家 API 代理 ====================
+
+      // 测试闲管家连接
+      if (request.type === 'TEST_XIANGGUANJIA_CONNECTION') {
+        console.log('[Background] 📥 收到闲管家连接测试请求');
+        var config = await getGlobalConfig();
+
+        if (typeof testXiangguanjiaConnection === 'function') {
+          var testResult = await testXiangguanjiaConnection(config);
+          sendResponse(testResult);
+        } else {
+          sendResponse({ success: false, error: '闲管家服务模块未加载' });
+        }
+        return;
+      }
+
+      // 查询闲鱼店铺
+      if (request.type === 'QUERY_XIANGYU_SHOPS') {
+        console.log('[Background] 📥 收到闲鱼店铺查询请求');
+        var config = await getGlobalConfig();
+
+        if (typeof queryXiangyuShops === 'function') {
+          var shopResult = await queryXiangyuShops(config);
+          sendResponse(shopResult);
+        } else {
+          sendResponse({ success: false, error: '闲管家服务模块未加载' });
+        }
+        return;
+      }
+
+      // 查询待发货订单
+      if (request.type === 'QUERY_PENDING_SHIPMENT_ORDERS') {
+        console.log('[Background] 📥 收到待发货订单查询请求');
+        var config = await getGlobalConfig();
+
+        if (typeof queryPendingShipmentOrders === 'function') {
+          // 分页获取所有订单（防止超过 API 限制）
+          var allOrders = [];
+          var pageNo = 1;
+          var pageSize = 100; // 每页最大 100 条
+          var maxPages = 100; // 最多获取 100 页（100*100=10000 条，API 上限）
+
+          while (pageNo <= maxPages) {
+            var result = await queryPendingShipmentOrders(config, {
+              authorizeId: request.authorizeId,
+              pageNo: pageNo,
+              pageSize: pageSize
+            });
+
+            if (!result.success || !result.orders || result.orders.length === 0) {
+              console.log('[Background] 订单查询结束，共', allOrders.length, '条');
+              break;
+            }
+
+            allOrders = allOrders.concat(result.orders);
+            console.log('[Background] 第', pageNo, '页，获取', result.orders.length, '条，累计', allOrders.length, '条');
+
+            // 如果返回数量小于 pageSize，说明已经是最后一页
+            if (result.orders.length < pageSize) {
+              break;
+            }
+
+            pageNo++;
+          }
+
+          sendResponse({
+            success: true,
+            orders: allOrders,
+            count: allOrders.length
+          });
+        } else {
+          sendResponse({ success: false, error: '闲管家服务模块未加载' });
+        }
+        return;
+      }
+
+      // 查询订单列表（支持状态筛选）
+      if (request.type === 'QUERY_ORDER_LIST') {
+        console.log('[Background] 📥 收到订单列表查询请求');
+        var config = await getGlobalConfig();
+
+        if (typeof queryOrderList === 'function') {
+          var result = await queryOrderList(config, {
+            authorizeId: request.authorizeId,
+            orderStatus: request.orderStatus,
+            pageNo: request.pageNo || 1,
+            pageSize: request.pageSize || 50
+          });
+
+          sendResponse(result);
+        } else {
+          sendResponse({ success: false, error: '闲管家服务模块未加载' });
         }
         return;
       }

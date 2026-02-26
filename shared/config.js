@@ -30,5 +30,9 @@ var DEFAULT_GLOBAL_CONFIG = {
   aiApiKey: '',
   aiBaseUrl: 'https://api.openai.com/v1',
   aiModel: AI_DEFAULT_MODEL,
-  aiTimeout: AI_DEFAULT_TIMEOUT
+  aiTimeout: AI_DEFAULT_TIMEOUT,
+  // 闲管家 API 配置
+  xgjAppId: '',
+  xgjAppKey: '',
+  xgjAppSecret: ''
 };

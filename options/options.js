@@ -25,6 +25,14 @@ document.addEventListener('DOMContentLoaded', function () {
   var aiPauseDurationInput = document.getElementById('aiPauseDurationInput');
   var aiPauseStatusDisplay = document.getElementById('aiPauseStatusDisplay');
 
+  // 闲管家配置
+  var xgjAppIdInput = document.getElementById('xgjAppIdInput');
+  var xgjAppKeyInput = document.getElementById('xgjAppKeyInput');
+  var xgjAppSecretInput = document.getElementById('xgjAppSecretInput');
+  var testXgjResult = document.getElementById('testXgjResult');
+  var shopTableBody = document.getElementById('shopTableBody');
+  var shopCount = document.getElementById('shopCount');
+
   // 规则相关
   var ruleTableBody = document.getElementById('ruleTableBody');
   var ruleCount = document.getElementById('ruleCount');
@@ -77,6 +85,9 @@ document.addEventListener('DOMContentLoaded', function () {
       if (panelId === 'auto-reply') {
         loadAutoReplyData();
       }
+      if (panelId === 'xiangguanjia') {
+        loadXiangguanjiaData();
+      }
     });
   });
 
@@ -102,6 +113,17 @@ document.addEventListener('DOMContentLoaded', function () {
   if (aiPauseEnabledSwitch) {
     aiPauseEnabledSwitch.addEventListener('click', function () {
       aiPauseEnabledSwitch.classList.toggle('on');
+    });
+  }
+
+  // ==================== 闲管家配置折叠 ====================
+  var xgjConfigToggle = document.getElementById('xgjConfigToggle');
+  var xgjConfigBody = document.getElementById('xgjConfigBody');
+
+  if (xgjConfigToggle) {
+    xgjConfigToggle.addEventListener('click', function () {
+      xgjConfigToggle.classList.toggle('open');
+      xgjConfigBody.classList.toggle('show');
     });
   }
 
@@ -187,6 +209,21 @@ document.addEventListener('DOMContentLoaded', function () {
         aiPauseStatusDisplay.textContent = '正常运行';
         aiPauseStatusDisplay.style.color = '#4caf50';
       }
+    });
+  }
+
+  // ==================== 加载闲管家配置 ====================
+  function loadXiangguanjiaData() {
+    chrome.runtime.sendMessage({ type: 'GET_AUTO_REPLY_GLOBAL_CONFIG' }, function (response) {
+      if (chrome.runtime.lastError || !response || !response.success) {
+        console.error('加载闲管家配置失败:', response);
+        return;
+      }
+
+      var config = response.config || {};
+      xgjAppIdInput.value = config.xgjAppId || '';
+      xgjAppKeyInput.value = config.xgjAppKey || '';
+      xgjAppSecretInput.value = config.xgjAppSecret || '';
     });
   }
 
@@ -749,7 +786,10 @@ document.addEventListener('DOMContentLoaded', function () {
       defaultDelay: delay,
       aiApiKey: aiApiKeyInput.value.trim(),
       aiBaseUrl: aiBaseUrlInput.value.trim() || 'https://api.openai.com/v1',
-      aiModel: aiModelInput.value.trim() || 'gpt-4o-mini'
+      aiModel: aiModelInput.value.trim() || 'gpt-4o-mini',
+      xgjAppId: xgjAppIdInput ? xgjAppIdInput.value.trim() : '',
+      xgjAppKey: xgjAppKeyInput ? xgjAppKeyInput.value.trim() : '',
+      xgjAppSecret: xgjAppSecretInput ? xgjAppSecretInput.value.trim() : ''
     };
 
     chrome.runtime.sendMessage({
@@ -816,6 +856,174 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
   });
+
+  // ==================== 闲管家测试连接 ====================
+  if (document.getElementById('testXgjBtn')) {
+    document.getElementById('testXgjBtn').addEventListener('click', function () {
+      var appKey = xgjAppKeyInput.value.trim();
+      var appSecret = xgjAppSecretInput.value.trim();
+
+      if (!appKey || !appSecret) {
+        showToast('请先输入 App Key 和 App Secret', 'error');
+        return;
+      }
+
+      testXgjResult.textContent = '测试中...';
+      testXgjResult.style.color = '#666';
+
+      // 先保存配置，再测试
+      saveXiangguanjiaConfig(function () {
+        chrome.runtime.sendMessage({
+          type: 'TEST_XIANGGUANJIA_CONNECTION'
+        }, function (response) {
+          if (response && response.success) {
+            testXgjResult.textContent = '✅ ' + response.message;
+            testXgjResult.style.color = '#28a745';
+          } else {
+            testXgjResult.textContent = '❌ ' + (response && response.error || '连接失败');
+            testXgjResult.style.color = '#f44336';
+          }
+        });
+      });
+    });
+  }
+
+  // ==================== 查询闲鱼店铺 ====================
+  if (document.getElementById('queryShopsBtn')) {
+    document.getElementById('queryShopsBtn').addEventListener('click', function () {
+      var appKey = xgjAppKeyInput.value.trim();
+      var appSecret = xgjAppSecretInput.value.trim();
+
+      if (!appKey || !appSecret) {
+        showToast('请先配置 App Key 和 App Secret', 'error');
+        return;
+      }
+
+      var queryBtn = document.getElementById('queryShopsBtn');
+      queryBtn.disabled = true;
+      queryBtn.textContent = '查询中...';
+
+      // 先保存配置，再查询
+      saveXiangguanjiaConfig(function () {
+        chrome.runtime.sendMessage({
+          type: 'QUERY_XIANGYU_SHOPS'
+        }, function (response) {
+          queryBtn.disabled = false;
+          queryBtn.textContent = '查询店铺';
+
+          if (response && response.success) {
+            var shops = response.shops || [];
+            shopCount.textContent = '共 ' + shops.length + ' 个店铺';
+            renderShopTable(shops);
+            showToast('查询成功，共 ' + shops.length + ' 个店铺', 'success');
+          } else {
+            shopCount.textContent = '共 0 个店铺';
+            renderShopTable([]);
+            showToast('查询失败: ' + (response && response.error || '未知错误'), 'error');
+          }
+        });
+      });
+    });
+  }
+
+  // ==================== 保存闲管家配置（内部函数） ====================
+  function saveXiangguanjiaConfig(callback) {
+    chrome.runtime.sendMessage({
+      type: 'GET_AUTO_REPLY_GLOBAL_CONFIG'
+    }, function (response) {
+      if (!response || !response.success) {
+        if (callback) callback();
+        return;
+      }
+
+      var currentConfig = response.config || {};
+      currentConfig.xgjAppId = xgjAppIdInput.value.trim();
+      currentConfig.xgjAppKey = xgjAppKeyInput.value.trim();
+      currentConfig.xgjAppSecret = xgjAppSecretInput.value.trim();
+
+      chrome.runtime.sendMessage({
+        type: 'UPDATE_AUTO_REPLY_GLOBAL_CONFIG',
+        config: currentConfig
+      }, function () {
+        if (callback) callback();
+      });
+    });
+  }
+
+  // ==================== 渲染店铺表格 ====================
+  function renderShopTable(shops) {
+    shopTableBody.textContent = '';
+  
+    if (!shops || shops.length === 0) {
+      var tr = document.createElement('tr');
+      var td = document.createElement('td');
+      td.setAttribute('colspan', '6');
+      td.style.cssText = 'text-align:center;color:#bbb;padding:40px;';
+      td.textContent = '暂无店铺数据';
+      tr.appendChild(td);
+      shopTableBody.appendChild(tr);
+      return;
+    }
+  
+    shops.forEach(function (shop) {
+      var tr = document.createElement('tr');
+  
+      // 用户 ID (user_identity)
+      var tdId = document.createElement('td');
+      tdId.textContent = shop.user_identity || shop.user_id || '-';
+      tdId.title = shop.user_identity || shop.user_id || '';
+  
+      // 店铺名称 (shop_name)
+      var tdName = document.createElement('td');
+      tdName.textContent = shop.shop_name || '-';
+      tdName.title = shop.shop_name || '';
+  
+      // 用户昵称 (user_nick)
+      var tdNickname = document.createElement('td');
+      tdNickname.textContent = shop.user_nick || '-';
+      tdNickname.title = shop.user_nick || '';
+  
+      // 用户名 (user_name)
+      var tdRealName = document.createElement('td');
+      tdRealName.textContent = shop.user_name || '-';
+      tdRealName.title = shop.user_name || '';
+  
+      // 订购状态
+      var tdValid = document.createElement('td');
+      var isValid = shop.is_valid === true;
+      tdValid.textContent = isValid ? '有效' : '无效';
+      tdValid.style.color = isValid ? '#28a745' : '#999';
+  
+      // 准入业务类型 (item_biz_types)
+      var tdTypes = document.createElement('td');
+      var types = shop.item_biz_types || '';
+      if (types) {
+        // 类型映射：2=闲置，10=全新，19=虚拟
+        var typeMap = { '2': '闲置', '10': '全新', '19': '虚拟' };
+        var typeLabels = types.split(',').map(function (t) {
+          return typeMap[t.trim()] || t;
+        }).join(', ');
+        tdTypes.textContent = typeLabels;
+        tdTypes.title = types;
+      } else {
+        tdTypes.textContent = '-';
+        tdTypes.style.color = '#999';
+      }
+  
+      tr.appendChild(tdId);
+      tr.appendChild(tdName);
+      tr.appendChild(tdNickname);
+      tr.appendChild(tdRealName);
+      tr.appendChild(tdValid);
+      tr.appendChild(tdTypes);
+      shopTableBody.appendChild(tr);
+    });
+    
+    console.log('[店铺查询] 店铺列表已更新，共', shops.length, '个店铺');
+    
+    // 同时更新订单查询的店铺选择框
+    updateOrderShopSelect(shops);
+  }
 
   // ==================== 刷新 AI 暂停状态 ====================
   if (document.getElementById('refreshAiPauseStatusBtn')) {
@@ -981,6 +1189,342 @@ document.addEventListener('DOMContentLoaded', function () {
       closeRuleModal();
     }
   });
+
+  // ==================== 订单列表查询功能 ====================
+  
+  // 订单查询相关 DOM
+  var orderShopSelect = document.getElementById('orderShopSelect');
+  var orderStatusSelect = document.getElementById('orderStatusSelect');
+  var refundStatusSelect = document.getElementById('refundStatusSelect');
+  var queryOrdersBtn = document.getElementById('queryOrdersBtn');
+  var orderQueryStatus = document.getElementById('orderQueryStatus');
+  var orderTableBody = document.getElementById('orderTableBody');
+  var prevPageBtn = document.getElementById('prevPageBtn');
+  var nextPageBtn = document.getElementById('nextPageBtn');
+  var pageInfo = document.getElementById('pageInfo');
+  
+  // 订单查询状态
+  var orderCurrentPage = 1;
+  var orderPageSize = 50;
+  var orderTotalCount = 0;
+  var currentSelectedShopId = '';
+  var currentOrderStatus = 0;
+  var currentRefundStatus = -1;
+  
+  /**
+   * 更新店铺选择下拉框（用于订单查询）
+   */
+  function updateOrderShopSelect(shops) {
+    if (!orderShopSelect) {
+      console.warn('[订单查询] orderShopSelect 元素不存在');
+      return;
+    }
+    
+    // 清空现有选项（保留“请选择”）
+    orderShopSelect.innerHTML = '<option value="">请选择店铺</option>';
+    
+    if (!shops || shops.length === 0) {
+      return;
+    }
+    
+    shops.forEach(function(shop) {
+      var option = document.createElement('option');
+      // 使用 user_identity 作为店铺 ID
+      option.value = shop.user_identity || shop.user_id || '';
+      // 显示文本：店铺名称 或 用户昵称
+      option.textContent = shop.shop_name || shop.user_nick || '未命名店铺';
+      orderShopSelect.appendChild(option);
+    });
+    
+    console.log('[订单查询] 店铺下拉框已更新，共', shops.length, '个店铺');
+  }
+  
+  /**
+   * 查询订单列表
+   */
+  function queryOrderList() {
+    currentSelectedShopId = orderShopSelect.value;
+    currentOrderStatus = parseInt(orderStatusSelect.value) || 0;
+    var refundStatusValue = parseInt(refundStatusSelect.value);
+    currentRefundStatus = isNaN(refundStatusValue) ? -1 : refundStatusValue;
+    
+    if (!currentSelectedShopId) {
+      showToast('请先选择店铺', 'error');
+      return;
+    }
+    
+    // 显示查询中状态
+    if (queryOrdersBtn) {
+      queryOrdersBtn.disabled = true;
+      queryOrdersBtn.textContent = '查询中...';
+    }
+    if (orderQueryStatus) {
+      orderQueryStatus.textContent = '正在查询订单...';
+      orderQueryStatus.style.color = '#1a73e8';
+    }
+    
+    console.log('[订单查询] 开始查询，店铺 ID:', currentSelectedShopId, '订单状态:', currentOrderStatus, '退款状态:', currentRefundStatus, '页码:', orderCurrentPage);
+    
+    // 发送请求到 background
+    chrome.runtime.sendMessage({
+      type: 'QUERY_ORDER_LIST',
+      authorizeId: currentSelectedShopId,
+      orderStatus: currentOrderStatus,
+      refundStatus: currentRefundStatus,
+      pageNo: orderCurrentPage,
+      pageSize: orderPageSize
+    }, function (response) {
+      // 恢复按钮状态
+      if (queryOrdersBtn) {
+        queryOrdersBtn.disabled = false;
+        queryOrdersBtn.textContent = '🔍 查询订单';
+      }
+      
+      if (!response || !response.success) {
+        var errorMsg = response && response.error ? response.error : '查询失败';
+        if (orderQueryStatus) {
+          orderQueryStatus.textContent = '❌ ' + errorMsg;
+          orderQueryStatus.style.color = '#f44336';
+        }
+        showToast('订单查询失败：' + errorMsg, 'error');
+        renderOrderTable([]);
+        return;
+      }
+      
+      var orders = response.orders || [];
+      orderTotalCount = response.count || 0;
+      
+      console.log('[订单查询] 查询成功，本页', orders.length, '条，总计', orderTotalCount, '条');
+      
+      if (orders.length === 0 && orderCurrentPage === 1) {
+        if (orderQueryStatus) {
+          orderQueryStatus.textContent = '⚠️ 该店铺没有订单';
+          orderQueryStatus.style.color = '#ff9800';
+        }
+        showToast('该店铺没有订单', 'warning');
+      }
+      
+      // 渲染表格
+      renderOrderTable(orders);
+      
+      // 更新分页信息
+      updatePagination(response.pageNo, response.pageSize, orderTotalCount);
+    });
+  }
+  
+  /**
+   * 渲染订单表格
+   */
+  function renderOrderTable(orders) {
+    if (!orderTableBody) return;
+    
+    // 清空表格
+    orderTableBody.innerHTML = '';
+    
+    if (!orders || orders.length === 0) {
+      orderTableBody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#bbb;padding:40px;">暂无数据</td></tr>';
+      return;
+    }
+    
+    // 订单状态映射
+    var statusMap = {
+      0: '未知',
+      11: '待付款',
+      12: '待发货',
+      21: '已发货',
+      22: '已完成',
+      23: '已退款',
+      24: '已关闭'
+    };
+    
+    // 退款状态映射
+    var refundStatusMap = {
+      0: '未申请退款',
+      1: '待商家处理',
+      2: '待买家退货',
+      3: '待商家收货',
+      4: '退款关闭',
+      5: '退款成功',
+      6: '已拒绝退款',
+      8: '待确认退货地址'
+    };
+    
+    // 格式化时间戳
+    function formatTimestamp(timestamp) {
+      if (!timestamp || timestamp === 0) return '-';
+      var date = new Date(timestamp * 1000);
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+    
+    // 构建地址
+    function buildAddress(order) {
+      var parts = [];
+      if (order.prov_name) parts.push(order.prov_name);
+      if (order.city_name) parts.push(order.city_name);
+      if (order.area_name) parts.push(order.area_name);
+      if (order.town_name) parts.push(order.town_name);
+      if (order.address) parts.push(order.address);
+      var fullAddress = parts.join('');
+      console.log('[地址构建] 完整地址:', fullAddress);
+      return fullAddress;
+    }
+    
+    // 渲染每一行
+    orders.forEach(function(order) {
+      var tr = document.createElement('tr');
+      
+      // 调试输出：打印订单数据
+      console.log('[订单渲染] 订单数据:', order);
+      console.log('[订单渲染] receiver_mobile:', order.receiver_mobile);
+      console.log('[订单渲染] prov_name:', order.prov_name, 'city_name:', order.city_name, 'area_name:', order.area_name);
+      
+      // 订单编号
+      var tdOrderNo = document.createElement('td');
+      tdOrderNo.textContent = order.order_no || '-';
+      tdOrderNo.style.fontFamily = 'monospace';
+      tdOrderNo.style.fontSize = '12px';
+      tr.appendChild(tdOrderNo);
+      
+      // 订单状态
+      var tdStatus = document.createElement('td');
+      var statusText = statusMap[order.order_status] || '未知';
+      tdStatus.textContent = statusText;
+      tdStatus.style.fontWeight = '500';
+      // 根据状态设置颜色
+      if (order.order_status === 12) tdStatus.style.color = '#ff9800'; // 待发货
+      else if (order.order_status === 21) tdStatus.style.color = '#2196f3'; // 已发货
+      else if (order.order_status === 22) tdStatus.style.color = '#4caf50'; // 已完成
+      else if (order.order_status === 23) tdStatus.style.color = '#f44336'; // 已退款
+      else if (order.order_status === 24) tdStatus.style.color = '#9e9e9e'; // 已关闭
+      tr.appendChild(tdStatus);
+      
+      // 退款状态
+      var tdRefundStatus = document.createElement('td');
+      var refundStatusText = refundStatusMap[order.refund_status] !== undefined ? 
+                             refundStatusMap[order.refund_status] : '-';
+      tdRefundStatus.textContent = refundStatusText;
+      tdRefundStatus.style.fontSize = '12px';
+      // 根据退款状态设置颜色
+      if (order.refund_status === 0) tdRefundStatus.style.color = '#9e9e9e'; // 未申请退款
+      else if (order.refund_status === 1 || order.refund_status === 2) tdRefundStatus.style.color = '#ff9800'; // 处理中
+      else if (order.refund_status === 3 || order.refund_status === 4) tdRefundStatus.style.color = '#2196f3'; // 处理中
+      else if (order.refund_status === 5) tdRefundStatus.style.color = '#4caf50'; // 退款成功
+      else if (order.refund_status === 6) tdRefundStatus.style.color = '#f44336'; // 已拒绝
+      tr.appendChild(tdRefundStatus);
+      
+      // 商品名称
+      var tdTitle = document.createElement('td');
+      tdTitle.textContent = order.goods?.title || '-';
+      tdTitle.style.maxWidth = '200px';
+      tdTitle.style.overflow = 'hidden';
+      tdTitle.style.textOverflow = 'ellipsis';
+      tdTitle.style.whiteSpace = 'nowrap';
+      tdTitle.title = order.goods?.title || '-';
+      tr.appendChild(tdTitle);
+      
+      // 数量
+      var tdQuantity = document.createElement('td');
+      tdQuantity.textContent = order.goods?.quantity || 0;
+      tdQuantity.style.textAlign = 'center';
+      tr.appendChild(tdQuantity);
+      
+      // 订单金额
+      var tdAmount = document.createElement('td');
+      var amount = (order.pay_amount || 0) / 100; // 转换为元
+      tdAmount.textContent = '¥' + amount.toFixed(2);
+      tdAmount.style.color = '#f44336';
+      tdAmount.style.fontWeight = '500';
+      tr.appendChild(tdAmount);
+      
+      // 买家信息
+      var tdBuyer = document.createElement('td');
+      tdBuyer.textContent = order.buyer_nick || '-';
+      tdBuyer.style.maxWidth = '120px';
+      tdBuyer.style.overflow = 'hidden';
+      tdBuyer.style.textOverflow = 'ellipsis';
+      tdBuyer.style.whiteSpace = 'nowrap';
+      tr.appendChild(tdBuyer);
+      
+      // 联系电话
+      var tdMobile = document.createElement('td');
+      tdMobile.textContent = order.receiver_mobile || '-';
+      tdMobile.style.fontSize = '12px';
+      tdMobile.style.fontFamily = 'monospace';
+      tdMobile.style.whiteSpace = 'nowrap'; // 不换行
+      tr.appendChild(tdMobile);
+      
+      // 收货地址
+      var tdAddress = document.createElement('td');
+      var address = buildAddress(order);
+      tdAddress.textContent = address || '-';
+      tdAddress.style.maxWidth = '200px';
+      tdAddress.style.overflow = 'hidden';
+      tdAddress.style.textOverflow = 'ellipsis';
+      tdAddress.style.whiteSpace = 'nowrap';
+      tdAddress.title = address; // 鼠标悬停显示完整地址
+      tr.appendChild(tdAddress);
+      
+      // 下单时间
+      var tdTime = document.createElement('td');
+      tdTime.textContent = formatTimestamp(order.order_time);
+      tdTime.style.fontSize = '12px';
+      tr.appendChild(tdTime);
+      
+      orderTableBody.appendChild(tr);
+    });
+  }
+  
+  /**
+   * 更新分页信息
+   */
+  function updatePagination(pageNo, pageSize, totalCount) {
+    if (!pageInfo) return;
+    
+    var totalPages = Math.ceil(totalCount / pageSize);
+    pageInfo.textContent = '第 ' + pageNo + ' 页 / 共 ' + totalPages + ' 页 (' + totalCount + '条)';
+    
+    // 更新上一页按钮
+    if (prevPageBtn) {
+      prevPageBtn.disabled = pageNo <= 1;
+    }
+    
+    // 更新下一页按钮
+    if (nextPageBtn) {
+      nextPageBtn.disabled = pageNo >= totalPages || totalCount === 0;
+    }
+  }
+  
+  // 绑定查询按钮事件
+  if (queryOrdersBtn) {
+    queryOrdersBtn.addEventListener('click', function() {
+      orderCurrentPage = 1; // 重置为第一页
+      queryOrderList();
+    });
+  }
+  
+  // 绑定上一页按钮
+  if (prevPageBtn) {
+    prevPageBtn.addEventListener('click', function() {
+      if (orderCurrentPage > 1) {
+        orderCurrentPage--;
+        queryOrderList();
+      }
+    });
+  }
+  
+  // 绑定下一页按钮
+  if (nextPageBtn) {
+    nextPageBtn.addEventListener('click', function() {
+      orderCurrentPage++;
+      queryOrderList();
+    });
+  }
 
   // 初始化（不再需要 loadMessages 和 loadConfig）
   loadAutoReplyData();

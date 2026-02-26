@@ -827,6 +827,7 @@
     <div class="sidebar">
       <div class="nav-item active" data-panel="messages">消息导出</div>
       <div class="nav-item" data-panel="auto-reply">自动回复</div>
+      <div class="nav-item" data-panel="xiangguanjia">闲管家</div>
       <div class="nav-item" data-panel="settings">监听设置</div>
     </div>
     <div class="content">
@@ -993,6 +994,150 @@
           <div class="form-help">
             消息不再存储在本地，无需配置存储限制。导出时实时获取最新消息。
           </div>
+        </div>
+      </div>
+
+      <!-- 闲管家配置面板 -->
+      <div class="panel" id="panel-xiangguanjia">
+        <div style="max-width: 800px;">
+          <div class="section-title">闲管家API配置</div>
+
+          <!-- API 配置折叠区域 -->
+          <div style="margin-top: 12px;">
+            <div class="collapse-header" id="xgjConfigToggle">
+              <span class="arrow">▶</span>
+              <span style="font-size: 14px; font-weight: 500;">API 连接配置</span>
+            </div>
+            <div class="collapse-body" id="xgjConfigBody">
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label">App ID</label>
+                  <input type="text" class="form-input form-input-wide" id="xgjAppIdInput" placeholder="请输入闲管家 App ID" />
+                </div>
+                <div class="form-help">开放平台提供的应用ID</div>
+              </div>
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label">App Key</label>
+                  <input type="text" class="form-input form-input-wide" id="xgjAppKeyInput" placeholder="请输入闲管家 App Key" />
+                </div>
+                <div class="form-help">开放平台提供的应用KEY</div>
+              </div>
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label">App Secret</label>
+                  <input type="password" class="form-input form-input-wide" id="xgjAppSecretInput" placeholder="请输入闲管家 App Secret" />
+                </div>
+                <div class="form-help">开放平台提供的应用密钥</div>
+              </div>
+              <div class="form-group">
+                <div class="form-row">
+                  <label class="form-label"></label>
+                  <button class="btn btn-success btn-small" id="testXgjBtn">测试店铺查询</button>
+                  <span class="form-unit" id="testXgjResult"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 店铺列表 -->
+          <div class="section-title" style="margin-top: 24px;">店铺列表</div>
+          <div class="table-actions">
+            <button class="btn btn-primary" id="queryShopsBtn">查询店铺</button>
+            <span class="table-info" id="shopCount">共 0 个店铺</span>
+          </div>
+
+          <div style="overflow-y: auto; max-height: calc(100vh - 320px);">
+            <table class="msg-table" id="shopTable">
+              <thead>
+                <tr>
+                  <th style="width: 15%;">店铺ID</th>
+                  <th style="width: 20%;">店铺名称</th>
+                  <th style="width: 15%;">用户昵称</th>
+                  <th style="width: 15%;">真实姓名</th>
+                  <th style="width: 15%;">用户身份</th>
+                  <th style="width: 20%;">服务支持</th>
+                </tr>
+              </thead>
+              <tbody id="shopTableBody">
+                <tr>
+                  <td colspan="6" style="text-align:center;color:#bbb;padding:40px;">点击“查询店铺”获取授权店铺列表</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      
+        <!-- 订单列表查询区域 -->
+        <div class="section-title" style="margin-top: 24px;">订单列表查询</div>
+        <div class="form-help" style="margin-bottom: 12px;">
+          查询闲鱼订单列表，支持按订单状态筛选
+        </div>
+              
+        <!-- 查询条件 -->
+        <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px;">
+          <select id="orderShopSelect" style="flex: 1; min-width: 200px;">
+            <option value="">请选择店铺</option>
+          </select>
+                  
+          <select id="orderStatusSelect" style="width: 120px;">
+            <option value="0">全部状态</option>
+            <option value="11">待付款</option>
+            <option value="12">待发货</option>
+            <option value="21">已发货</option>
+            <option value="22">已完成</option>
+            <option value="23">已退款</option>
+            <option value="24">已关闭</option>
+          </select>
+                  
+          <select id="refundStatusSelect" style="width: 140px;">
+            <option value="-1">全部退款状态</option>
+            <option value="0">未申请退款</option>
+            <option value="1">待商家处理</option>
+            <option value="2">待买家退货</option>
+            <option value="3">待商家收货</option>
+            <option value="4">退款关闭</option>
+            <option value="5">退款成功</option>
+            <option value="6">已拒绝退款</option>
+            <option value="8">待确认退货地址</option>
+          </select>
+                  
+          <button class="btn btn-primary" id="queryOrdersBtn">🔍 查询订单</button>
+        </div>
+              
+        <!-- 查询结果统计 -->
+        <div class="table-actions">
+          <span class="table-info" id="orderQueryStatus"></span>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn btn-small" id="prevPageBtn" disabled>&lt; 上一页</button>
+            <span id="pageInfo">第 1 页</span>
+            <button class="btn btn-small" id="nextPageBtn" disabled>下一页 &gt;</button>
+          </div>
+        </div>
+      
+        <!-- 订单列表表格 -->
+        <div style="overflow-y: auto; max-height: calc(100vh - 320px);">
+          <table class="msg-table" id="orderTable">
+            <thead>
+              <tr>
+                <th style="width: 13%;">订单编号</th>
+                <th style="width: 7%;">订单状态</th>
+                <th style="width: 8%;">退款状态</th>
+                <th style="width: 15%;">商品名称</th>
+                <th style="width: 5%;">数量</th>
+                <th style="width: 8%;">订单金额</th>
+                <th style="width: 10%;">买家信息</th>
+                <th style="width: 11%;">联系电话</th>
+                <th style="width: 16%;">收货地址</th>
+                <th style="width: 7%;">下单时间</th>
+              </tr>
+            </thead>
+            <tbody id="orderTableBody">
+              <tr>
+                <td colspan="10" style="text-align:center;color:#bbb;padding:40px;">请选择店铺后点击“查询订单”</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

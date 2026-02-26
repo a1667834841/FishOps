@@ -11,7 +11,8 @@
   ],
   "host_permissions": [
     "https://www.goofish.com/*",
-    "https://h5api.m.goofish.com/*"
+    "https://h5api.m.goofish.com/*",
+    "https://open.goofish.pro/*"
   ],
   "background": {
     "service_worker": "background/index.js"
