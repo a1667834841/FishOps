@@ -126,3 +126,134 @@ async function callChatCompletion(config, messages) {
 }
 
 console.log('[AI-Service] AI 聊天补全服务已加载');
+
+/**
+ * 调用视觉AI分析图片
+ * @param {Object} config - 视觉AI配置
+ * @param {string} config.apiKey - API Key
+ * @param {string} config.baseUrl - API Base URL
+ * @param {string} config.model - 模型名称
+ * @param {number} [config.timeout] - 超时时间（毫秒）
+ * @param {string} config.prompt - 分析提示词
+ * @param {string} imageUrl - 图片URL
+ * @returns {Promise<Object>} { success, description, error }
+ */
+async function callVisionAI(config, imageUrl) {
+    var LOG_PREFIX = '[VisionAI-Service]';
+
+    if (!config.apiKey) {
+        console.error(LOG_PREFIX, '❌ API Key 未配置');
+        return { success: false, error: 'API Key 未配置' };
+    }
+
+    if (!imageUrl) {
+        console.error(LOG_PREFIX, '❌ 图片URL不能为空');
+        return { success: false, error: '图片URL不能为空' };
+    }
+
+    var baseUrl = (config.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+    var model = config.model || 'gpt-4o';
+    var timeout = config.timeout || 30000;
+    var prompt = config.prompt || '请描述这张图片的内容，重点关注商品的状态、品牌、颜色、瑕疵等信息。';
+    var url = baseUrl + '/chat/completions';
+
+    console.log(LOG_PREFIX, '📤 发起视觉AI请求:', {
+        url: url,
+        model: model,
+        imageUrl: imageUrl.substring(0, 50) + '...',
+        timeout: timeout
+    });
+
+    // 构建请求体（OpenAI Vision格式）
+    var requestBody = {
+        model: model,
+        messages: [
+            {
+                role: 'user',
+                content: [
+                    {
+                        type: 'text',
+                        text: prompt
+                    },
+                    {
+                        type: 'image_url',
+                        image_url: {
+                            url: imageUrl
+                        }
+                    }
+                ]
+            }
+        ],
+        temperature: 0.7,
+        max_tokens: 500,
+        stream: false
+    };
+
+    // 超时控制
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function () {
+        controller.abort();
+    }, timeout);
+
+    try {
+        var response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + config.apiKey
+            },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            var errorText = '';
+            try {
+                var errorData = await response.json();
+                errorText = (errorData.error && errorData.error.message) || response.statusText;
+            } catch (e) {
+                errorText = response.statusText;
+            }
+            console.error(LOG_PREFIX, '❌ API 返回错误:', response.status, errorText);
+            return {
+                success: false,
+                error: 'API 错误 (' + response.status + '): ' + errorText
+            };
+        }
+
+        var data = await response.json();
+
+        if (!data.choices || data.choices.length === 0) {
+            console.error(LOG_PREFIX, '❌ 无有效回复');
+            return { success: false, error: '无有效回复' };
+        }
+
+        var content = data.choices[0].message && data.choices[0].message.content;
+        if (!content) {
+            console.error(LOG_PREFIX, '❌ 回复内容为空');
+            return { success: false, error: '回复内容为空' };
+        }
+
+        console.log(LOG_PREFIX, '✅ 视觉AI分析成功, 字数:', content.length);
+
+        return {
+            success: true,
+            description: content.trim(),
+            usage: data.usage || null,
+            model: data.model || model
+        };
+
+    } catch (error) {
+        clearTimeout(timeoutId);
+
+        if (error.name === 'AbortError') {
+            console.error(LOG_PREFIX, '❌ 请求超时 (' + timeout + 'ms)');
+            return { success: false, error: '请求超时 (' + timeout + 'ms)' };
+        }
+
+        console.error(LOG_PREFIX, '❌ 网络异常:', error.message);
+        return { success: false, error: '网络异常: ' + error.message };
+    }
+}

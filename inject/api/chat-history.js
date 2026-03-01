@@ -163,6 +163,19 @@ window.ChatHistoryAPI = (function () {
                         // data 不是可解析的文本格式
                     }
                 }
+
+                // 图片消息(contentType=2)：解析图片URL并赋值给content
+                if (contentType === 2 && rawData) {
+                    try {
+                        var decoded = decodeURIComponent(escape(atob(rawData)));
+                        var parsed = JSON.parse(decoded);
+                        if (parsed.image && parsed.image.pics && parsed.image.pics.length > 0) {
+                            content = parsed.image.pics[0].url;
+                        }
+                    } catch (e) {
+                        // 解析失败，保持原有content
+                    }
+                }
             }
 
             if (!content) return null;

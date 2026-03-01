@@ -321,7 +321,8 @@ window.XianyuAPI = (function () {
       senderId, senderName, senderUserType, clientIp,
       receiverId, sessionId, itemId,
       content, contentType, timestamp, createAt,
-      messageId, platform, appVersion, direction
+      messageId, platform, appVersion, direction,
+      imageUrl
     } = options;
 
     return {
@@ -340,7 +341,8 @@ window.XianyuAPI = (function () {
       messageId: messageId || '',
       platform: platform || '',
       appVersion: appVersion || '',
-      direction: direction || 'in'
+      direction: direction || 'in',
+      imageUrl: imageUrl || null
     };
   }
 
@@ -448,12 +450,72 @@ window.XianyuAPI = (function () {
           if (contentJson.text && contentJson.text.text) {
             messageText = contentJson.text.text;
           }
-          messageContentType = contentJson.contentType || 101;
+          // 检查是否为图片消息 (contentType 2)
+          if (contentJson.contentType === 2 || contentJson.type === 2) {
+            messageContentType = 2;
+            messageText = '[图片]';
+          } else {
+            messageContentType = contentJson.contentType || 101;
+          }
         } catch (e) {
           messageText = messageData["3"]["5"] || contentData.reminderContent || '';
         }
       } else {
         messageText = contentData.reminderContent || '';
+      }
+
+      // 提取图片数据（如果是图片消息）
+      let imageUrl = '';
+      if (messageContentType === 2) {
+        // 优先从 messageData["3"]["5"] 解析JSON获取图片URL
+        if (messageData["3"] && messageData["3"]["5"]) {
+          try {
+            const contentJson = JSON.parse(messageData["3"]["5"]);
+            // 新的图片格式: image.pics[0].url
+            if (contentJson.image && contentJson.image.pics && contentJson.image.pics.length > 0) {
+              imageUrl = contentJson.image.pics[0].url;
+            }
+            // 备用格式: 直接从字段获取
+            else if (contentJson.url) {
+              imageUrl = contentJson.url;
+            }
+            else if (contentJson.imgUrl) {
+              imageUrl = contentJson.imgUrl;
+            }
+            else if (contentJson.imageUrl) {
+              imageUrl = contentJson.imageUrl;
+            }
+          } catch (e) {
+            // JSON解析失败，可能是直接的URL
+            const rawData = messageData["3"]["5"];
+            if (rawData.startsWith('http')) {
+              imageUrl = rawData;
+            }
+          }
+        }
+        // 备选: 从 custom.data 提取
+        if (!imageUrl && contentData.custom && contentData.custom.data) {
+          const rawData = contentData.custom.data;
+          if (rawData.startsWith('http')) {
+            imageUrl = rawData;
+          }
+          else if (rawData.startsWith('data:image')) {
+            imageUrl = rawData;
+          }
+          else {
+            try {
+              const decoded = decodeURIComponent(escape(atob(rawData)));
+              const parsed = JSON.parse(decoded);
+              if (parsed.image && parsed.image.pics && parsed.image.pics.length > 0) {
+                imageUrl = parsed.image.pics[0].url;
+              } else {
+                imageUrl = parsed.url || parsed.imgUrl || parsed.imageUrl || '';
+              }
+            } catch (e) {
+              // 解析失败，忽略
+            }
+          }
+        }
       }
 
       const sessionId = extractSessionId(contentData.reminderUrl);
@@ -470,6 +532,7 @@ window.XianyuAPI = (function () {
         itemId: itemId || '',
         content: messageText,
         contentType: messageContentType,
+        imageUrl: imageUrl,
         timestamp: chatData["5"] ? new Date(chatData["5"]).toLocaleString() : new Date().toLocaleString(),
         createAt: chatData["5"] || Date.now(),
         messageId: chatData["3"] || '',
@@ -544,12 +607,28 @@ window.XianyuAPI = (function () {
           const content = body.content || {};
 
           let messageText = '';
+          let messageContentType = 101;
+          let imageUrl = '';
+
           if (content.custom && content.custom.data) {
             try {
               const decodedData = atob(content.custom.data);
               const contentJson = JSON.parse(decodedData);
               if (contentJson.text && contentJson.text.text) {
                 messageText = contentJson.text.text;
+              }
+              // 检查是否为图片消息
+              if (contentJson.contentType === 2 || contentJson.type === 2) {
+                messageContentType = 2;
+                messageText = '[图片]';
+                // 提取图片URL - 优先使用新的格式 image.pics[0].url
+                if (contentJson.image && contentJson.image.pics && contentJson.image.pics.length > 0) {
+                  imageUrl = contentJson.image.pics[0].url;
+                }
+                // 备用格式
+                else {
+                  imageUrl = contentJson.url || contentJson.imgUrl || contentJson.imageUrl || '';
+                }
               }
             } catch (e) {
               messageText = content.custom.summary || '';
@@ -565,7 +644,8 @@ window.XianyuAPI = (function () {
             sessionId: extractSessionId(ext.reminderUrl) || '',
             itemId: extractItemId(ext.reminderUrl) || '',
             content: messageText || content.custom?.summary || '',
-            contentType: content.contentType || 101,
+            contentType: messageContentType,
+            imageUrl: imageUrl,
             timestamp: body.createAt ? new Date(body.createAt).toLocaleString() : new Date().toLocaleString(),
             createAt: body.createAt || Date.now(),
             messageId: body.messageId || '',

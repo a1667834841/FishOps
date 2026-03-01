@@ -318,6 +318,176 @@
   // ==================== AI 回复处理 ====================
 
   /**
+   * 构建用于 AI 请求的 messages 数组
+   * 格式参照阿里云 DashScope API: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+   *
+   * @param {Object} params - 参数对象
+   * @param {Array} params.historyMessages - 历史消息数组
+   * @param {Object} params.currentMessage - 当前消息对象
+   * @param {string} params.basePrompt - 基础系统提示词
+   * @param {Object} params.goodsDetail - 商品详情（可选）
+   * @returns {Array} 构建好的 messages 数组
+   */
+  function buildMessages(params) {
+    var historyMessages = params.historyMessages || [];
+    var currentMessage = params.currentMessage;
+    var basePrompt = params.basePrompt || '你是一个闲鱼卖家的客服助手，请根据聊天记录和用户的最新消息进行回复。回复要简洁、友好、专业。不要用markdown格式。用中文回答。';
+    var goodsDetail = params.goodsDetail;
+
+    // 构建 system prompt（注入商品信息）
+    var systemPrompt = basePrompt;
+
+    // 如果有商品详情，注入到 prompt 中
+    if (goodsDetail) {
+      var goodsInfo = '\n\n【当前咨询商品】\n' +
+        '商品名称：' + goodsDetail.title + '\n' +
+        '**商品价格**：' + (goodsDetail.skuList && goodsDetail.skuList.length > 0 ? goodsDetail.skuList.map(function(s) { return (s.propertyText || '规格') + ': ' + '价格：'+(s.price + '元' || '未设置'); }).join('、') : (goodsDetail.price + '元'  || '未设置')) + '\n' +
+        '商品描述：' + (goodsDetail.description || '无详细描述') + '\n' +
+        '商品所在地：' + (goodsDetail.city || '未设置') + '\n' +
+        '请根据以上商品信息，严格以商品价格为准，专业地回答用户关于该商品的问题。';
+
+      systemPrompt += goodsInfo;
+      console.log(LOG_PREFIX, '📝 已注入商品信息到 prompt');
+    }
+
+    // 判断内容是否为图片 URL
+    function isImageUrl(str) {
+      if (!str || typeof str !== 'string') return false;
+      // 检测常见图片扩展名（包括 iPhone 的 .heic 格式）
+      if (/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|bmp|heic|heif)/i.test(str)) return true;
+      // 检测阿里云图片 CDN 域名
+      if (/^https?:\/\/(img\.alicdn\.com|gw\.alicdn\.com|ossgw\.alicdn\.com)/i.test(str)) return true;
+      return false;
+    }
+
+    // 从消息对象中提取图片 URL
+    function extractImageUrl(msg) {
+      // 1. 优先使用已解析的 imageUrl 字段
+      if (msg.imageUrl) return msg.imageUrl;
+      
+      // 2. 尝试从 content 解析 JSON 格式（历史消息可能未解析）
+      if (msg.content && typeof msg.content === 'string') {
+        try {
+          var parsed = JSON.parse(msg.content);
+          // 格式: {image: {pics: [{url: "..."}]}}
+          if (parsed.image && parsed.image.pics && parsed.image.pics.length > 0) {
+            return parsed.image.pics[0].url;
+          }
+          // 备用格式
+          if (parsed.url) return parsed.url;
+          if (parsed.imgUrl) return parsed.imgUrl;
+          if (parsed.imageUrl) return parsed.imageUrl;
+        } catch (e) {
+          // 解析失败，检测 content 本身是否为图片 URL
+          if (isImageUrl(msg.content)) return msg.content;
+        }
+      }
+      
+      // 3. 检测 content 本身是否为图片 URL
+      if (isImageUrl(msg.content)) return msg.content;
+      
+      return null;
+    }
+
+    // 转换单条消息为 OpenAI/DashScope 格式
+    function convertMessageToOpenAIFormat(msg) {
+      if (!msg || (!msg.content && !msg.imageUrl)) return null;
+
+      var role = (msg.direction === 'out') ? 'assistant' : 'user';
+      
+      // 提取图片 URL
+      var imgUrl = extractImageUrl(msg);
+      
+      // 判断是否为图片消息
+      var isImage = (msg.contentType === 2) || !!imgUrl;
+
+      // 图片消息：使用多模态格式（图片在前，文字在后）
+      if (isImage && imgUrl) {
+        return {
+          role: role,
+          content: [
+            { type: 'image_url', image_url: { url: imgUrl } },
+            { type: 'text', text: '结合这张图片，回答问题' }
+          ]
+        };
+      }
+
+      // 普通文本消息
+      return {
+        role: role,
+        content: msg.content
+      };
+    }
+
+    // 转换当前消息为 OpenAI/DashScope 格式
+    function convertCurrentMessageToOpenAIFormat(msg) {
+      // 提取图片 URL
+      var imgUrl = extractImageUrl(msg);
+      
+      // 判断是否为图片消息
+      var isImage = (msg.contentType === 2) || !!imgUrl;
+      
+      // 如果当前消息是图片，使用多模态格式
+      if (isImage && imgUrl) {
+        return [
+          { type: 'image_url', image_url: { url: imgUrl } },
+          { type: 'text', text: '用户发送了一张图片' }
+        ];
+      }
+      return msg.content;
+    }
+
+    // 构建完整的 messages 数组
+    var messages = [];
+
+    // 1. 添加 system 消息
+    messages.push({
+      role: 'system',
+      content: systemPrompt
+    });
+
+    // 2. 转换并添加历史消息
+    var convertedHistory = [];
+    historyMessages.forEach(function(msg) {
+      var converted = convertMessageToOpenAIFormat(msg);
+      if (converted) {
+        convertedHistory.push(converted);
+      }
+    });
+    messages = messages.concat(convertedHistory);
+
+    console.log(LOG_PREFIX, '📋 历史消息转换完成，共', convertedHistory.length, '条');
+
+    // 3. 确保当前消息在最后
+    var currentMsgContent = convertCurrentMessageToOpenAIFormat(currentMessage);
+    var lastMsg = convertedHistory.length > 0 ? convertedHistory[convertedHistory.length - 1] : null;
+
+    console.log(LOG_PREFIX, '📊 历史消息数:', convertedHistory.length);
+    console.log(LOG_PREFIX, '🔍 最后一条历史消息:', lastMsg ? (typeof lastMsg.content === 'string' ? lastMsg.content : '[多模态消息]') : '无');
+
+    // 去重：如果最后一条历史消息内容与当前消息相同，则不添加
+    var shouldAddCurrentMessage = true;
+    if (lastMsg) {
+      var lastContent = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
+      var currentContent = typeof currentMsgContent === 'string' ? currentMsgContent : JSON.stringify(currentMsgContent);
+      if (lastContent === currentContent) {
+        shouldAddCurrentMessage = false;
+      }
+    }
+
+    if (shouldAddCurrentMessage) {
+      messages.push({
+        role: 'user',
+        content: currentMsgContent
+      });
+    }
+
+    console.log(LOG_PREFIX, '💾 构建完整 messages 数组，共', messages.length, '条消息');
+
+    return messages;
+  }
+
+  /**
    * 获取历史聊天记录并调用 AI
    */
   function handleAiReply(message, rule) {
@@ -362,59 +532,30 @@
     Promise.all([historyPromise, goodsDetailPromise]).then(function(results) {
       var histResult = results[0];
       var goodsDetail = results[1];
-  
+
       var historyMessages = [];
-  
+
       if (histResult && histResult.success && histResult.messages) {
         // 按时间正序排列
         var sorted = histResult.messages.slice().sort(function (a, b) {
           return (a.createAt || 0) - (b.createAt || 0);
         });
-  
-        // 转换为 OpenAI messages 格式
-        sorted.forEach(function (msg) {
-          if (!msg.content) return;
-          var role = (msg.direction === 'out') ? 'assistant' : 'user';
-          historyMessages.push({
-            role: role,
-            content: msg.content
-          });
-        });
+        historyMessages = sorted;
       }
-  
-      // 确保当前消息在最后
-      var lastMsg = historyMessages[historyMessages.length - 1];
-      if (!lastMsg || lastMsg.content !== message.content) {
-        historyMessages.push({
-          role: 'user',
-          content: message.content
-        });
-      }
-  
-      // 构建 system prompt（注入商品信息）
-      var basePrompt = rule.prompt || '你是一个闲鱼卖家的客服助手，请根据聊天记录和用户的最新消息进行回复。回复要简洁、友好、专业。不要使用 markdown 格式。';
-        
-      // 如果有商品详情，注入到 prompt 中
-      if (goodsDetail) {
-        var goodsInfo = '\n\n【当前咨询商品】\n' +
 
-          '商品名称：' + goodsDetail.title + '\n' +
-          '**商品价格**：' + (goodsDetail.skuList && goodsDetail.skuList.length > 0 ? goodsDetail.skuList.map(function(s) { return (s.propertyText || '规格') + ': ' + '价格：'+(s.price + '元' || '未设置'); }).join('、') : (goodsDetail.price + '元'  || '未设置')) + '\n' +
-          '商品描述：' + (goodsDetail.description || '无详细描述') + '\n' +
-          '商品所在地：' + (goodsDetail.city || '未设置') + '\n' +
-          '请根据以上商品信息，严格以商品价格为准，专业地回答用户关于该商品的问题。';
-          
-        basePrompt += goodsInfo;
-        console.log(LOG_PREFIX, '📝 已注入商品信息到 prompt');
-      }
-  
-      // 构建完整 messages 数组
-      var aiMessages = [];
-      aiMessages.push({ role: 'system', content: basePrompt });
-      aiMessages = aiMessages.concat(historyMessages);
-  
+      // 调用 buildMessages 方法构造消息数组
+      var basePrompt = rule.prompt || '你是一个闲鱼卖家的客服助手，请根据聊天记录和用户的最新消息进行回复。回复要简洁、友好、专业。不要用markdown格式。用中文回答。';
+
+      var aiMessages = buildMessages({
+        historyMessages: historyMessages,
+        currentMessage: message,
+        basePrompt: basePrompt,
+        goodsDetail: goodsDetail
+      });
+
       console.log(LOG_PREFIX, '🤖 发送 AI 请求，messages 数:', aiMessages.length);
-  
+      console.log(LOG_PREFIX, '📨 完整 messages:', JSON.stringify(aiMessages, null, 2));
+
       // 通过 bus-isolated 转发到 background 调用 AI API
       return sendRequest('AI_CHAT_COMPLETION', {
         messages: aiMessages,

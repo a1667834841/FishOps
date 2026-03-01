@@ -839,17 +839,29 @@ document.addEventListener('DOMContentLoaded', function () {
     testAiResult.textContent = '测试中...';
     testAiResult.style.color = '#666';
 
+    // 测试多模态能力 - 发送一张图片让AI描述（图片在前，文字在后）
+    var testImageUrl = 'https://emoji.cdn.bcebos.com/yige-aigc/index_aigc/final/toolspics/0.png';
+
     chrome.runtime.sendMessage({
       type: 'AI_CHAT_COMPLETION',
       messages: [
-        { role: 'system', content: 'Reply with exactly: OK' },
-        { role: 'user', content: 'ping' }
+        { role: 'system', content: '你是一个能看懂图片的AI助手，请描述用户发送的图片内容。用中文回答。' },
+        { role: 'user', content: [
+          { type: 'image_url', image_url: { url: testImageUrl } },
+          { type: 'text', text: '请描述这张图片' }
+        ]}
       ],
       aiConfig: { aiApiKey: apiKey, aiBaseUrl: baseUrl, aiModel: model }
     }, function (response) {
       if (response && response.success) {
-        testAiResult.textContent = '✅ 连接成功 (' + (response.model || model) + ')';
+        testAiResult.textContent = '✅ 多模态连接成功 (' + (response.model || model) + ')';
         testAiResult.style.color = '#28a745';
+        // 显示图片分析结果
+        var desc = response.content || '';
+        if (desc.length > 50) {
+          desc = desc.substring(0, 50) + '...';
+        }
+        showToast('图片分析: ' + desc, 'success');
       } else {
         testAiResult.textContent = '❌ ' + (response && response.error || '未知错误');
         testAiResult.style.color = '#f44336';
