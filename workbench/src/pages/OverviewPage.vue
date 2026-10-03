@@ -1,542 +1,108 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { PhArrowClockwise as ArrowClockwise, PhArrowRight as ArrowRight, PhPackage as Package, PhChatCircle as ChatCircle, PhDownloadSimple as DownloadSimple, PhUploadSimple as UploadSimple, PhChartBar as ChartBar, PhGear as Gear, PhSpinnerGap as SpinnerGap, PhWarningCircle as WarningCircle } from '@phosphor-icons/vue'
 import PanelCard from '../components/PanelCard.vue'
 import StatusTag from '../components/StatusTag.vue'
+import { useBridgeController } from '../composables/useBridgeController'
 import type { PageId } from '../data/navigation'
-import {
-  demoActivities,
-  demoMetrics,
-  demoTasks,
-  flowStages,
-  quickActions,
-  taskStatusMeta,
-} from '../data/overview'
+import { OVERVIEW_EVENTS, OverviewController, overviewTasks, taskCounts, type OverviewSource, type OverviewState, type OverviewTask } from '../features/overview/overview-controller'
 
 const emit = defineEmits<{ navigate: [page: PageId] }>()
-
-/** 本次会话的真实启动时间，是活动列表里唯一的非演示条目。 */
-const sessionStartedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })
+const { state, controller } = useBridgeController<OverviewState, OverviewController>({
+  events: OVERVIEW_EVENTS, create: (api) => new OverviewController(api),
+})
+const counts = computed(() => taskCounts(state.value))
+const recent = computed(() => overviewTasks(state.value).slice(0, 8))
+const refreshing = computed(() => [state.value.products, state.value.conversations, state.value.tasks, state.value.publish].some((source) => source.loading))
+const metrics = computed(() => [
+  { label: '商品总数', value: state.value.products.value, source: state.value.products, icon: Package, target: 'products' as PageId },
+  { label: '未读会话', value: state.value.conversations.value, source: state.value.conversations, icon: ChatCircle, target: 'chat' as PageId },
+  { label: '运行中任务', value: counts.value?.running ?? null, source: taskSource(), icon: SpinnerGap, target: 'collect' as PageId },
+  { label: '失败任务', value: counts.value?.failed ?? null, source: taskSource(), icon: WarningCircle, target: 'collect' as PageId },
+])
+function taskSource(): OverviewSource<unknown> {
+  const { tasks, publish } = state.value
+  return { value: counts.value, loading: tasks.loading || publish.loading, error: tasks.error ?? publish.error,
+    updatedAt: tasks.updatedAt && publish.updatedAt ? Math.min(tasks.updatedAt, publish.updatedAt) : null }
+}
+function updated(source: OverviewSource<unknown>): string {
+  if (source.loading) return source.value === null ? '正在读取' : '正在更新'
+  if (!source.updatedAt) return source.error ? '读取失败，可刷新重试' : '连接扩展后显示'
+  return `${source.error ? '刷新失败 · ' : ''}${new Date(source.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 更新`
+}
+const actions = [
+  { label: '数据采集', target: 'collect' as PageId, icon: DownloadSimple },
+  { label: '聊天中心', target: 'chat' as PageId, icon: ChatCircle },
+  { label: '商品库', target: 'products' as PageId, icon: Package },
+  { label: '发布中心', target: 'publish' as PageId, icon: UploadSimple },
+  { label: '数据分析', target: 'analytics' as PageId, icon: ChartBar },
+  { label: '设置', target: 'settings' as PageId, icon: Gear },
+]
+const statusLabels: Record<string, string> = { pending: '等待执行', running: '运行中', paused: '已暂停', completed: '已完成', failed: '失败', cancelled: '已取消', waiting_confirmation: '待确认' }
+function taskName(task: OverviewTask): string {
+  const keyword = (task.payload as Record<string, unknown>)?.keyword
+  const title = (task.result as { item?: { title?: string } } | undefined)?.item?.title
+  return title || (typeof keyword === 'string' && keyword) || `${task.type === 'capture' ? '采集' : task.type === 'publish' ? '发布' : '分析'}任务`
+}
+function taskTarget(task: OverviewTask): PageId { return task.type === 'capture' ? 'collect' : task.type === 'publish' ? 'publish' : 'analytics' }
+function taskTime(time: number): string { return new Date(time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
 </script>
 
 <template>
   <div class="page overview">
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="hero__main">
-        <p class="hero__eyebrow">今日运营</p>
-        <h2 id="hero-title" class="hero__title">把采集、对话和发布放在一个工作台里</h2>
-        <p class="hero__text">
-          从闲鱼采集商品数据，在聊天中心集中跟进买家，经发布中心整理上架，再用分析复盘价格与咨询。各模块正在按阶段接入，未接入的部分会明确标注。
-        </p>
-        <div class="row hero__actions">
-          <button type="button" class="btn btn--primary" @click="emit('navigate', 'collect')">开始采集</button>
-          <button type="button" class="btn" @click="emit('navigate', 'chat')">打开聊天</button>
-        </div>
-      </div>
-
-      <div class="hero__flow">
-        <h3 class="hero__flow-title">模块接入进度</h3>
-        <ol class="flow">
-          <li v-for="(stage, index) in flowStages" :key="stage.id" class="flow__item">
-            <span class="flow__index" aria-hidden="true">{{ index + 1 }}</span>
-            <span class="flow__text">
-              <span class="flow__label">{{ stage.label }}</span>
-              <span class="flow__note">{{ stage.note }}</span>
-            </span>
-            <StatusTag :tone="stage.tone">{{ stage.status }}</StatusTag>
-          </li>
-        </ol>
-      </div>
-    </section>
-
-    <section aria-labelledby="metrics-title">
-      <div class="section-head">
-        <h2 id="metrics-title" class="section-head__title">今日摘要</h2>
-        <StatusTag tone="warn">演示数据</StatusTag>
-        <p class="section-head__note">数值仅用于预览布局，不代表真实线上数据。</p>
-      </div>
-      <ul class="metrics">
-        <li v-for="metric in demoMetrics" :key="metric.id">
-          <button type="button" class="metric" @click="emit('navigate', metric.target)">
-            <span class="metric__label">{{ metric.label }}</span>
-            <span class="metric__value">
-              {{ metric.value }}<span class="metric__unit">{{ metric.unit }}</span>
-            </span>
-            <span class="metric__hint">{{ metric.hint }}</span>
-            <span class="metric__demo">示例</span>
-          </button>
-        </li>
-      </ul>
-    </section>
-
-    <div class="split">
-      <PanelCard title="任务状态" description="各模块当前的后台任务">
-        <template #actions>
-          <StatusTag tone="warn">演示数据</StatusTag>
-        </template>
-        <ul class="tasks">
-          <li v-for="task in demoTasks" :key="task.id" class="task">
-            <div class="task__top">
-              <div class="task__name">
-                <span class="task__title">{{ task.name }}</span>
-                <span class="task__detail">{{ task.detail }}</span>
-              </div>
-              <StatusTag
-                :tone="taskStatusMeta[task.status].tone"
-                :dot="task.status === 'running'"
-                :pulse="task.status === 'running'"
-              >
-                {{ taskStatusMeta[task.status].label }}
-              </StatusTag>
-            </div>
-            <div class="task__bar">
-              <div
-                class="progress"
-                role="progressbar"
-                :aria-label="`${task.name}进度（示例）`"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                :aria-valuenow="task.progress"
-              >
-                <span
-                  class="progress__fill"
-                  :class="`progress__fill--${taskStatusMeta[task.status].tone}`"
-                  :style="{ width: `${task.progress}%` }"
-                ></span>
-              </div>
-              <span class="task__pct">{{ task.progress }}%</span>
-            </div>
-          </li>
-        </ul>
-      </PanelCard>
-
-      <PanelCard title="快捷操作" description="常用入口，直接跳转到对应模块">
-        <ul class="actions">
-          <li v-for="action in quickActions" :key="action.id">
-            <button
-              type="button"
-              class="action"
-              :class="{ 'action--primary': action.primary }"
-              @click="emit('navigate', action.target)"
-            >
-              <span class="action__label">{{ action.label }}</span>
-              <span class="action__desc">{{ action.description }}</span>
-              <span class="action__arrow" aria-hidden="true">›</span>
-            </button>
-          </li>
-        </ul>
-      </PanelCard>
+    <div class="overview-toolbar">
+      <span class="muted">当前存储数据</span>
+      <button class="btn" type="button" title="刷新概览" aria-label="刷新概览" :disabled="refreshing || state.availability === 'unavailable'" @click="controller.refresh()"><ArrowClockwise :size="18" /></button>
     </div>
-
-    <PanelCard title="最近活动" description="按时间倒序">
-      <template #actions>
-        <StatusTag tone="warn">示例</StatusTag>
-      </template>
-      <ul class="activity">
-        <li class="activity__item">
-          <span class="activity__time">{{ sessionStartedAt }}</span>
-          <StatusTag tone="ok">本次会话</StatusTag>
-          <span class="activity__text">工作台已加载，可在顶部栏查看扩展连接状态</span>
-        </li>
-        <li v-for="item in demoActivities" :key="item.id" class="activity__item">
-          <span class="activity__time">{{ item.time }}</span>
-          <StatusTag>{{ item.module }}</StatusTag>
-          <span class="activity__text">{{ item.text }}</span>
-        </li>
-      </ul>
+    <div class="metrics">
+      <button v-for="metric in metrics" :key="metric.label" type="button" class="metric" @click="emit('navigate', metric.target)">
+        <span class="metric__label"><component :is="metric.icon" :size="18" />{{ metric.label }}</span>
+        <span class="metric__value" :class="{ 'metric__value--empty': metric.value === null }">{{ metric.value === null ? (metric.source.loading ? '—' : '暂不可用') : metric.value.toLocaleString('zh-CN') }}</span>
+        <span class="metric__hint" :title="metric.source.error?.title">{{ updated(metric.source) }}</span>
+      </button>
+    </div>
+    <p v-if="state.realtimeError" class="muted" role="status">{{ state.realtimeError }}</p>
+    <PanelCard title="近期任务">
+      <div class="table-wrap" v-if="recent.length">
+        <table class="overview-table">
+          <thead><tr><th>任务</th><th>类型</th><th>状态</th><th>更新于</th><th><span class="sr-only">操作</span></th></tr></thead>
+          <tbody><tr v-for="task in recent" :key="`${task.type}:${task.id}`">
+            <td class="task-title">{{ taskName(task) }}</td><td>{{ task.type === 'capture' ? '采集' : task.type === 'publish' ? '发布' : '分析' }}</td>
+            <td><StatusTag :tone="task.status === 'failed' ? 'error' : task.status === 'completed' ? 'ok' : task.status === 'running' ? 'accent' : 'neutral'">{{ statusLabels[task.status] ?? task.status }}</StatusTag></td>
+            <td class="muted">{{ taskTime(task.updatedAt) }}</td><td><button class="btn btn--sm" type="button" :aria-label="`查看${taskName(task)}`" title="查看任务" @click="emit('navigate', taskTarget(task))"><ArrowRight :size="16" /></button></td>
+          </tr></tbody>
+        </table>
+      </div>
+      <div v-else class="overview-empty">{{ state.tasks.loading || state.publish.loading ? '正在读取任务…' : state.availability === 'unavailable' ? '连接扩展后查看近期任务' : state.tasks.error || state.publish.error ? '任务暂不可用，请刷新重试' : '暂无任务' }}</div>
+      <p v-if="recent.length && (state.tasks.error || state.publish.error)" class="muted task-warning">部分任务读取失败，已保留可用记录。</p>
+    </PanelCard>
+    <PanelCard title="常用入口">
+      <div class="quick-actions"><button v-for="action in actions" :key="action.target" class="quick-action" type="button" @click="emit('navigate', action.target)"><component :is="action.icon" :size="20" /><span>{{ action.label }}</span><ArrowRight :size="16" class="quick-action__arrow" /></button></div>
     </PanelCard>
   </div>
 </template>
 
 <style scoped>
-.hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 1fr);
-  gap: 24px;
-  padding: 22px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-panel);
-}
-
-.hero__eyebrow {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent-text);
-}
-
-.hero__title {
-  margin-top: 4px;
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1.35;
-}
-
-.hero__text {
-  max-width: 52ch;
-  margin-top: 8px;
-  color: var(--text-muted);
-}
-
-.hero__actions {
-  margin-top: 16px;
-}
-
-.hero__flow {
-  padding: 14px 16px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-}
-
-.hero__flow-title {
-  margin-bottom: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.flow {
-  display: grid;
-}
-
-.flow__item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-}
-
-.flow__item + .flow__item {
-  border-top: 1px solid var(--border);
-}
-
-.flow__index {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 22px;
-  height: 22px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: var(--radius-tag);
-  border: 1px solid var(--border-strong);
-  color: var(--text-muted);
-}
-
-.flow__text {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-}
-
-.flow__label {
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.flow__note {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.section-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 10px;
-  margin-bottom: 10px;
-}
-
-.section-head__title {
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.section-head__note {
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
-.metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.metric {
-  position: relative;
-  display: grid;
-  gap: 2px;
-  width: 100%;
-  height: 100%;
-  padding: 14px 16px;
-  text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-panel);
-  cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-
-.metric:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface));
-}
-
-.metric:active {
-  transform: translateY(1px);
-}
-
-.metric__label {
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
-.metric__value {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.25;
-  font-variant-numeric: tabular-nums;
-}
-
-.metric__unit {
-  margin-left: 3px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-.metric__hint {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.metric__demo {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  padding: 1px 6px;
-  font-size: 11px;
-  border-radius: var(--radius-tag);
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-
-.split {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
-}
-
-.tasks {
-  display: grid;
-}
-
-.task {
-  display: grid;
-  gap: 8px;
-  padding: 12px 0;
-}
-
-.task:first-child {
-  padding-top: 0;
-}
-
-.task:last-child {
-  padding-bottom: 0;
-}
-
-.task + .task {
-  border-top: 1px solid var(--border);
-}
-
-.task__top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.task__name {
-  display: grid;
-  min-width: 0;
-}
-
-.task__title {
-  font-weight: 600;
-}
-
-.task__detail {
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
-.task__bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.progress {
-  flex: 1;
-  height: 6px;
-  overflow: hidden;
-  border-radius: 3px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-}
-
-.progress__fill {
-  display: block;
-  height: 100%;
-  background: var(--text-muted);
-  transition: width 0.4s ease;
-}
-
-.progress__fill--accent {
-  background: var(--accent);
-}
-
-.progress__fill--ok {
-  background: var(--ok);
-}
-
-.progress__fill--info {
-  background: var(--info);
-}
-
-.task__pct {
-  width: 36px;
-  font-size: 12px;
-  text-align: right;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.actions {
-  display: grid;
-  gap: 8px;
-}
-
-.action {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-areas:
-    "label arrow"
-    "desc arrow";
-  align-items: center;
-  column-gap: 12px;
-  width: 100%;
-  padding: 10px 14px;
-  text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
-  cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
-}
-
-.action:hover {
-  background: var(--surface-sunken);
-}
-
-.action:active {
-  transform: translateY(1px);
-}
-
-.action--primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-
-.action--primary:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
-
-.action--primary:active {
-  background: var(--accent-active);
-}
-
-.action__label {
-  grid-area: label;
-  font-weight: 600;
-}
-
-.action__desc {
-  grid-area: desc;
-  font-size: 12.5px;
-  opacity: 0.75;
-}
-
-.action__arrow {
-  grid-area: arrow;
-  font-size: 20px;
-  line-height: 1;
-  opacity: 0.6;
-}
-
-.activity__item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 0;
-}
-
-.activity__item:first-child {
-  padding-top: 0;
-}
-
-.activity__item:last-child {
-  padding-bottom: 0;
-}
-
-.activity__item + .activity__item {
-  border-top: 1px solid var(--border);
-}
-
-.activity__time {
-  flex: none;
-  width: 44px;
-  font-size: 12.5px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.activity__text {
-  min-width: 0;
-}
-
-@media (max-width: 1179px) {
-  .metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 1099px) {
-  .hero,
-  .split {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 599px) {
-  .hero {
-    padding: 16px;
-  }
-
-  .metrics {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .activity__item {
-    flex-wrap: wrap;
-    gap: 4px 10px;
-  }
-
-  .activity__text {
-    flex-basis: 100%;
-  }
-}
+.overview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.metric { display: grid; gap: 8px; text-align: left; padding: 18px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel); cursor: pointer; }
+.metric:hover { border-color: var(--accent); }
+.metric__label { display: flex; align-items: center; gap: 8px; color: var(--text-muted); }
+.metric__value { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.metric__value--empty { font-size: 20px; color: var(--text-muted); }
+.metric__hint { font-size: 12px; color: var(--text-muted); }
+.table-wrap { overflow-x: auto; }
+.overview-table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+.overview-table th { font-size: 12px; font-weight: 500; color: var(--text-muted); padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.overview-table td { padding: 12px; border-bottom: 1px solid var(--border); }
+.overview-table tbody tr:last-child td { border-bottom: 0; }
+.task-title { max-width: 360px; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.overview-empty { padding: 44px 16px; text-align: center; color: var(--text-muted); }
+.task-warning { margin-top: 12px; font-size: 12px; }
+.quick-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.quick-action { display: flex; align-items: center; gap: 10px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); cursor: pointer; text-align: left; }
+.quick-action:hover { background: var(--surface-sunken); }
+.quick-action__arrow { margin-left: auto; color: var(--text-muted); }
+@media (max-width: 1100px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .quick-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric { padding: 14px; } .metric__value { font-size: 26px; } .metric__value--empty { font-size: 18px; } }
 </style>
