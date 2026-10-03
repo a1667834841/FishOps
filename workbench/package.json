@@ -1,0 +1,25 @@
+{
+  "name": "@fishops/workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FishOps Workbench 前端工作台（Vue 3 + Vite + TypeScript）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "test": "node --import ./src/features/chat/test/register.mjs --test src/features/*/test/*.test.ts"
+  },
+  "dependencies": {
+    "@fishops/shared": "*",
+    "vue": "^3.5.43"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.4",
+    "@types/node": "^26.6.3",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.2",
+    "vue-tsc": "^3.3.11"
+  }
+}

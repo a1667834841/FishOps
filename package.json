@@ -1,0 +1,32 @@
+{
+  "name": "fishops-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FishOps Workbench —— Vue 3 工作台 + MV3 扩展运行时（P1：工程骨架与 Bridge）",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "extension",
+    "workbench"
+  ],
+  "scripts": {
+    "clean": "rm -rf extension/dist workbench/dist",
+    "typecheck": "npm run typecheck --workspace @fishops/shared && npm run typecheck --workspace @fishops/extension && npm run typecheck --workspace @fishops/workbench",
+    "build:extension": "npm run build --workspace @fishops/extension",
+    "build:workbench": "npm run build --workspace @fishops/workbench",
+    "build": "npm run clean && npm run build:extension && npm run build:workbench",
+    "dev:workbench": "npm run dev --workspace @fishops/workbench",
+    "test:smoke": "node scripts/smoke.mjs",
+    "test:background": "npm run test:background --workspace @fishops/extension",
+    "test:sw-startup": "node scripts/service-worker-startup.mjs",
+    "test:chat": "npm run test:chat --workspace @fishops/extension",
+    "test:capture": "npm run test:capture --workspace @fishops/extension",
+    "test:capture:smoke": "npm run test:capture:smoke --workspace @fishops/extension",
+    "test:analysis": "npm run test:analysis --workspace @fishops/extension",
+    "test:publish": "npm run test:publish --workspace @fishops/extension",
+    "test:security": "node scripts/review-security.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

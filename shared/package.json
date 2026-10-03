@@ -1,0 +1,19 @@
+{
+  "name": "@fishops/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Workbench 与 Extension 共享的通信协议类型、校验与序列化",
+  "exports": {
+    ".": "./events/index.ts",
+    "./events": "./events/index.ts",
+    "./publish": "./publish/index.ts"
+  },
+  "types": "./events/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

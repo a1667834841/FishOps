@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>闲鱼数据采集</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 340px;
+      margin: 0;
+      font-family: 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      color: #1a1a1a;
+      background: #f4f5f7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app {
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 16px;
+      margin: 0;
+      box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 12px 32px rgba(15,23,42,.08);
+    }
+
+    /* ===== 头部 ===== */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-logo {
+      display: inline-flex;
+      width: 26px; height: 26px;
+      align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #ffe60f, #ffd000);
+      color: #1a1a1a;
+      border-radius: 8px;
+      flex-shrink: 0;
+    }
+
+    .brand-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1a1a1a;
+      letter-spacing: .2px;
+    }
+
+    .ver {
+      font-size: 10px;
+      font-weight: 500;
+      color: #b8860b;
+      background: #fff8e1;
+      padding: 2px 7px;
+      border-radius: 10px;
+      white-space: nowrap;
+    }
+
+    /* ===== 状态栏 ===== */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #fffdf2;
+      border: 1px solid #ffe60f;
+      border-radius: 9px;
+      padding: 8px 11px;
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 11px;
+      position: relative;
+    }
+
+    .status-text {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #34c759;
+      box-shadow: 0 0 0 3px rgba(52,199,89,.16);
+      flex-shrink: 0;
+    }
+
+    .status-text b {
+      color: #1a1a1a;
+      font-weight: 600;
+    }
+
+    .status-text .idle {
+      color: #c2c6cc;
+    }
+
+    .more-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .more-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px; height: 26px;
+      border: none;
+      background: none;
+      color: #b8860b;
+      cursor: pointer;
+      border-radius: 6px;
+      padding: 0;
+    }
+
+    .more-btn:hover {
+      background: rgba(0,0,0,.05);
+    }
+
+    .more-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      margin-top: 4px;
+      background: #ffffff;
+      border: 1px solid #eef0f3;
+      border-radius: 9px;
+      box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 12px 32px rgba(15,23,42,.08);
+      min-width: 130px;
+      z-index: 100;
+      padding: 4px 0;
+      overflow: hidden;
+    }
+
+    .more-menu.open { display: block; }
+
+    .more-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 8px 14px;
+      border: none;
+      background: none;
+      font-size: 12px;
+      color: #1a1a1a;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+
+    .more-menu-item:hover { background: #f5f6f8; }
+
+    .more-menu-item.danger { color: #f44336; }
+
+    /* ===== 采集行 ===== */
+    .crawl-row {
+      display: flex;
+      gap: 7px;
+      margin-bottom: 11px;
+    }
+
+    .input-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: #fafbfc;
+      border: 1px solid #eef0f3;
+      border-radius: 9px;
+      padding: 0 11px;
+      height: 36px;
+      transition: border-color .15s;
+    }
+
+    .input-wrap:focus-within {
+      border-color: #ffe60f;
+      background: #ffffff;
+    }
+
+    .input-icon {
+      color: #c2c6cc;
+      flex-shrink: 0;
+    }
+
+    .input-wrap input {
+      flex: 1;
+      border: none;
+      background: none;
+      outline: none;
+      font-size: 12px;
+      color: #1a1a1a;
+      font-family: inherit;
+    }
+
+    .input-wrap input::placeholder { color: #c2c6cc; }
+
+    /* ===== 按钮 ===== */
+    .btn {
+      font-family: inherit;
+      cursor: pointer;
+      border: none;
+      border-radius: 9px;
+      font-size: 12px;
+      white-space: nowrap;
+      transition: all .15s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .btn-start {
+      background: linear-gradient(135deg, #ffe60f, #ffd000);
+      color: #1a1a1a;
+      padding: 0 18px;
+      height: 36px;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 2px 6px rgba(255,210,0,.4);
+    }
+
+    .btn-start:hover {
+      box-shadow: 0 4px 12px rgba(255,210,0,.5);
+      transform: translateY(-1px);
+    }
+
+    .btn-start.crawling {
+      background: #1f1f1f;
+      color: #ffe60f;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
+    }
+
+    .btn-start.crawling:hover {
+      background: #2a2a2a;
+      box-shadow: 0 4px 12px rgba(0,0,0,.3);
+      transform: translateY(-1px);
+    }
+
+    .btn-export {
+      background: linear-gradient(135deg, #ffe60f, #ffd000);
+      color: #1a1a1a;
+      flex: 1;
+      height: 36px;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 2px 6px rgba(255,210,0,.4);
+    }
+
+    .btn-export:hover {
+      box-shadow: 0 4px 12px rgba(255,210,0,.5);
+      transform: translateY(-1px);
+    }
+
+    .btn-export.loading {
+      background: #f0f1f4;
+      color: #9aa0a6;
+      box-shadow: none;
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .btn-ghost {
+      background: #ffffff;
+      border: 1px solid #eef0f3;
+      color: #6b7280;
+      height: 36px;
+      padding: 0 13px;
+    }
+
+    .btn-ghost:hover {
+      background: #f5f6f8;
+      border-color: #d0d3d8;
+    }
+
+    .btn-ghost.loading {
+      color: #9aa0a6;
+      cursor: default;
+      pointer-events: none;
+    }
+
+    /* ===== 结果区 ===== */
+    .result-area {
+      display: flex;
+      gap: 7px;
+    }
+
+    .result-area > .btn-export { flex: 1; }
+
+    .result-area > .btn-ghost { flex: 0; }
+
+    .result-hint {
+      font-size: 10px;
+      color: #c2c6cc;
+      margin-bottom: 7px;
+    }
+
+    /* ===== 流量词 ===== */
+    .suggest {
+      margin-top: 10px;
+      display: none;
+    }
+
+    .suggest-head {
+      font-size: 11px;
+      color: #9aa0a6;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .suggest-tip {
+      font-size: 10px;
+      color: #c2c6cc;
+    }
+
+    .suggest-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      cursor: pointer;
+    }
+
+    .suggest-word-tag {
+      font-size: 11px;
+      padding: 3px 8px;
+      background: #fff8e1;
+      color: #b8860b;
+      border-radius: 8px;
+      white-space: nowrap;
+      font-weight: 500;
+      transition: background .15s;
+    }
+
+    .suggest-word-tag:hover {
+      background: #ffe60f;
+      color: #1a1a1a;
+    }
+
+    .suggest-word-more {
+      font-size: 11px;
+      padding: 3px 8px;
+      background: #f0f1f4;
+      color: #9aa0a6;
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+
+    .suggest-list:hover .suggest-word-more {
+      background: #ffe60f;
+      color: #1a1a1a;
+    }
+
+    /* ===== 飞书状态 ===== */
+    .feishu-status {
+      margin-top: 8px;
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      line-height: 1.4;
+      display: none;
+      background: #f0f1f4;
+      color: #6b7280;
+    }
+
+    /* ===== Toast ===== */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #1f1f1f;
+      color: #ffffff;
+      padding: 8px 16px;
+      border-radius: 9px;
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 9999;
+      white-space: nowrap;
+      transition: all .25s ease;
+      box-shadow: 0 4px 16px rgba(0,0,0,.15);
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .toast.warning { background: #fff3e0; color: #e65100; }
+    .toast.error { background: #ffebee; color: #c62828; }
+    .toast.success { background: #e8f5e9; color: #2e7d32; }
+
+    /* ===== 确认对话框 ===== */
+    .confirm-dialog {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.3);
+      align-items: center;
+      justify-content: center;
+      z-index: 9998;
+    }
+
+    .confirm-dialog.show { display: flex; }
+
+    .confirm-box {
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 20px;
+      width: 280px;
+      box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 12px 32px rgba(15,23,42,.12);
+      text-align: center;
+    }
+
+    .confirm-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 8px;
+    }
+
+    .confirm-message {
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    .confirm-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+
+    .confirm-actions .btn {
+      padding: 0 20px;
+      height: 34px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- 内联 SVG 图标 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-fish" viewBox="0 0 24 24">
+      <path d="M6.5 12c0-2.2 2.5-4 5.5-4s5.5 1.8 5.5 4-2.5 4-5.5 4-5.5-1.8-5.5-4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+      <path d="M17.5 12l3.5-2.5v5L17.5 12z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+      <circle cx="9" cy="11" r=".6" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M21 21l-4.3-4.3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-download" viewBox="0 0 24 24">
+      <path d="M12 3v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-send" viewBox="0 0 24 24">
+      <path d="M22 2L11 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <path d="M22 2l-7 20-4-9-9-4 20-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-more" viewBox="0 0 24 24">
+      <circle cx="5" cy="12" r="1.6" fill="currentColor"/>
+      <circle cx="12" cy="12" r="1.6" fill="currentColor"/>
+      <circle cx="19" cy="12" r="1.6" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    </symbol>
+  </defs>
+</svg>
+
+<!-- 主体 -->
+<div class="app">
+
+  <!-- 头部 -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand-logo"><svg width="15" height="15"><use href="#i-fish"/></svg></span>
+      <span class="brand-name">闲鱼数据采集</span>
+    </div>
+    <span class="ver">v1.7.0</span>
+  </header>
+
+  <!-- 状态栏 + ⋯ 更多 -->
+  <div class="status-bar">
+    <span class="status-text"><span class="dot"></span><span id="statusText">输入关键词，点开始采集</span></span>
+    <div class="more-wrap">
+      <button id="moreBtn" class="more-btn" aria-label="更多"><svg width="16" height="16"><use href="#i-more"/></svg></button>
+      <div id="moreMenu" class="more-menu">
+        <button id="openConfig" class="more-menu-item"><svg width="14" height="14"><use href="#i-gear"/></svg>配置中心</button>
+        <button id="clearData" class="more-menu-item danger"><svg width="14" height="14"><use href="#i-more"/></svg>清空数据</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 采集行 -->
+  <div class="crawl-row">
+    <div class="input-wrap">
+      <svg class="input-icon" width="14" height="14"><use href="#i-search"/></svg>
+      <input id="keywordInput" type="text" placeholder="输入关键词..." autocomplete="off">
+    </div>
+    <button id="startCrawl" class="btn btn-start">开始</button>
+  </div>
+
+  <!-- 结果区：采集到数据后显示 -->
+  <div id="resultArea" class="result-area" style="display:none;">
+    <button id="exportCSV" class="btn btn-export"><svg width="14" height="14"><use href="#i-download"/></svg>导出 CSV</button>
+    <button id="sendFeishu" class="btn btn-ghost">飞书</button>
+  </div>
+
+  <!-- 流量词 -->
+  <div id="suggestWordsContainer" class="suggest">
+    <div class="suggest-head">流量词 <span class="suggest-tip">点击复制全部</span></div>
+    <div id="suggestWordsList" class="suggest-list"></div>
+    <textarea id="suggestWordsHidden" style="position:absolute;left:-9999px;"></textarea>
+  </div>
+
+  <!-- 飞书状态 -->
+  <div id="feishuStatus" class="feishu-status"><span id="feishuStatusText"></span></div>
+
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<!-- 确认对话框 -->
+<div id="confirmDialog" class="confirm-dialog">
+  <div class="confirm-box">
+    <div id="confirmTitle" class="confirm-title"></div>
+    <div id="confirmMessage" class="confirm-message"></div>
+    <div class="confirm-actions">
+      <button id="confirmCancel" class="btn btn-ghost">取消</button>
+      <button id="confirmOk" class="btn btn-start">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>

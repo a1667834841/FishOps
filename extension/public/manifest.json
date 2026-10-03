@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "FishOps Workbench (P1)",
+  "version": "0.1.0",
+  "description": "FishOps Workbench 工程骨架与 Bridge：验证 Workbench ↔ Extension 通信链路。",
+  "permissions": ["storage", "scripting", "tabs"],
+  "host_permissions": [
+    "https://www.goofish.com/*",
+    "https://open.feishu.cn/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.goofish.com/*"],
+      "js": ["content/isolated-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.goofish.com/*"],
+      "js": ["content/main-world-bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.goofish.com/*"],
+      "js": ["content/platform-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.goofish.com/*"],
+      "js": ["content/chat-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "action": {
+    "default_title": "打开 FishOps Workbench"
+  }
+}

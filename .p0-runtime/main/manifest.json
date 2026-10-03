@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "闲鱼数据采集助手",
+  "version": "1.7.0",
+  "description": "闲鱼商品数据采集Chrome插件",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://h5api.m.goofish.com/*",
+    "https://www.goofish.com/*",
+    "https://open.feishu.cn/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://www.goofish.com/*"],
+      "js": ["message-bus-content.js", "content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.goofish.com/*"],
+      "js": ["message-bus-main.js", "xianyu-api.js", "inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.goofish.com/item*"],
+      "js": ["item-download.js"],
+      "css": ["item-download.css"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["https://www.goofish.com/publish*"],
+      "js": ["publish-helper.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

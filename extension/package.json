@@ -1,0 +1,31 @@
+{
+  "name": "@fishops/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FishOps Workbench 的 MV3 扩展运行时（background / content bridge）",
+  "scripts": {
+    "build:background": "ENTRY=background vite build",
+    "build:content-isolated": "ENTRY=content-isolated vite build",
+    "build:content-main": "ENTRY=content-main vite build",
+    "build:content-platform": "ENTRY=content-platform vite build",
+    "build:content-chat": "ENTRY=content-chat vite build",
+    "build": "npm run build:background && npm run build:content-isolated && npm run build:content-main && npm run build:content-platform && npm run build:content-chat",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:background": "node --import ./src/background/__tests__/register.mjs --test src/background/__tests__/*.test.ts",
+    "test:chat": "node --import ./src/chat/test/register.mjs --test src/chat/test/*.test.ts",
+    "test:capture": "node --import ./src/capture/test/register.mjs --test src/capture/test/*.test.ts",
+    "test:capture:smoke": "node ../scripts/capture-smoke.mjs",
+    "test:analysis": "node --import ./src/analysis/test/register.mjs --test src/analysis/test/*.test.ts",
+    "test:publish": "node --import ./src/background/__tests__/register.mjs --test src/publish/test/*.test.ts"
+  },
+  "dependencies": {
+    "@fishops/shared": "*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.4",
+    "@types/node": "^26.6.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.2"
+  }
+}

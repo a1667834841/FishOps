@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["chrome", "node"],
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@fishops/shared": ["../shared/events/index.ts"]
+    }
+  },
+  "include": ["src", "bridge", "vite.config.ts"]
+}

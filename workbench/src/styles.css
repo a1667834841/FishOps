@@ -1,0 +1,345 @@
+/*
+ * FishOps Workbench 全局样式。
+ *
+ * 结构：语义 token（浅色 / 深色）→ 基础重置 → 通用控件（按钮、输入框）→ 工具类。
+ * 深色模式规则：
+ *   - 默认跟随系统（prefers-color-scheme）。
+ *   - 用户手动选择时在 <html> 上写入 data-theme="light|dark"，优先级高于系统设置。
+ */
+
+:root {
+  /* 工作区 */
+  --bg: #f7f5f1;
+  --surface: #ffffff;
+  --surface-sunken: #f1eee8;
+  --border: #e5e0d6;
+  --border-strong: #d2cbbd;
+  --text: #1e2430;
+  --text-muted: #626977;
+
+  /* 单一强调色：琥珀橙。实心底色上使用深色文字以保证对比度。 */
+  --accent: #f59e0b;
+  --accent-hover: #e08e06;
+  --accent-active: #c97d04;
+  --on-accent: #1b1405;
+  --accent-text: #a14a08;
+  --accent-soft: #fdefd3;
+
+  /* 语义状态色 */
+  --ok: #15803d;
+  --ok-soft: #e4f4ea;
+  --info: #3a5a9b;
+  --info-soft: #e6edf9;
+  --warn: #9a5a06;
+  --warn-soft: #fbf0d9;
+  --error: #b42318;
+  --error-soft: #fdeceb;
+
+  /* 侧栏：深墨蓝 */
+  --sidebar-bg: #111a2d;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-text: #c5cddc;
+  --sidebar-muted: #8793aa;
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-active: rgba(255, 255, 255, 0.1);
+
+  --focus: #2f6fdb;
+  --scrim: rgba(12, 18, 32, 0.45);
+  --shadow-drawer: -12px 0 32px rgba(12, 18, 32, 0.18);
+
+  /* 形状规则：面板 14px，控件 9px，标签 5px */
+  --radius-panel: 14px;
+  --radius-control: 9px;
+  --radius-tag: 5px;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sidebar-width: 248px;
+
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--text);
+}
+
+/* 深色 token 在两处声明：系统深色（未手动指定）与手动深色。修改时需同步。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e131f;
+    --surface: #161c2b;
+    --surface-sunken: #111726;
+    --border: #272f44;
+    --border-strong: #38425c;
+    --text: #e8ebf2;
+    --text-muted: #9ba4b7;
+
+    --accent: #fbbf24;
+    --accent-hover: #f5b014;
+    --accent-active: #e4a00c;
+    --on-accent: #1b1405;
+    --accent-text: #fbbf24;
+    --accent-soft: rgba(251, 191, 36, 0.14);
+
+    --ok: #4ade80;
+    --ok-soft: rgba(74, 222, 128, 0.13);
+    --info: #8fb0f5;
+    --info-soft: rgba(143, 176, 245, 0.14);
+    --warn: #f2b84b;
+    --warn-soft: rgba(242, 184, 75, 0.13);
+    --error: #ff8a80;
+    --error-soft: rgba(255, 138, 128, 0.13);
+
+    --sidebar-bg: #0a1020;
+    --sidebar-border: rgba(255, 255, 255, 0.08);
+
+    --focus: #7aa7ff;
+    --scrim: rgba(0, 0, 0, 0.6);
+    --shadow-drawer: -12px 0 32px rgba(0, 0, 0, 0.5);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0e131f;
+  --surface: #161c2b;
+  --surface-sunken: #111726;
+  --border: #272f44;
+  --border-strong: #38425c;
+  --text: #e8ebf2;
+  --text-muted: #9ba4b7;
+
+  --accent: #fbbf24;
+  --accent-hover: #f5b014;
+  --accent-active: #e4a00c;
+  --on-accent: #1b1405;
+  --accent-text: #fbbf24;
+  --accent-soft: rgba(251, 191, 36, 0.14);
+
+  --ok: #4ade80;
+  --ok-soft: rgba(74, 222, 128, 0.13);
+  --info: #8fb0f5;
+  --info-soft: rgba(143, 176, 245, 0.14);
+  --warn: #f2b84b;
+  --warn-soft: rgba(242, 184, 75, 0.13);
+  --error: #ff8a80;
+  --error-soft: rgba(255, 138, 128, 0.13);
+
+  --sidebar-bg: #0a1020;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+
+  --focus: #7aa7ff;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-drawer: -12px 0 32px rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+dl,
+dd {
+  margin: 0;
+}
+
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0 5px;
+  border-radius: var(--radius-tag);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---------- 通用控件 ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn--primary:active:not(:disabled) {
+  background: var(--accent-active);
+  border-color: var(--accent-active);
+}
+
+.btn--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.btn--sm {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.input {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 11px;
+  font-size: 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.input:focus-visible {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 28%, transparent);
+}
+
+.input:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+textarea.input {
+  resize: vertical;
+  min-height: 92px;
+  line-height: 1.5;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 页面根节点的通用布局：各页面共用 */
+.page {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
