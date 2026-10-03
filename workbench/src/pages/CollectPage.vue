@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import Callout from '../components/Callout.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PanelCard from '../components/PanelCard.vue'
 import ProgressBar from '../components/ProgressBar.vue'
 import StatusTag from '../components/StatusTag.vue'
+import AppModal from '../components/AppModal.vue'
+import { PhPlus, PhArrowsClockwise, PhX, PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue'
 import { useBridgeController } from '../composables/useBridgeController'
 import type { PageId } from '../data/navigation'
 import { formatFullTime, isoTime } from '../features/chat/chat-format'
@@ -38,6 +40,9 @@ const submitDisabled = computed(() => !available.value || creating.value)
 const submitLabel = computed(() => (creating.value ? '正在创建…' : '开始采集'))
 
 const form = reactive(defaultCaptureForm())
+const createOpen = ref(false)
+const detailOpen = ref(false)
+const filtersOpen = ref(false)
 const errors = ref<CaptureFormErrors>({})
 const confirmCancelId = ref<string | null>(null)
 
@@ -46,11 +51,14 @@ const showSuggestDropdown = ref(false)
 
 // 任务历史分页状态
 const historyPage = ref(1)
-const historyPageSize = ref(6)
+const historyPageSize = ref(20)
 
 const pagination = computed(() => paginateTasks(views.value, historyPage.value, historyPageSize.value))
 const pagedViews = computed(() => pagination.value.pagedItems)
 const paging = computed(() => pagination.value.paging)
+watch(() => [views.value.length, historyPageSize.value], () => {
+  historyPage.value = Math.min(historyPage.value, Math.max(1, Math.ceil(views.value.length / historyPageSize.value)))
+})
 
 const FIELD_ORDER: readonly CaptureFormField[] = [
   'keyword',
@@ -104,6 +112,7 @@ async function submit(): Promise<void> {
   const result = buildCapturePayload(form)
   if (!result.ok) {
     errors.value = result.errors
+    if (result.errors.minPrice || result.errors.maxPrice || result.errors.minWantCnt) filtersOpen.value = true
     await nextTick()
     const first = FIELD_ORDER.find((field) => result.errors[field])
     if (first) document.getElementById(`capture-${first}`)?.focus()
@@ -115,6 +124,8 @@ async function submit(): Promise<void> {
   if (ok) {
     // 成功创建后跳到第一页并保持选中新任务
     historyPage.value = 1
+    createOpen.value = false
+    detailOpen.value = true
   }
 }
 
@@ -138,22 +149,20 @@ const statItems = [
 
 <template>
   <div class="page">
-    <Callout v-if="!available" tone="warn">
-      <template #default>
-        当前不是扩展内页，采集任务无法创建。请通过 chrome-extension://&lt;扩展 ID&gt;/workbench.html 打开工作台。
-      </template>
-      <template #actions>
-        <button type="button" class="btn btn--sm" @click="emit('diagnostics')">查看系统状态</button>
-      </template>
-    </Callout>
-    <Callout v-else tone="info">
-      采集由扩展在你已登录的闲鱼页面内发起请求，开始前请先打开并登录 goofish.com，并保持该页面打开。系统强制请求间隔不低于 1.5 秒，遇到验证码或登录失效会自动暂停并保留断点。
-    </Callout>
     <Callout v-if="state.realtimeError" tone="warn">{{ state.realtimeError }}（可手动点击「刷新任务」）</Callout>
 
     <div class="layout">
+      <div class="capture-toolbar">
+        <p class="muted">采集任务 <span class="mono">{{ views.length }}</span></p>
+        <div class="row">
+          <button type="button" class="btn btn--icon" title="刷新任务" aria-label="刷新任务" :disabled="!available || state.tasks.refreshing" @click="controller.refresh()"><PhArrowsClockwise :size="18" /></button>
+          <button type="button" class="btn btn--primary" :disabled="!available" @click="createOpen = true"><PhPlus :size="18" />新建采集</button>
+        </div>
+      </div>
+      <AppModal :open="createOpen" title="新建采集" :busy="creating" @close="createOpen = false">
+      <p class="capture-note">请保持已登录的闲鱼页面打开。遇到验证码或登录失效时，任务会暂停并保留进度。</p>
       <!-- 左栏：新建采集任务 -->
-      <PanelCard title="新建采集任务" description="按关键词搜索并写入本地商品库，支持并发入队">
+      <PanelCard>
         <form class="form" novalidate @submit.prevent="submit">
           <!-- 关键词与流量词建议 -->
           <div class="field suggest-field">
@@ -201,7 +210,7 @@ const statItems = [
             >
               <div class="suggest-dropdown__header">
                 <span class="suggest-dropdown__title">闲鱼流量词建议</span>
-                <button type="button" class="suggest-dropdown__close" aria-label="关闭建议" @click="closeSuggest">✕</button>
+                <button type="button" class="suggest-dropdown__close" aria-label="关闭建议" title="关闭建议" @click="closeSuggest"><PhX :size="16" /></button>
               </div>
 
               <!-- loading -->
@@ -291,6 +300,8 @@ const statItems = [
             </div>
           </div>
 
+          <details :open="filtersOpen" @toggle="filtersOpen = ($event.target as HTMLDetailsElement).open">
+          <summary class="filters-summary">过滤条件</summary>
           <fieldset class="filters">
             <legend class="filters__legend">过滤条件（留空表示不限制）</legend>
             <div class="form-grid">
@@ -339,6 +350,7 @@ const statItems = [
               <span>仅包邮商品</span>
             </label>
           </fieldset>
+          </details>
 
           <div class="field">
             <label class="check-row">
@@ -360,12 +372,13 @@ const statItems = [
         </form>
       </PanelCard>
 
-      <!-- 右栏：任务历史列表 + 任务详情 -->
+      </AppModal>
+      <!-- 任务列表 -->
       <div class="history-column">
         <!-- 任务历史列表卡片 -->
-        <PanelCard title="任务历史列表" description="所有已创建的采集任务均保留在历史中，支持点击切换详情" flush>
+        <PanelCard title="任务列表" flush>
           <template #actions>
-            <StatusTag v-if="state.tasks.phase === 'ready'" mono>共 {{ views.length }} 条</StatusTag>
+            <StatusTag v-if="state.tasks.phase === 'ready'" mono>已加载 {{ views.length }} 条</StatusTag>
             <button
               type="button"
               class="btn btn--sm"
@@ -377,7 +390,7 @@ const statItems = [
           </template>
 
           <div v-if="!available" class="blank">
-            <EmptyState title="未连接扩展" description="在扩展内页打开工作台后，这里会显示真实的采集任务历史。绝不伪造任何演示数据。" />
+            <EmptyState title="未连接扩展" description="从扩展内页打开工作台后可查看采集任务。" />
           </div>
           <div v-else-if="state.tasks.phase === 'idle' || state.tasks.phase === 'loading'" class="blank" role="status">
             <p class="muted">正在读取任务历史…</p>
@@ -392,7 +405,7 @@ const statItems = [
           <div v-else-if="views.length === 0" class="blank">
             <EmptyState
               title="暂无采集历史"
-              description="在左侧填写关键词并开始采集后，每次创建的任务都会持久化保留在历史列表中。"
+              description="点击右上角「新建采集」创建任务。"
             />
           </div>
 
@@ -404,7 +417,7 @@ const statItems = [
                   class="list__row"
                   :class="{ 'list__row--active': view.id === state.selectedId }"
                   :aria-current="view.id === state.selectedId ? 'true' : undefined"
-                  @click="controller.select(view.id)"
+                  @click="controller.select(view.id); detailOpen = true"
                 >
                   <span class="list__main">
                     <span class="list__keyword">{{ view.keyword || '（无关键词）' }}</span>
@@ -423,16 +436,21 @@ const statItems = [
             <!-- 分页与加载更多栏 -->
             <div class="pagination-bar">
               <div class="pagination-info">
-                第 <span class="mono">{{ paging.page }}</span> / <span class="mono">{{ paging.totalPages }}</span> 页（共 {{ paging.total }} 条）
+                第 <span class="mono">{{ paging.page }}</span> / <span class="mono">{{ paging.totalPages }}</span> 页（已加载 {{ paging.total }} 条）
               </div>
               <div class="pagination-actions">
+                <select v-model="historyPageSize" class="input" aria-label="每页任务数量" @change="historyPage = 1">
+                  <option :value="10">每页 10 条</option>
+                  <option :value="20">每页 20 条</option>
+                  <option :value="50">每页 50 条</option>
+                </select>
                 <button
                   type="button"
                   class="btn btn--xs"
                   :disabled="!paging.hasPrev"
                   @click="prevHistoryPage"
                 >
-                  上一页
+                  <PhCaretLeft :size="14" aria-hidden="true" /> 上一页
                 </button>
                 <button
                   type="button"
@@ -440,7 +458,7 @@ const statItems = [
                   :disabled="!paging.hasNext"
                   @click="nextHistoryPage"
                 >
-                  下一页
+                  下一页 <PhCaretRight :size="14" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -456,7 +474,8 @@ const statItems = [
         </PanelCard>
 
         <!-- 选中任务详情卡片 -->
-        <PanelCard title="任务详情" description="状态、进度与统计均来自后台任务快照，绝无虚构数据">
+        <AppModal :open="detailOpen" title="采集详情" @close="detailOpen = false">
+        <PanelCard>
           <div v-if="!available" class="blank">
             <p class="muted">未连接扩展，详情不可用。</p>
           </div>
@@ -571,15 +590,19 @@ const statItems = [
             </div>
           </div>
         </PanelCard>
+        </AppModal>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.capture-note { margin-bottom: 16px; font-size: 13px; color: var(--text-muted); }
+.filters-summary { cursor: pointer; padding: 6px 0; color: var(--text-muted); font-size: 13px; }
+
 .layout {
   display: grid;
-  grid-template-columns: minmax(360px, 440px) minmax(460px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -589,6 +612,7 @@ const statItems = [
   flex-direction: column;
   gap: 16px;
 }
+.capture-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 
 .form {
   display: flex;
@@ -859,7 +883,7 @@ const statItems = [
 .link {
   background: transparent;
   border: none;
-  color: var(--accent);
+  color: var(--accent-text);
   cursor: pointer;
   padding: 0;
   text-decoration: underline;
@@ -964,7 +988,9 @@ const statItems = [
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
+.pagination-actions .input { width: auto; min-height: 28px; font-size: 12px; }
 
 .btn--xs {
   min-height: 24px;

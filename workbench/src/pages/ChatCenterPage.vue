@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { PhInfo, PhArrowsClockwise, PhWrench } from '@phosphor-icons/vue'
 import ReplyComposer from '../components/chat/ReplyComposer.vue'
 import ReplyRulesPanel from '../components/chat/ReplyRulesPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -56,6 +57,7 @@ const { state: replyState, controller: replyController } = useBridgeController<R
 
 /** 会话 / 回复规则两个视图；用 v-show 保留规则草稿，切换标签不会丢失未保存的修改。 */
 const view = ref<'chat' | 'rules'>('chat')
+const contextOpen = ref(false)
 
 // 选择会话时把回复层绑定到该会话：旧会话的建议与发送结果作废，发送重新锁定。
 watch(selectedId, (id) => replyController.setSession(id), { immediate: true })
@@ -133,11 +135,13 @@ watch(
           <button
             v-if="available"
             type="button"
-            class="btn btn--sm"
+            class="btn btn--icon"
+            title="刷新本地缓存"
+            aria-label="刷新本地缓存"
             :disabled="conversations.phase === 'loading' || conversations.refreshing"
             @click="controller.refresh()"
           >
-            刷新本地缓存
+            <PhArrowsClockwise :size="18" />
           </button>
           <button
             v-if="available"
@@ -148,12 +152,15 @@ watch(
           >
             {{ conversationSync.phase === 'running' ? '同步会话中…' : '同步会话' }}
           </button>
-          <button type="button" class="btn btn--sm" @click="emit('diagnostics')">查看系统状态</button>
+          <button type="button" class="btn btn--icon" title="系统状态" aria-label="查看系统状态" @click="emit('diagnostics')"><PhWrench :size="18" /></button>
         </div>
       </div>
-      <p class="banner__text">
+      <details class="banner__text">
+        <summary>同步与发送说明</summary>
+        <p>
         读取是只读的：「刷新本地缓存」只读取扩展内已有数据，「同步会话」「同步历史」才会通过已打开的闲鱼页面向平台拉取。回复区默认锁定，页面加载不会发送任何消息；只有你点击「启用发送」并点击发送按钮后才会发送，AI 建议也只在你点击「生成建议」时调用。
-      </p>
+        </p>
+      </details>
       <p
         v-if="conversationSync.phase !== 'idle'"
         class="sync"
@@ -179,6 +186,8 @@ watch(
       </button>
     </div>
 
+    <button v-if="available && view === 'chat'" type="button" class="btn btn--sm context-toggle" :aria-expanded="contextOpen" @click="contextOpen = !contextOpen"><PhInfo :size="16" />买家与商品</button>
+
     <ReplyRulesPanel v-if="available" v-show="view === 'rules'" :reply="replyState" :controller="replyController" />
 
     <PanelCard v-if="!available" flush>
@@ -192,7 +201,7 @@ watch(
       </EmptyState>
     </PanelCard>
 
-    <div v-else v-show="view === 'chat'" class="chat">
+    <div v-else v-show="view === 'chat'" class="chat" :class="{ 'chat--context-open': contextOpen }">
       <!-- 会话列表 -->
       <PanelCard title="会话" flush class="chat__col">
         <template #actions>
@@ -350,7 +359,7 @@ watch(
       </PanelCard>
 
       <!-- 买家与商品 -->
-      <PanelCard title="买家与商品" flush class="chat__col">
+      <PanelCard title="买家与商品" flush class="chat__col chat__context">
         <div v-if="!selectedId" class="state">
           <p class="col-note">选择会话后，这里显示该买家的已知信息和关联商品。</p>
         </div>
@@ -421,7 +430,8 @@ watch(
   display: grid;
   gap: 8px;
   padding: 12px 16px;
-  background: var(--info-soft);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius-panel);
 }
 
@@ -466,13 +476,15 @@ watch(
 
 .chat {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 280px;
+  grid-template-columns: 260px minmax(0, 1fr) 260px;
   gap: 14px;
   align-items: stretch;
   min-height: 420px;
+  height: max(420px, calc(100dvh - 220px));
 }
 
 .chat__col {
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -480,6 +492,8 @@ watch(
 .chat__col :deep(.panel__body) {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .state {
@@ -555,7 +569,7 @@ watch(
 /* 会话列表 */
 .convs {
   display: grid;
-  max-height: 560px;
+  max-height: 100%;
   overflow-y: auto;
   list-style: none;
   margin: 0;
@@ -664,7 +678,8 @@ watch(
 .thread {
   display: flex;
   flex-direction: column;
-  min-height: 330px;
+  height: 100%;
+  min-height: 0;
 }
 
 .thread__empty {
@@ -699,7 +714,7 @@ watch(
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  max-height: 520px;
+  max-height: none;
   overflow-y: auto;
   list-style: none;
   margin: 0;
@@ -809,20 +824,24 @@ watch(
   text-decoration: none;
 }
 
-@media (max-width: 1179px) {
+.context-toggle { display: none; }
+@media (max-width: 1199px) {
   .chat {
     grid-template-columns: 260px minmax(0, 1fr);
   }
 
-  .chat > :last-child {
-    grid-column: 1 / -1;
-  }
+  .context-toggle { display: inline-flex; align-self: start; }
+  .chat__context { display: none; }
+  .chat--context-open { height: auto; }
+  .chat--context-open .chat__context { display: flex; grid-column: 1 / -1; }
+  .chat--context-open .thread { min-height: 420px; max-height: 70dvh; }
 }
 
 @media (max-width: 719px) {
   .chat {
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
+    height: auto;
   }
 
   .convs {

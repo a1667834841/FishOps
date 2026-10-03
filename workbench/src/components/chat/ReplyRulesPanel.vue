@@ -18,6 +18,7 @@ import Callout from '../Callout.vue'
 import EmptyState from '../EmptyState.vue'
 import PanelCard from '../PanelCard.vue'
 import StatusTag from '../StatusTag.vue'
+import AppModal from '../AppModal.vue'
 
 /**
  * 回复规则与全局配置。
@@ -356,6 +357,8 @@ const sortedRules = computed(() => [...config.value.rules].sort((a, b) => b.prio
           </li>
         </ul>
 
+        <AppModal :open="Boolean(editor)" :title="editor?.id ? '编辑回复规则' : '新建回复规则'" :busy="saving" @close="closeEditor">
+        <Callout v-if="reply.save.phase === 'failed' && reply.save.error" tone="error" :view="reply.save.error" />
         <form v-if="editor" class="editor form" novalidate @submit.prevent="saveRule">
           <h4 class="editor__title">{{ editor.id ? '编辑' : '新建' }}{{ editor.type === 'ai' ? ' AI 规则' : '关键词规则' }}</h4>
 
@@ -437,6 +440,7 @@ const sortedRules = computed(() => [...config.value.rules].sort((a, b) => b.prio
             <button type="button" class="btn" :disabled="saving" @click="closeEditor">取消</button>
           </div>
         </form>
+        </AppModal>
       </PanelCard>
     </template>
   </div>

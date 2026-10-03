@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { PhArrowSquareOut, PhArrowsClockwise, PhCaretLeft, PhCaretRight, PhCheck, PhDownloadSimple, PhImage, PhMagnifyingGlass, PhTable, PhUploadSimple, PhX } from '@phosphor-icons/vue'
+import AppModal from '../components/AppModal.vue'
 import Callout from '../components/Callout.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PanelCard from '../components/PanelCard.vue'
@@ -66,6 +68,12 @@ const result = computed(() => state.value.result)
 const query = computed(() => state.value.query)
 const keywordInput = ref('')
 const exportNote = ref('')
+const showWritePanel = ref(false)
+const failedCovers = ref(new Set<string>())
+
+function hideFailedCover(itemId: string): void {
+  failedCovers.value = new Set([...failedCovers.value, itemId])
+}
 
 const paging = computed(() => pageInfo(result.value.total, query.value.pageSize, query.value.page))
 const busy = computed(() => result.value.phase === 'loading' || result.value.refreshing)
@@ -232,6 +240,8 @@ function exportCsv(): void {
 }
 
 function handlePreview(): void {
+  showSchemaPanel.value = false
+  showWritePanel.value = true
   userConfirmed.value = false
   void feishuController.preview()
 }
@@ -242,6 +252,8 @@ async function handleExecute(): Promise<void> {
 }
 
 function navigateToSettings(): void {
+  showWritePanel.value = false
+  showSchemaPanel.value = false
   emit('navigate', 'settings')
 }
 
@@ -304,6 +316,7 @@ const canExecuteSchema = computed(() => {
 })
 
 function toggleSchemaPanel(): void {
+  showWritePanel.value = false
   showSchemaPanel.value = !showSchemaPanel.value
   if (showSchemaPanel.value) {
     void schemaController.checkSafetyStatus()
@@ -311,6 +324,7 @@ function toggleSchemaPanel(): void {
 }
 
 function openSchemaPanel(): void {
+  showWritePanel.value = false
   showSchemaPanel.value = true
   void schemaController.checkSafetyStatus()
 }
@@ -331,9 +345,6 @@ async function handleSchemaExecute(): Promise<void> {
 
 <template>
   <div class="page">
-    <Callout v-if="!available" tone="warn">
-      当前不是扩展内页，当前账号发布的商品数据无法读取。请通过 chrome-extension://&lt;扩展 ID&gt;/workbench.html 打开工作台；这里不会展示任何演示数据。
-    </Callout>
     <Callout v-if="state.hasNewCapture" tone="info">
       <template #default>后台任务有新的进展，当前账号商品目录可能已更新。</template>
       <template #actions>
@@ -355,8 +366,8 @@ async function handleSchemaExecute(): Promise<void> {
             :disabled="!available"
           />
         </div>
-        <button type="submit" class="btn btn--sm" :disabled="!available || busy">搜索</button>
-        <button v-if="query.keyword" type="button" class="btn btn--sm btn--ghost" :disabled="busy" @click="clearSearch">清除</button>
+        <button type="submit" class="btn btn--sm btn--icon" aria-label="搜索商品" title="搜索" :disabled="!available || busy"><PhMagnifyingGlass :size="18" /></button>
+        <button v-if="query.keyword" type="button" class="btn btn--sm btn--ghost btn--icon" aria-label="清除搜索" title="清除搜索" :disabled="busy" @click="clearSearch"><PhX :size="18" /></button>
 
         <label class="toolbar__select">
           <span class="sr-only">商品来源筛选</span>
@@ -370,16 +381,9 @@ async function handleSchemaExecute(): Promise<void> {
             <option v-for="option in PRODUCT_ORDER_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
-        <label class="toolbar__size">
-          <span class="sr-only">每页数量</span>
-          <select class="input" :value="query.pageSize" :disabled="!available" @change="onPageSize">
-            <option v-for="size in PRODUCT_PAGE_SIZES" :key="size" :value="size">每页 {{ size }} 条</option>
-          </select>
-        </label>
-
         <span class="toolbar__spacer"></span>
-        <button type="button" class="btn btn--sm" :disabled="!available || busy" @click="onRefreshProducts">
-          {{ result.refreshing ? '刷新中…' : '刷新' }}
+        <button type="button" class="btn btn--sm btn--icon" aria-label="刷新商品列表" :title="result.refreshing ? '刷新中…' : '刷新'" :disabled="!available || busy" @click="onRefreshProducts">
+          <PhArrowsClockwise :size="18" />
         </button>
         <button
           type="button"
@@ -388,7 +392,7 @@ async function handleSchemaExecute(): Promise<void> {
           :title="'仅导出当前页已查询到的商品'"
           @click="exportCsv"
         >
-          导出当前页 CSV
+          <PhDownloadSimple :size="18" /> 导出本页
         </button>
         <button
           type="button"
@@ -398,21 +402,21 @@ async function handleSchemaExecute(): Promise<void> {
           title="将本地商品库字段与飞书表结构做并集同步，补充缺失字段"
           @click="toggleSchemaPanel"
         >
-          {{ showSchemaPanel ? '收起商品字段同步' : '同步商品字段' }}
+          <PhTable :size="18" /> 同步字段
         </button>
       </form>
 
       <!-- 飞书商品字段同步面板（Schema Reconciliation） -->
+      <AppModal :open="showSchemaPanel" title="同步商品字段" wide :busy="schemaBusy" @close="showSchemaPanel = false">
       <section
-        v-if="showSchemaPanel"
         class="feishu-panel schema-panel"
         aria-label="飞书商品字段同步"
       >
         <div class="feishu-preview__header">
           <div>
-            <h3 class="feishu-preview__title">商品字段同步（Schema Reconciliation）</h3>
+            <h3 class="feishu-preview__title">核对飞书表结构</h3>
             <p class="feishu-preview__desc">
-              本地商品库字段 ∪ 飞书商品表字段。默认并集策略：自动比对并补充创建缺失字段；系统绝不删除飞书现有字段，同名类型冲突默认阻止。
+              比对本地与飞书商品字段，确认后补充缺失字段。现有字段不会被删除或修改。
               <template v-if="schemaPreviewResult">
                 · 目标商品表：<code>{{ schemaPreviewResult.targetTableId }}</code>
                 · 预览 ID：<code>{{ schemaPreviewResult.previewId }}</code>
@@ -423,7 +427,6 @@ async function handleSchemaExecute(): Promise<void> {
             </p>
           </div>
           <div class="schema-header-actions">
-            <StatusTag tone="ok">默认并集 (UNION)</StatusTag>
             <StatusTag v-if="isSchemaExpired" tone="warn">预览已过期</StatusTag>
             <StatusTag v-else-if="hasLegacyTypeConflicts" tone="error">历史口径冲突 (禁止写入)</StatusTag>
             <StatusTag v-else-if="hasTypeConflicts" tone="error">存在类型冲突</StatusTag>
@@ -434,6 +437,7 @@ async function handleSchemaExecute(): Promise<void> {
               :disabled="!available || schemaBusy"
               @click="handleSchemaPreview"
             >
+              <PhMagnifyingGlass :size="18" />
               {{ schemaPreviewBusy ? '正在生成预览…' : schemaState.preview.phase === 'ready' ? '重新生成预览' : '生成字段同步预览' }}
             </button>
           </div>
@@ -564,10 +568,10 @@ async function handleSchemaExecute(): Promise<void> {
                             <strong class="legacy-field-name"><code>{{ item.name }}</code></strong>
                           </td>
                           <td>
-                            <span class="legacy-type-tag legacy-type-tag--actual">❌ {{ item.actualTypeName }} (类型 {{ item.actualType }})</span>
+                            <span class="legacy-type-tag legacy-type-tag--actual"><PhX :size="14" /> {{ item.actualTypeName }} (类型 {{ item.actualType }})</span>
                           </td>
                           <td>
-                            <span class="legacy-type-tag legacy-type-tag--target">✅ {{ item.expectedTypeName }} (类型 {{ item.expectedType }})</span>
+                            <span class="legacy-type-tag legacy-type-tag--target"><PhCheck :size="14" /> {{ item.expectedTypeName }} (类型 {{ item.expectedType }})</span>
                           </td>
                           <td class="legacy-field-hint">
                             {{ item.adjustmentHint }}
@@ -619,7 +623,7 @@ async function handleSchemaExecute(): Promise<void> {
                     </div>
 
                     <div class="legacy-step legacy-step--neutral">
-                      <div class="legacy-step__num legacy-step__num--neutral">🛡️</div>
+                      <div class="legacy-step__num legacy-step__num--neutral"><PhTable :size="16" /></div>
                       <div class="legacy-step__content">
                         <strong>安全守卫说明（无任何自动执行）：</strong>
                         <span>为确保用户数据绝对安全，系统在此处<strong>不提供任何自动执行按钮、不自动改表、不自动重试</strong>，所有类型调整均须由管理员在飞书管理后台安全完成。</span>
@@ -744,6 +748,7 @@ async function handleSchemaExecute(): Promise<void> {
                 :disabled="!canExecuteSchema"
                 @click="handleSchemaExecute"
               >
+                <PhTable :size="18" />
                 {{ schemaExecuteBusy ? '正在创建字段…' : `确认同步商品字段 (${schemaPreviewResult.toCreate.length})` }}
               </button>
             </div>
@@ -789,6 +794,7 @@ async function handleSchemaExecute(): Promise<void> {
           </Callout>
         </div>
       </section>
+      </AppModal>
 
       <!-- 飞书写入选品操作条 -->
       <section v-if="selectedCount > 0" class="feishu-bar" aria-label="飞书写入选品操作">
@@ -823,14 +829,15 @@ async function handleSchemaExecute(): Promise<void> {
             :disabled="!available || selectedCount === 0 || previewBusy || executeBusy"
             @click="handlePreview"
           >
-            {{ previewBusy ? '正在生成预览…' : feishuState.preview.phase === 'ready' ? '重新生成预览' : '生成飞书写入预览' }}
+            <PhUploadSimple :size="18" /> {{ previewBusy ? '正在生成预览…' : '写入飞书' }}
           </button>
+          <button v-if="feishuState.preview.phase !== 'idle' || feishuState.execute.phase !== 'idle'" type="button" class="btn btn--sm" @click="showWritePanel = true">查看写入结果</button>
         </div>
       </section>
 
       <!-- 飞书写入预览与确认区域 -->
+      <AppModal :open="showWritePanel" title="写入飞书商品表" wide :busy="previewBusy || executeBusy" @close="showWritePanel = false">
       <section
-        v-if="feishuState.preview.phase !== 'idle' || feishuState.execute.phase !== 'idle'"
         class="feishu-panel"
         aria-live="polite"
       >
@@ -868,7 +875,7 @@ async function handleSchemaExecute(): Promise<void> {
         <div v-else-if="feishuState.preview.phase === 'ready' && previewResult" class="feishu-preview">
           <div class="feishu-preview__header">
             <div>
-              <h3 class="feishu-preview__title">飞书商品写入预览（只读比对，未产生写入）</h3>
+              <h3 class="feishu-preview__title">核对待写入商品</h3>
               <p class="feishu-preview__desc">
                 目标商品表：<code>{{ previewResult.targetTableId }}</code>
                 <span v-if="previewResult.previewId">
@@ -879,10 +886,11 @@ async function handleSchemaExecute(): Promise<void> {
                 </span>
               </p>
             </div>
-            <div>
+            <div class="schema-header-actions">
               <StatusTag v-if="!hasFieldIncompatibility && !isPreviewExpired" tone="ok">字段完全兼容</StatusTag>
               <StatusTag v-else-if="isPreviewExpired" tone="warn">预览已过期</StatusTag>
               <StatusTag v-else tone="error">字段不兼容</StatusTag>
+              <button type="button" class="btn btn--sm" :disabled="previewBusy || executeBusy" @click="handlePreview"><PhArrowsClockwise :size="18" /> 重新生成预览</button>
             </div>
           </div>
 
@@ -1022,6 +1030,7 @@ async function handleSchemaExecute(): Promise<void> {
                 :disabled="!canExecute"
                 @click="handleExecute"
               >
+                <PhUploadSimple :size="18" />
                 {{ executeBusy ? '正在写入飞书…' : `确认执行写入飞书 (${previewResult.toCreate.length})` }}
               </button>
             </div>
@@ -1032,7 +1041,7 @@ async function handleSchemaExecute(): Promise<void> {
         <div v-if="feishuState.execute.phase === 'ready' && executeResult" class="feishu-result">
           <Callout tone="ok" title="飞书写入成功（已禁止重放）">
             <template #default>
-              已成功在目标表（<code>{{ executeResult.targetTableId }}</code>）创建 <strong>{{ executeResult.createdCount }}</strong> 条商品记录！
+              已在目标表（<code>{{ executeResult.targetTableId }}</code>）创建 <strong>{{ executeResult.createdCount }}</strong> 条商品记录。
               <span v-if="executeResult.alreadyExistsItemIds.length > 0">
                 （跳过表中已有 {{ executeResult.alreadyExistsItemIds.length }} 条）
               </span>
@@ -1070,6 +1079,7 @@ async function handleSchemaExecute(): Promise<void> {
           </div>
         </div>
       </section>
+      </AppModal>
 
       <div class="status" aria-live="polite">
         <template v-if="result.phase === 'ready'">
@@ -1183,8 +1193,14 @@ async function handleSchemaExecute(): Promise<void> {
                   />
                 </td>
                 <td class="cell-title">
-                  <span class="title">{{ product.title || '（无标题）' }}</span>
-                  <span class="id">{{ product.itemId }}</span>
+                  <div class="product-summary">
+                    <img v-if="product.coverUrl && !failedCovers.has(product.itemId)" class="product-cover" :src="product.coverUrl" :alt="product.title || '商品图片'" loading="lazy" referrerpolicy="no-referrer" @error="hideFailedCover(product.itemId)" />
+                    <span v-else class="product-cover product-cover--empty" aria-hidden="true"><PhImage :size="22" /></span>
+                    <div class="product-copy">
+                      <span class="title">{{ product.title || '（无标题）' }}</span>
+                      <span class="id">{{ product.itemId }}</span>
+                    </div>
+                  </div>
                 </td>
                 <td>
                   <StatusTag :tone="displayProductSourceTag(product.source).tone">
@@ -1205,11 +1221,13 @@ async function handleSchemaExecute(): Promise<void> {
                   <a
                     v-if="productLink(product)"
                     class="open"
+                    :aria-label="`打开商品 ${product.title || product.itemId}`"
+                    title="在新标签页打开商品"
                     :href="productLink(product) ?? undefined"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    打开<span class="sr-only">商品 {{ product.title }}</span>
+                    <PhArrowSquareOut :size="18" />
                   </a>
                   <span v-else class="muted">无可用链接</span>
                 </td>
@@ -1219,15 +1237,24 @@ async function handleSchemaExecute(): Promise<void> {
         </div>
 
         <nav class="pager" aria-label="商品库分页">
-          <button type="button" class="btn btn--sm" :disabled="busy || paging.page <= 0" @click="controller.goToPage(paging.page - 1)">上一页</button>
+          <span class="pager__total">共 {{ result.total }} 件商品</span>
+          <label class="toolbar__size">
+            <span class="sr-only">每页数量</span>
+            <select class="input" :value="query.pageSize" :disabled="!available || busy" @change="onPageSize">
+              <option v-for="size in PRODUCT_PAGE_SIZES" :key="size" :value="size">每页 {{ size }} 条</option>
+            </select>
+          </label>
+          <button type="button" class="btn btn--sm btn--icon" aria-label="上一页" title="上一页" :disabled="busy || paging.page <= 0" @click="controller.goToPage(paging.page - 1)"><PhCaretLeft :size="18" /></button>
           <span class="pager__info">第 {{ paging.page + 1 }} / {{ paging.totalPages }} 页</span>
           <button
             type="button"
             class="btn btn--sm"
+            aria-label="下一页"
+            title="下一页"
             :disabled="busy || paging.page >= paging.totalPages - 1"
             @click="controller.goToPage(paging.page + 1)"
           >
-            下一页
+            <PhCaretRight :size="18" />
           </button>
         </nav>
       </template>
@@ -1302,8 +1329,7 @@ async function handleSchemaExecute(): Promise<void> {
 
 /* 飞书写入预览面板 */
 .feishu-panel {
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
+  padding: 0;
   background: var(--surface);
   display: grid;
   gap: 12px;
@@ -1667,7 +1693,33 @@ async function handleSchemaExecute(): Promise<void> {
 }
 
 .cell-title {
+  min-width: 260px;
   max-width: 320px;
+}
+
+.product-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.product-cover {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--surface-sunken);
+}
+
+.product-cover--empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.product-copy {
+  min-width: 0;
 }
 
 .title {
@@ -1689,8 +1741,16 @@ async function handleSchemaExecute(): Promise<void> {
 }
 
 .open {
-  color: var(--info);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 6px;
+  color: var(--text-muted);
 }
+
+.open:hover { background: var(--surface-sunken); color: var(--text); }
 
 .open:focus-visible {
   outline: 2px solid var(--focus);
@@ -1700,10 +1760,13 @@ async function handleSchemaExecute(): Promise<void> {
 .pager {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 14px;
   padding: 12px 18px;
 }
+
+.pager__total { margin-right: auto; font-size: 12.5px; color: var(--text-muted); }
 
 .pager__info {
   font-size: 12.5px;
@@ -1745,7 +1808,7 @@ async function handleSchemaExecute(): Promise<void> {
 .legacy-guide__lead {
   font-size: 13px;
   line-height: 1.6;
-  color: var(--text-base);
+  color: var(--text);
   margin: 0;
 }
 
@@ -1753,7 +1816,7 @@ async function handleSchemaExecute(): Promise<void> {
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background: var(--surface-sunken);
-  overflow: hidden;
+  overflow-x: auto;
 }
 
 .legacy-guide__table-title {
@@ -1797,7 +1860,9 @@ async function handleSchemaExecute(): Promise<void> {
 }
 
 .legacy-type-tag {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 11.5px;

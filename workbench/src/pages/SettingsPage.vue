@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { PhPalette, PhCpu, PhTable, PhChats, PhHeartbeat, PhUserCircle, PhEye, PhEyeSlash, PhStethoscope } from '@phosphor-icons/vue'
 import Callout from '../components/Callout.vue'
 import PanelCard from '../components/PanelCard.vue'
 import StatusTag from '../components/StatusTag.vue'
@@ -31,6 +32,15 @@ import { broadcastFeishuTargetChanged } from '../features/products/feishu-schema
 const emit = defineEmits<{ diagnostics: [] }>()
 
 const theme = useTheme()
+const settingsSections = [
+  { id: 'appearance', label: '外观', icon: PhPalette },
+  { id: 'ai', label: 'AI 配置', icon: PhCpu },
+  { id: 'feishu', label: '飞书配置', icon: PhTable },
+  { id: 'reply', label: '回复策略', icon: PhChats },
+  { id: 'runtime', label: '运行环境', icon: PhHeartbeat },
+  { id: 'account', label: '账号与授权', icon: PhUserCircle },
+] as const
+const activeSection = ref<string>('appearance')
 const { status, inExtension } = useBridgeStatus()
 
 const { state, controller } = useBridgeController<SettingsState, SettingsController>({
@@ -429,8 +439,15 @@ async function onTogglePause(): Promise<void> {
       {{ state.realtimeError }}
     </Callout>
 
+    <div class="settings-layout">
+      <nav class="settings-nav" aria-label="设置分区">
+        <button v-for="section in settingsSections" :key="section.id" type="button" :class="{ 'is-active': activeSection === section.id }" :aria-current="activeSection === section.id ? 'page' : undefined" @click="activeSection = section.id">
+          <component :is="section.icon" :size="18" aria-hidden="true" />{{ section.label }}
+        </button>
+      </nav>
+      <div class="settings-content">
     <!-- 外观 -->
-    <PanelCard title="外观" description="选择界面主题。手动选择后会记住，刷新后保持。">
+    <PanelCard v-show="activeSection === 'appearance'" title="外观" description="选择界面主题，自动保存偏好。">
       <fieldset class="segmented">
         <legend class="sr-only">界面主题</legend>
         <label v-for="option in themeOptions" :key="option.value" class="segmented__option">
@@ -448,7 +465,7 @@ async function onTogglePause(): Promise<void> {
     </PanelCard>
 
     <!-- 运行环境 -->
-    <PanelCard title="运行环境" description="当前页面与扩展的连接情况">
+    <PanelCard v-show="activeSection === 'runtime'" title="运行环境" description="页面与扩展的连接状态">
       <dl class="kv">
         <div>
           <dt>页面环境</dt>
@@ -478,14 +495,15 @@ async function onTogglePause(): Promise<void> {
         </div>
       </dl>
       <button type="button" class="btn btn--sm settings__action" @click="emit('diagnostics')">
-        打开系统状态与开发诊断
+        <PhStethoscope :size="16" aria-hidden="true" />查看连接诊断
       </button>
     </PanelCard>
 
     <!-- 1. AI 模型配置 -->
     <PanelCard
+      v-show="activeSection === 'ai'"
       title="AI 模型配置"
-      description="配置用于生成回复建议与数据分析的大语言模型。密钥仅安全隔离存储在扩展中，绝不写入日志或回显。"
+      description="用于回复建议与数据分析。凭据保存在扩展中，已保存的密钥不回显。"
     >
       <template #actions>
         <StatusTag :tone="state.ai.configured ? 'ok' : 'warn'">
@@ -588,7 +606,7 @@ async function onTogglePause(): Promise<void> {
               :aria-label="showAiKey ? '隐藏密钥' : '显示密钥'"
               @click="showAiKey = !showAiKey"
             >
-              {{ showAiKey ? '隐藏' : '显示' }}
+              <component :is="showAiKey ? PhEyeSlash : PhEye" :size="18" aria-hidden="true" />
             </button>
           </div>
           <span class="field__hint">凭据保存在扩展专用存储中；绝不进入日志、诊断或页面明文；已配置状态下留空表示保持原 Key</span>
@@ -671,8 +689,9 @@ async function onTogglePause(): Promise<void> {
 
     <!-- 2. 飞书多维表格配置 -->
     <PanelCard
+      v-show="activeSection === 'feishu'"
       title="飞书多维表格"
-      description="连接飞书多维表格作为商品库与选品分析数据源。填入应用凭据与表格标识后可进行连通性测试。"
+      description="连接商品库与分析数据源。已保存的凭据留空即可保留。"
     >
       <template #actions>
         <StatusTag :tone="state.feishu.configured ? 'ok' : 'neutral'">
@@ -714,7 +733,7 @@ async function onTogglePause(): Promise<void> {
                 :aria-label="showAppSecret ? '隐藏 Secret' : '显示 Secret'"
                 @click="showAppSecret = !showAppSecret"
               >
-                {{ showAppSecret ? '隐藏' : '显示' }}
+                <component :is="showAppSecret ? PhEyeSlash : PhEye" :size="18" aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -739,7 +758,7 @@ async function onTogglePause(): Promise<void> {
               :aria-label="showSpreadsheetToken ? '隐藏 Token' : '显示 Token'"
               @click="showSpreadsheetToken = !showSpreadsheetToken"
             >
-              {{ showSpreadsheetToken ? '隐藏' : '显示' }}
+              <component :is="showSpreadsheetToken ? PhEyeSlash : PhEye" :size="18" aria-hidden="true" />
             </button>
           </div>
           <span class="field__hint">表格 URL 格式：https://bytedance.feishu.cn/base/&lt;SpreadsheetToken&gt;?table=...</span>
@@ -813,8 +832,9 @@ async function onTogglePause(): Promise<void> {
 
     <!-- 3. 回复策略与 AI 安全控制 -->
     <PanelCard
+      v-show="activeSection === 'reply'"
       title="回复策略与安全控制"
-      description="管理客服回复的行为模式与安全阈值。自动回复默认关闭，模式默认为安全的建议模式 (suggest)。"
+      description="选择回复模式与保护参数。默认生成建议，由人工确认发送。"
     >
       <template #actions>
         <div class="row">
@@ -1079,8 +1099,9 @@ async function onTogglePause(): Promise<void> {
 
     <!-- 4. 后台模块状态 -->
     <PanelCard
+      v-show="activeSection === 'runtime'"
       title="后台模块健康检查"
-      description="点击「立即检查」后向扩展发只读命令，全部检测项均来自真实交互反馈，不虚构连接状态。"
+      description="检查扩展服务与数据源是否可用。"
     >
       <template #actions>
         <button
@@ -1118,18 +1139,29 @@ async function onTogglePause(): Promise<void> {
     </PanelCard>
 
     <!-- 5. 账号与授权 -->
-    <PanelCard title="账号与授权" description="管理闲鱼账号的授权方式">
+    <PanelCard v-show="activeSection === 'account'" title="账号与授权" description="管理闲鱼账号的授权方式">
       <div class="placeholder">
         <p>采集、聊天与回复依赖扩展在你已登录的闲鱼网页内运行。无需在工作台输入闲鱼账号密码。</p>
       </div>
     </PanelCard>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .settings {
-  max-width: 800px;
+  max-width: 1200px;
 }
+
+.settings-layout { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 24px; align-items: start; }
+.settings-nav { display: grid; gap: 4px; position: sticky; top: 0; }
+.settings-nav button { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text-muted); text-align: left; cursor: pointer; }
+.settings-nav button:hover { background: var(--surface-sunken); }
+.settings-nav button.is-active { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.settings-nav button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.settings-content { display: grid; gap: 16px; min-width: 0; }
+@media (max-width: 900px) { .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; } .settings-nav { position: static; display: flex; flex-wrap: wrap; } }
 
 .segmented {
   display: inline-flex;

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { PhArrowClockwise, PhPlus, PhPencilSimple, PhTrash, PhPlay, PhEye } from '@phosphor-icons/vue'
+import AppModal from '../components/AppModal.vue'
 import Callout from '../components/Callout.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PanelCard from '../components/PanelCard.vue'
@@ -150,13 +152,10 @@ const output = computed(() => result.value.data?.output ?? null)
 
 <template>
   <div class="page">
-    <Callout v-if="!available" tone="warn">
-      当前不是扩展内页，数据源与分析任务无法使用。请通过 chrome-extension://&lt;扩展 ID&gt;/workbench.html 打开工作台；这里不会展示任何演示结果。
-    </Callout>
-    <Callout v-else tone="info">
-      分析会把抽样后的商品数据发送给扩展侧配置的 AI 模型。AI 凭据（API Key）与飞书 AppSecret 只能在扩展侧安全配置，本页面不提供输入入口，也不会读取或显示它们。
+    <Callout v-if="available" tone="info">
+      分析会将抽样商品数据发送给已配置的 AI 模型，请确认数据可以发送。
       <template #actions>
-        <button type="button" class="btn btn--sm" @click="emit('navigate', 'settings')">查看配置说明</button>
+        <button type="button" class="btn btn--sm" @click="emit('navigate', 'settings')"><PhEye :size="16" aria-hidden="true" />查看配置</button>
       </template>
     </Callout>
     <Callout v-if="state.targetTable.changed" tone="warn" title="飞书目标表格已变更">
@@ -168,22 +167,22 @@ const output = computed(() => result.value.data?.output ?? null)
       </template>
     </Callout>
 
-    <Callout v-if="available && !hasFeishu" tone="warn" title="未配置飞书多维表格（分析功能已阻止）">
+    <Callout v-if="available && !hasFeishu" tone="warn" title="未配置飞书数据源">
       <template #default>
-        数据分析只以飞书表格为准。后台未检测到飞书多维表格配置，当前无法进行分析或数据预览。请前往设置页完成飞书 App ID、App Secret、多维表格与商品表配置。
+        请先在设置中连接飞书商品表，再预览数据或开始分析。
       </template>
       <template #actions>
-        <button type="button" class="btn btn--sm btn--primary" @click="emit('navigate', 'settings')">前往设置页配置飞书</button>
+        <button type="button" class="btn btn--sm btn--primary" @click="emit('navigate', 'settings')">配置飞书</button>
       </template>
     </Callout>
 
     <Callout v-if="state.realtimeError" tone="warn">{{ state.realtimeError }}（可点击任务面板的「刷新状态」）</Callout>
 
-    <div class="grid">
-      <!-- 数据源 -->
-      <PanelCard title="数据源" description="选择要分析的数据来源">
+    <div class="analysis-layout">
+      <aside class="analysis-config" aria-label="分析配置">
+      <PanelCard class="source-panel" title="数据源">
         <template #actions>
-          <button type="button" class="btn btn--sm" :disabled="!available || sources.phase === 'loading'" @click="controller.loadSources()">刷新</button>
+          <button type="button" class="btn btn--sm" :disabled="!available || sources.phase === 'loading'" title="刷新数据源" aria-label="刷新数据源" @click="controller.loadSources()"><PhArrowClockwise :size="16" /></button>
         </template>
 
         <p v-if="!available" class="muted">未连接扩展。</p>
@@ -202,23 +201,22 @@ const output = computed(() => result.value.data?.output ?? null)
                 @change="controller.selectSource('feishu')"
               />
               <span class="source__text">
-                <span class="source__name">飞书多维表格（唯一支持数据源）</span>
+                <span class="source__name">飞书多维表格</span>
                 <span class="source__desc">
                   {{
                     hasFeishu
                       ? (state.targetTable.currentTableId
                           ? `已连接飞书商品表：${state.targetTable.currentTableId}`
                           : '后台已连接飞书多维表格')
-                      : '后台未注册飞书数据源：数据分析只以飞书表格为准，请先在设置页完成配置'
+                      : '请先在设置中连接飞书商品表'
                   }}
                 </span>
               </span>
             </label>
           </fieldset>
-          <Callout v-if="!hasFeishu" tone="warn">未检测到已启用的飞书数据源，数据分析功能已阻止。</Callout>
 
-          <div v-if="state.sourceType" class="schema">
-            <h3 class="h3">字段预览</h3>
+          <details v-if="state.sourceType" class="schema">
+            <summary>查看字段</summary>
             <p v-if="state.schema.phase === 'loading'" class="muted" role="status">正在读取 Schema…</p>
             <Callout v-else-if="state.schema.phase === 'error'" tone="error" :view="state.schema.error">
               <template #actions>
@@ -236,18 +234,18 @@ const output = computed(() => result.value.data?.output ?? null)
                 </li>
               </ul>
             </template>
-          </div>
+          </details>
         </template>
       </PanelCard>
-
-      <!-- 过滤器与预览 -->
-      <PanelCard title="查询过滤器" description="同时用于数据预览与分析的数据范围">
+      <PanelCard class="filter-panel" title="筛选范围">
         <form class="form" novalidate @submit.prevent="runPreview">
           <div class="field">
             <label class="field__label" for="f-keyword">关键词（标题 / 商品 ID）</label>
             <input id="f-keyword" v-model="filterDraft.keyword" class="input" autocomplete="off" :disabled="!available" />
             <span v-if="filterErrors.keyword" class="field__error" role="alert">{{ filterErrors.keyword }}</span>
           </div>
+          <details class="advanced-filter" :open="Object.keys(filterErrors).length > 0">
+            <summary>更多筛选</summary>
           <div class="form-grid">
             <div class="field">
               <label class="field__label" for="f-minprice">最低价格</label>
@@ -280,13 +278,120 @@ const output = computed(() => result.value.data?.output ?? null)
             <input v-model="filterDraft.onlyFreeShip" type="checkbox" :disabled="!available" />
             <span>仅包邮商品</span>
           </label>
+          </details>
           <div class="row">
             <button type="submit" class="btn" :disabled="!available || !state.sourceType || preview?.phase === 'running'">
-              {{ preview?.phase === 'running' ? '查询中…' : '预览数据' }}
+              <PhEye :size="16" aria-hidden="true" />{{ preview?.phase === 'running' ? '查询中…' : '预览数据' }}
             </button>
           </div>
         </form>
 
+
+      </PanelCard>
+    <PanelCard class="rules-panel" title="分析规则">
+      <template #actions>
+        <button type="button" class="btn btn--sm" :disabled="!available || ruleBusy" @click="newRule"><PhPlus :size="16" aria-hidden="true" />新建规则</button>
+      </template>
+
+      <p v-if="!available" class="muted">未连接扩展。</p>
+      <p v-else-if="rules.phase === 'idle' || rules.phase === 'loading'" class="muted" role="status">正在读取提示词规则…</p>
+      <Callout v-else-if="rules.phase === 'error'" tone="error" :view="rules.error">
+        <template #actions>
+          <button type="button" class="btn btn--sm" @click="controller.loadRules()">重试</button>
+        </template>
+      </Callout>
+      <template v-else>
+        <Callout v-if="state.ruleOp.phase === 'failed' && state.ruleOp.error" tone="error">{{ state.ruleOp.error }}</Callout>
+        <Callout v-else-if="state.ruleOp.phase === 'ok'" tone="ok">{{ state.ruleOp.kind === 'delete' ? '规则已删除。' : '规则已保存。' }}</Callout>
+
+        <EmptyState
+          v-if="rules.items.length === 0 && !ruleEditor"
+          title="还没有提示词规则"
+          description="分析需要选择一条规则。点击「新建规则」创建。"
+        />
+        <fieldset v-if="rules.items.length > 0" class="rules">
+          <legend class="sr-only">选择分析使用的提示词规则</legend>
+          <div v-for="rule in rules.items" :key="rule.id" class="rule" :class="{ 'rule--active': rule.id === state.selectedRuleId }">
+            <label class="rule__pick">
+              <input type="radio" name="prompt-rule" :value="rule.id" :checked="rule.id === state.selectedRuleId" @change="controller.selectRule(rule.id)" />
+              <span class="rule__text">
+                <span class="rule__name">{{ rule.name }}</span>
+                <span v-if="rule.description" class="rule__desc">{{ rule.description }}</span>
+              </span>
+            </label>
+            <div class="rule__actions">
+              <button type="button" class="btn btn--sm" :disabled="ruleBusy" :aria-label="`编辑规则 ${rule.name}`" :title="`编辑 ${rule.name}`" @click="editRule(rule)"><PhPencilSimple :size="16" /></button>
+              <template v-if="confirmDeleteId === rule.id">
+                <button type="button" class="btn btn--sm btn--danger" :disabled="ruleBusy" @click="removeRule(rule.id)">确认删除</button>
+                <button type="button" class="btn btn--sm btn--ghost" @click="confirmDeleteId = null">返回</button>
+              </template>
+              <button v-else type="button" class="btn btn--sm" :disabled="ruleBusy" :aria-label="`删除规则 ${rule.name}`" :title="`删除 ${rule.name}`" @click="confirmDeleteId = rule.id">
+                <PhTrash :size="16" />
+              </button>
+            </div>
+          </div>
+        </fieldset>
+
+
+      </template>
+    </PanelCard>
+    <PanelCard class="run-panel" title="运行分析">
+      <div class="run">
+        <div class="form-grid">
+          <div class="field">
+            <label class="field__label" for="a-sample">送入模型的抽样条数</label>
+            <input id="a-sample" v-model="sampleLimitText" class="input" inputmode="numeric" :disabled="!available || active || creating" />
+            <span v-if="sampleError" class="field__error" role="alert">{{ sampleError }}</span>
+            <span v-else class="field__hint">1 到 50，默认 20</span>
+          </div>
+          <div class="field field--wide">
+            <label class="field__label" for="a-custom">补充要求（可选）</label>
+            <textarea
+              id="a-custom"
+              v-model="customInstructions"
+              class="input"
+              rows="2"
+              maxlength="500"
+              :disabled="!available || active || creating"
+              placeholder="例如：重点关注 100 元以下的商品"
+            ></textarea>
+          </div>
+        </div>
+
+        <p class="muted">
+          数据源：<strong>{{ state.sourceType === 'feishu' ? '飞书多维表格' : state.sourceType === 'local' ? '本地商品库' : '未选择' }}</strong>
+          · 规则：<strong>{{ selectedRule?.name ?? '未选择' }}</strong>
+        </p>
+
+        <Callout v-if="task.create.phase === 'failed' && task.create.error" tone="error" :view="task.create.error" />
+
+        <div class="row">
+          <button type="button" class="btn btn--primary" :disabled="!canStart" @click="startAnalysis">
+            <PhPlay :size="16" aria-hidden="true" />{{ creating ? '正在创建…' : active ? '分析进行中' : '开始分析' }}
+          </button>
+          <button
+            v-if="active"
+            type="button"
+            class="btn"
+            :disabled="task.cancel.phase === 'running'"
+            @click="controller.cancelAnalysis()"
+          >
+            {{ task.cancel.phase === 'running' ? '取消中…' : '取消分析' }}
+          </button>
+          <button v-if="current" type="button" class="btn btn--ghost" :disabled="task.refresh.phase === 'running'" @click="controller.refreshTask()">
+            {{ task.refresh.phase === 'running' ? '刷新中…' : '刷新状态' }}
+          </button>
+        </div>
+        <Callout v-if="task.cancel.phase === 'failed' && task.cancel.error" tone="error" :view="task.cancel.error" />
+        <Callout v-if="task.refresh.phase === 'failed' && task.refresh.error" tone="warn" :view="task.refresh.error" />
+        <Callout v-if="task.restore.phase === 'error' && task.restore.error" tone="warn" :view="task.restore.error" />
+
+
+      </div>
+    </PanelCard>
+      </aside>
+      <section class="analysis-output" aria-label="数据预览和分析结果">
+      <PanelCard class="preview-panel" title="数据预览">
         <div class="preview" aria-live="polite">
           <Callout v-if="preview?.phase === 'failed'" tone="error" :view="preview.error" />
           <p v-else-if="preview?.phase === 'running'" class="muted" role="status">正在查询数据源…</p>
@@ -331,139 +436,9 @@ const output = computed(() => result.value.data?.output ?? null)
             </template>
           </template>
         </div>
+        <EmptyState v-if="!preview || preview.phase === 'idle'" title="预览待分析的数据" description="设置筛选范围后，点击「预览数据」。" />
       </PanelCard>
-    </div>
-
-    <!-- 提示词规则 -->
-    <PanelCard title="提示词规则" description="决定模型如何分析数据；规则里不要写入任何密钥">
-      <template #actions>
-        <button type="button" class="btn btn--sm" :disabled="!available || ruleBusy" @click="newRule">新建规则</button>
-      </template>
-
-      <p v-if="!available" class="muted">未连接扩展。</p>
-      <p v-else-if="rules.phase === 'idle' || rules.phase === 'loading'" class="muted" role="status">正在读取提示词规则…</p>
-      <Callout v-else-if="rules.phase === 'error'" tone="error" :view="rules.error">
-        <template #actions>
-          <button type="button" class="btn btn--sm" @click="controller.loadRules()">重试</button>
-        </template>
-      </Callout>
-      <template v-else>
-        <Callout v-if="state.ruleOp.phase === 'failed' && state.ruleOp.error" tone="error">{{ state.ruleOp.error }}</Callout>
-        <Callout v-else-if="state.ruleOp.phase === 'ok'" tone="ok">{{ state.ruleOp.kind === 'delete' ? '规则已删除。' : '规则已保存。' }}</Callout>
-
-        <EmptyState
-          v-if="rules.items.length === 0 && !ruleEditor"
-          title="还没有提示词规则"
-          description="分析需要选择一条规则。点击「新建规则」创建。"
-        />
-        <fieldset v-if="rules.items.length > 0" class="rules">
-          <legend class="sr-only">选择分析使用的提示词规则</legend>
-          <div v-for="rule in rules.items" :key="rule.id" class="rule" :class="{ 'rule--active': rule.id === state.selectedRuleId }">
-            <label class="rule__pick">
-              <input type="radio" name="prompt-rule" :value="rule.id" :checked="rule.id === state.selectedRuleId" @change="controller.selectRule(rule.id)" />
-              <span class="rule__text">
-                <span class="rule__name">{{ rule.name }}</span>
-                <span v-if="rule.description" class="rule__desc">{{ rule.description }}</span>
-              </span>
-            </label>
-            <div class="rule__actions">
-              <button type="button" class="btn btn--sm" :disabled="ruleBusy" :aria-label="`编辑规则 ${rule.name}`" @click="editRule(rule)">编辑</button>
-              <template v-if="confirmDeleteId === rule.id">
-                <button type="button" class="btn btn--sm btn--danger" :disabled="ruleBusy" @click="removeRule(rule.id)">确认删除</button>
-                <button type="button" class="btn btn--sm btn--ghost" @click="confirmDeleteId = null">返回</button>
-              </template>
-              <button v-else type="button" class="btn btn--sm" :disabled="ruleBusy" :aria-label="`删除规则 ${rule.name}`" @click="confirmDeleteId = rule.id">
-                删除
-              </button>
-            </div>
-          </div>
-        </fieldset>
-
-        <form v-if="ruleEditor" class="form editor" novalidate @submit.prevent="saveRule">
-          <h3 class="h3">{{ ruleEditor.id ? '编辑规则' : '新建规则' }}</h3>
-          <div class="field">
-            <label class="field__label" for="pr-name">规则名称</label>
-            <input id="pr-name" v-model="ruleEditor.name" class="input" :disabled="ruleBusy" />
-          </div>
-          <div class="field">
-            <label class="field__label" for="pr-desc">说明（可选）</label>
-            <input id="pr-desc" v-model="ruleEditor.description" class="input" :disabled="ruleBusy" />
-          </div>
-          <div class="field">
-            <label class="field__label" for="pr-system">系统提示词</label>
-            <textarea id="pr-system" v-model="ruleEditor.systemPrompt" class="input" rows="5" :disabled="ruleBusy"></textarea>
-            <span class="field__hint">需要要求模型只输出 JSON，包含 summary、keyFindings、priceAnalysis、opportunities、risks。</span>
-          </div>
-          <div class="field">
-            <label class="field__label" for="pr-user">用户提示词模板</label>
-            <textarea id="pr-user" v-model="ruleEditor.userPromptTemplate" class="input" rows="5" :disabled="ruleBusy"></textarea>
-            <span class="field__hint">可用变量：<code>{{ variableList }}</code></span>
-          </div>
-          <Callout v-if="ruleErrors.length > 0" tone="error">
-            <ul class="errors">
-              <li v-for="message in ruleErrors" :key="message">{{ message }}</li>
-            </ul>
-          </Callout>
-          <div class="row">
-            <button type="submit" class="btn btn--primary" :disabled="ruleBusy">{{ ruleBusy ? '保存中…' : '保存规则' }}</button>
-            <button type="button" class="btn" :disabled="ruleBusy" @click="closeRuleEditor">取消</button>
-          </div>
-        </form>
-      </template>
-    </PanelCard>
-
-    <!-- 运行分析 -->
-    <PanelCard title="运行分析" description="用选中的规则和上面的过滤范围生成结构化分析">
-      <div class="run">
-        <div class="form-grid">
-          <div class="field">
-            <label class="field__label" for="a-sample">送入模型的抽样条数</label>
-            <input id="a-sample" v-model="sampleLimitText" class="input" inputmode="numeric" :disabled="!available || active || creating" />
-            <span v-if="sampleError" class="field__error" role="alert">{{ sampleError }}</span>
-            <span v-else class="field__hint">1 到 50，默认 20</span>
-          </div>
-          <div class="field field--wide">
-            <label class="field__label" for="a-custom">补充要求（可选）</label>
-            <textarea
-              id="a-custom"
-              v-model="customInstructions"
-              class="input"
-              rows="2"
-              maxlength="500"
-              :disabled="!available || active || creating"
-              placeholder="例如：重点关注 100 元以下的商品"
-            ></textarea>
-          </div>
-        </div>
-
-        <p class="muted">
-          数据源：<strong>{{ state.sourceType === 'feishu' ? '飞书多维表格' : state.sourceType === 'local' ? '本地商品库' : '未选择' }}</strong>
-          · 规则：<strong>{{ selectedRule?.name ?? '未选择' }}</strong>
-        </p>
-
-        <Callout v-if="task.create.phase === 'failed' && task.create.error" tone="error" :view="task.create.error" />
-
-        <div class="row">
-          <button type="button" class="btn btn--primary" :disabled="!canStart" @click="startAnalysis">
-            {{ creating ? '正在创建…' : active ? '分析进行中' : '开始分析' }}
-          </button>
-          <button
-            v-if="active"
-            type="button"
-            class="btn"
-            :disabled="task.cancel.phase === 'running'"
-            @click="controller.cancelAnalysis()"
-          >
-            {{ task.cancel.phase === 'running' ? '取消中…' : '取消分析' }}
-          </button>
-          <button v-if="current" type="button" class="btn btn--ghost" :disabled="task.refresh.phase === 'running'" @click="controller.refreshTask()">
-            {{ task.refresh.phase === 'running' ? '刷新中…' : '刷新状态' }}
-          </button>
-        </div>
-        <Callout v-if="task.cancel.phase === 'failed' && task.cancel.error" tone="error" :view="task.cancel.error" />
-        <Callout v-if="task.refresh.phase === 'failed' && task.refresh.error" tone="warn" :view="task.refresh.error" />
-        <Callout v-if="task.restore.phase === 'error' && task.restore.error" tone="warn" :view="task.restore.error" />
-
+    <PanelCard class="result-panel" title="分析结果">
         <!-- 任务状态 -->
         <div v-if="current && currentStatus" class="job" aria-live="polite">
           <div class="job__head">
@@ -475,11 +450,11 @@ const output = computed(() => result.value.data?.output ?? null)
             :label="`分析进度 ${current.progress}%`"
             :tone="current.status === 'failed' ? 'error' : current.status === 'completed' ? 'ok' : 'accent'"
           />
-          <p class="muted"><span class="mono">{{ current.progress }}%</span> · 进度由后台上报，查询数据 20%、统计 40%、组装提示词 60%、解析结果 85%。</p>
+          <p class="muted"><span class="mono">{{ current.progress }}%</span></p>
           <Callout v-if="failure" tone="error" :view="failure" />
           <p v-if="cancelledNote" class="muted">{{ cancelledNote }}</p>
         </div>
-        <p v-else-if="available && task.restore.phase !== 'loading' && !creating" class="muted">还没有分析任务。选择规则并点击「开始分析」。</p>
+
 
         <!-- 结果 -->
         <div v-if="current?.status === 'completed'" class="result">
@@ -534,18 +509,55 @@ const output = computed(() => result.value.data?.output ?? null)
             </section>
           </template>
         </div>
-      </div>
+      <EmptyState v-if="!current && !creating" title="尚无分析结果" description="选择规则并开始分析，结果将显示在这里。" />
     </PanelCard>
+      </section>
+    </div>
+    <AppModal :open="Boolean(ruleEditor)" :title="ruleEditor?.id ? '编辑规则' : '新建规则'" :busy="ruleBusy" @close="closeRuleEditor">
+        <form v-if="ruleEditor" class="form editor" novalidate @submit.prevent="saveRule">
+          <p class="muted">规则决定模型如何分析商品数据，请勿填写密钥。</p>
+          <Callout v-if="state.ruleOp.phase === 'failed' && state.ruleOp.error" tone="error">{{ state.ruleOp.error }}</Callout>
+          <div class="field">
+            <label class="field__label" for="pr-name">规则名称</label>
+            <input id="pr-name" v-model="ruleEditor.name" class="input" :disabled="ruleBusy" />
+          </div>
+          <div class="field">
+            <label class="field__label" for="pr-desc">说明（可选）</label>
+            <input id="pr-desc" v-model="ruleEditor.description" class="input" :disabled="ruleBusy" />
+          </div>
+          <div class="field">
+            <label class="field__label" for="pr-system">系统提示词</label>
+            <textarea id="pr-system" v-model="ruleEditor.systemPrompt" class="input" rows="5" :disabled="ruleBusy"></textarea>
+            <span class="field__hint">需要要求模型只输出 JSON，包含 summary、keyFindings、priceAnalysis、opportunities、risks。</span>
+          </div>
+          <div class="field">
+            <label class="field__label" for="pr-user">用户提示词模板</label>
+            <textarea id="pr-user" v-model="ruleEditor.userPromptTemplate" class="input" rows="5" :disabled="ruleBusy"></textarea>
+            <span class="field__hint">可用变量：<code>{{ variableList }}</code></span>
+          </div>
+          <Callout v-if="ruleErrors.length > 0" tone="error">
+            <ul class="errors">
+              <li v-for="message in ruleErrors" :key="message">{{ message }}</li>
+            </ul>
+          </Callout>
+          <div class="row">
+            <button type="submit" class="btn btn--primary" :disabled="ruleBusy">{{ ruleBusy ? '保存中…' : '保存规则' }}</button>
+            <button type="button" class="btn" :disabled="ruleBusy" @click="closeRuleEditor">取消</button>
+          </div>
+        </form>
+    </AppModal>
   </div>
 </template>
 
 <style scoped>
-.grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-  gap: 18px;
-  align-items: start;
-}
+.analysis-layout { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 16px; align-items: start; }
+.analysis-config, .analysis-output { display: grid; gap: 16px; min-width: 0; }
+.advanced-filter summary { cursor: pointer; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.advanced-filter .check-row { margin-top: 12px; }
+.schema summary { cursor: pointer; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.analysis-layout :deep(.panel) { min-width: 0; }
+.analysis-layout .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
 
 .form {
   display: grid;
@@ -746,10 +758,7 @@ const output = computed(() => result.value.data?.output ?? null)
 }
 
 .editor {
-  padding: 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface-sunken);
+  padding: 0;
 }
 
 .errors {
@@ -844,9 +853,7 @@ const output = computed(() => result.value.data?.output ?? null)
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 1099px) {
-  .grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+@media (max-width: 900px) {
+  .analysis-layout { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

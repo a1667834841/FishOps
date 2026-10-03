@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import Callout from '../components/Callout.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PanelCard from '../components/PanelCard.vue'
+import { PhArrowsClockwise, PhPaperPlaneTilt, PhCheckCircle, PhWarningCircle, PhSpinnerGap, PhXCircle, PhShieldCheck } from '@phosphor-icons/vue'
 import ProgressBar from '../components/ProgressBar.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { usePublish } from '../composables/usePublish'
@@ -19,7 +20,7 @@ import type { PublishTask } from '../features/contracts'
 
 const emit = defineEmits<{ navigate: [page: PageId] }>()
 
-const { state, controller, inExtension } = usePublish()
+const { state, controller } = usePublish()
 
 const productsState = computed(() => state.value.products)
 const products = computed(() => state.value.products.items)
@@ -220,16 +221,11 @@ function onFocusTask(task: PublishTask): void {
 
 <template>
   <div class="page publish-page">
-    <!-- 环境未就绪提醒 -->
-    <Callout v-if="!inExtension" tone="warn" title="当前处于开发或脱机环境">
-      未检测到扩展运行时环境（需在 Chrome 扩展内页中运行）。界面已接入 Mock 数据流，可正常测试商品选择与状态流转。
-    </Callout>
-
     <!-- 1. 发布流程引导 -->
     <section aria-labelledby="stages-title">
       <div class="section-header">
-        <h2 id="stages-title" class="section-title">发布流程与安全防线</h2>
-        <span class="safe-badge">🛡️ 仅在用户点击“发布”后提交一次</span>
+        <h2 id="stages-title" class="section-title">发布流程</h2>
+        <span class="safe-badge"><PhShieldCheck :size="16" aria-hidden="true" /> 仅在点击发布后提交</span>
       </div>
       <ol class="stages">
         <li v-for="(stage, index) in stages" :key="stage.title" class="stage">
@@ -245,8 +241,8 @@ function onFocusTask(task: PublishTask): void {
 
     <!-- 2. 商品选择与来源区 -->
     <PanelCard
-      title="1. 选择待发布商品"
-      description="从本地商品库读取真实商品，支持显式下拉选择或明确随机挑选 1 条（禁止自动偷选）。"
+      title="选择商品"
+      description="选择商品后核对价格、标题和图片。"
     >
       <template #actions>
         <button
@@ -256,13 +252,13 @@ function onFocusTask(task: PublishTask): void {
           title="重新读取商品库"
           @click="controller.loadProducts()"
         >
-          🔄 刷新商品库
+          <PhArrowsClockwise :size="16" aria-hidden="true" /> 刷新商品库
         </button>
       </template>
 
       <!-- 商品库加载中 -->
       <div v-if="productsState.phase === 'loading'" class="loading-state">
-        <span class="loading-spinner" aria-hidden="true">⏳</span>
+        <PhSpinnerGap class="loading-spinner" aria-hidden="true" :size="18" />
         <span>正在读取商品库候选数据...</span>
       </div>
 
@@ -334,7 +330,7 @@ function onFocusTask(task: PublishTask): void {
 
     <!-- 3. 商品预览与规则设置 -->
     <div v-if="selectedProduct" class="publish-grid">
-      <PanelCard title="2. 商品与规则预览" description="核对来源字段与规则生成后的最终发布参数。">
+      <PanelCard title="商品与规则" description="核对来源字段与规则生成后的最终发布参数。">
         <div class="preview-card">
           <div class="preview-card__header">
             <img
@@ -426,8 +422,8 @@ function onFocusTask(task: PublishTask): void {
               :disabled="isActionRunning || !productValidation.valid"
               @click="onStartFillForm"
             >
-              <span v-if="isActionRunning" class="btn-spinner" aria-hidden="true">⏳</span>
-              <span v-else aria-hidden="true">🚀</span>
+              <PhSpinnerGap v-if="isActionRunning" class="btn-spinner" aria-hidden="true" :size="18" />
+              <PhPaperPlaneTilt v-else aria-hidden="true" :size="18" />
               {{ isActionRunning ? '正在自动填充发布表单...' : '开始自动填充发布表单' }}
             </button>
             <span class="safe-note">提示：表单填充将在后台静默标签页中执行，完成后可点击“发布”提交。</span>
@@ -446,7 +442,7 @@ function onFocusTask(task: PublishTask): void {
       <!-- 4. 当前执行与发布提交流程台 -->
       <PanelCard
         v-if="currentTask"
-        title="3. 闲鱼发布提交"
+        title="发布确认"
         description="表单已填充就绪并生成一次性提交令牌，请点击“发布”按钮提交。"
       >
         <div class="confirmation-panel">
@@ -469,14 +465,14 @@ function onFocusTask(task: PublishTask): void {
           <div v-if="currentTask.status === 'waiting_confirmation'" class="publish-submit-panel">
             <!-- 场景 A：已成功提交 -->
             <div v-if="isSubmitted" class="submitted-box" role="status" aria-live="polite">
-              <span class="done-icon" aria-hidden="true">✅</span>
+              <PhCheckCircle class="done-icon" aria-hidden="true" :size="18" />
               <span class="done-text">商品发布已成功提交！</span>
             </div>
 
             <!-- 场景 B：提交结果未知（超时或未收到信号，严禁自动重试） -->
             <div v-else-if="isUnknown" class="unknown-box" role="alert" aria-live="assertive">
               <div class="unknown-header">
-                <span class="warn-icon" aria-hidden="true">⚠️</span>
+                <PhWarningCircle class="warn-icon" aria-hidden="true" :size="18" />
                 <strong class="warn-title">发布结果未知，严禁自动重试</strong>
               </div>
               <p class="warn-desc">
@@ -524,7 +520,7 @@ function onFocusTask(task: PublishTask): void {
                   @click="onSubmitPublish(currentTask.id)"
                 >
                   <span v-if="isSubmitting" class="btn-spinner" aria-hidden="true" />
-                  <span v-else aria-hidden="true">🚀</span>
+                  <PhPaperPlaneTilt v-else aria-hidden="true" :size="18" />
                   <span>{{ isSubmitting ? '正在提交发布...' : '发布' }}</span>
                 </button>
 
@@ -540,7 +536,7 @@ function onFocusTask(task: PublishTask): void {
               </div>
 
               <p v-if="!currentTask.result?.submitToken" class="token-missing-tip" role="status">
-                ⚠️ 当前任务缺少有效提交令牌，请先重新填充表单。
+                当前任务缺少有效提交令牌，请先重新填充表单。
               </p>
             </div>
           </div>
@@ -559,7 +555,7 @@ function onFocusTask(task: PublishTask): void {
 
           <!-- 填表失败状态展示 -->
           <div v-else-if="currentTask.status === 'failed'" class="failed-box" role="alert">
-            <span class="failed-icon" aria-hidden="true">❌</span>
+            <PhXCircle class="failed-icon" aria-hidden="true" :size="18" />
             <span class="failed-text">
               发布异常：{{ currentTask.error || action.error?.title || '执行未完成' }}
             </span>
@@ -569,7 +565,8 @@ function onFocusTask(task: PublishTask): void {
     </div>
 
     <!-- 5. 发布任务历史列表 -->
-    <PanelCard
+    <details class="task-history"><summary>发布任务历史</summary>
+<PanelCard
       title="发布任务历史"
       description="最近生成的发布任务与提交结果（数据由 PUBLISH_LIST 实时提供）。"
     >
@@ -581,13 +578,13 @@ function onFocusTask(task: PublishTask): void {
           title="刷新发布任务列表"
           @click="controller.loadTasks()"
         >
-          🔄 刷新列表
+          <PhArrowsClockwise :size="16" aria-hidden="true" /> 刷新列表
         </button>
       </template>
 
       <!-- 任务列表加载中 -->
       <div v-if="taskListState.phase === 'loading'" class="loading-state">
-        <span class="loading-spinner" aria-hidden="true">⏳</span>
+        <PhSpinnerGap class="loading-spinner" aria-hidden="true" :size="18" />
         <span>正在读取发布任务列表...</span>
       </div>
 
@@ -657,10 +654,14 @@ function onFocusTask(task: PublishTask): void {
         </table>
       </div>
     </PanelCard>
+</details>
   </div>
 </template>
 
 <style scoped>
+.task-history summary { cursor: pointer; padding: 12px 0; font-weight: 600; }
+.stages { border-bottom: 1px solid var(--border); }
+
 .publish-page {
   display: flex;
   flex-direction: column;
@@ -675,6 +676,8 @@ function onFocusTask(task: PublishTask): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 12px;
 }
 
@@ -683,7 +686,7 @@ function onFocusTask(task: PublishTask): void {
   font-weight: 650;
 }
 
-.safe-badge {
+.safe-badge { display: inline-flex; align-items: center; gap: 6px;
   font-size: 12px;
   font-weight: 600;
   color: var(--warn);
@@ -699,10 +702,10 @@ function onFocusTask(task: PublishTask): void {
 }
 
 .stage {
-  padding: 14px 16px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-panel);
+  padding: 10px 0 14px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .stage__top {
@@ -1136,8 +1139,8 @@ function onFocusTask(task: PublishTask): void {
   align-items: center;
   gap: 8px;
   padding: 12px;
-  background: var(--neutral-soft);
-  border: 1px solid var(--border-soft);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
   border-radius: var(--radius-control);
   font-size: 13px;
   color: var(--text-muted);
