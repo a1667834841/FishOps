@@ -18,10 +18,10 @@ function isThemeMode(value: unknown): value is ThemeMode {
 function readStored(): ThemeMode {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
-    return isThemeMode(raw) ? raw : 'system'
+    return isThemeMode(raw) ? raw : 'light'
   } catch {
     // 存储不可用（隐私模式等）时退回跟随系统。
-    return 'system'
+    return 'light'
   }
 }
 

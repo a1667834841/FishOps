@@ -18,8 +18,6 @@ export interface NavItem {
   description: string
   /** 图标位文字：不引入图标库，用单字符号保持无障碍与一致性 */
   glyph: string
-  /** 研发阶段标记，仅用于侧栏提示 */
-  phase?: string
 }
 
 /** 首页默认页面：刷新后始终回到概览。 */
@@ -40,7 +38,6 @@ export const primaryNav: readonly NavItem[] = [
     title: '数据采集',
     description: '创建采集任务，把商品数据汇入商品库',
     glyph: '采',
-    phase: 'P4',
   },
   {
     id: 'chat',
@@ -48,7 +45,6 @@ export const primaryNav: readonly NavItem[] = [
     title: '聊天中心',
     description: '查看买家会话，生成回复建议并手动发送',
     glyph: '聊',
-    phase: 'P5/P6',
   },
   {
     id: 'products',
@@ -56,7 +52,6 @@ export const primaryNav: readonly NavItem[] = [
     title: '商品库',
     description: '查看、筛选并导出已采集的商品',
     glyph: '库',
-    phase: 'P4',
   },
   {
     id: 'publish',
@@ -71,7 +66,6 @@ export const primaryNav: readonly NavItem[] = [
     title: '数据分析',
     description: '选择数据源与提示词规则，生成结构化分析',
     glyph: '析',
-    phase: 'P7',
   },
 ]
 
@@ -80,7 +74,7 @@ export const settingsNav: NavItem = {
   id: 'settings',
   label: '设置',
   title: '设置',
-  description: '外观、后台能力状态与待接入的安全配置',
+  description: '外观、模型、飞书和回复配置',
   glyph: '设',
 }
 

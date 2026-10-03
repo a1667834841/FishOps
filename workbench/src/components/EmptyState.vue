@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PhTray } from '@phosphor-icons/vue'
 defineProps<{
   title: string
   description: string
@@ -9,7 +10,7 @@ defineProps<{
 
 <template>
   <div class="empty">
-    <span v-if="mark" class="empty__mark" aria-hidden="true">{{ mark }}</span>
+    <PhTray :size="32" class="empty__icon" aria-hidden="true" />
     <h3 class="empty__title">{{ title }}</h3>
     <p class="empty__desc">{{ description }}</p>
     <div v-if="$slots.default" class="empty__actions">
@@ -19,6 +20,7 @@ defineProps<{
 </template>
 
 <style scoped>
+.empty__icon { margin-bottom: 8px; color: var(--text-muted); }
 .empty {
   display: flex;
   flex-direction: column;

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { PhGear, PhWrench } from '@phosphor-icons/vue'
 import type { NavItem } from '../data/navigation'
 import { useBridgeStatus, type BridgeState } from '../composables/useBridgeStatus'
-import { useTheme } from '../composables/useTheme'
 import StatusTag, { type TagTone } from './StatusTag.vue'
 
 defineProps<{ page: NavItem }>()
@@ -13,11 +13,10 @@ const emit = defineEmits<{
 }>()
 
 const { status } = useBridgeStatus()
-const theme = useTheme()
 
 const envMeta = computed<{ label: string; tone: TagTone; pulse: boolean }>(() => {
   const labels: Record<BridgeState, { label: string; tone: TagTone; pulse: boolean }> = {
-    unavailable: { label: '非扩展环境', tone: 'warn', pulse: false },
+    unavailable: { label: '未连接扩展', tone: 'warn', pulse: false },
     idle: { label: '扩展内页', tone: 'neutral', pulse: false },
     checking: { label: '连接检测中', tone: 'accent', pulse: true },
     online: {
@@ -35,7 +34,6 @@ const envMeta = computed<{ label: string; tone: TagTone; pulse: boolean }>(() =>
   <header class="topbar">
     <div class="topbar__title">
       <h1 class="topbar__h1">{{ page.title }}</h1>
-      <p class="topbar__desc">{{ page.description }}</p>
     </div>
 
     <div class="topbar__actions">
@@ -46,18 +44,10 @@ const envMeta = computed<{ label: string; tone: TagTone; pulse: boolean }>(() =>
         @click="emit('diagnostics')"
       >
         <StatusTag :tone="envMeta.tone" dot :pulse="envMeta.pulse">{{ envMeta.label }}</StatusTag>
-        <span class="env__action">诊断</span>
+        <PhWrench :size="16" aria-hidden="true" />
       </button>
 
-      <button type="button" class="btn btn--ghost btn--sm" :title="`外观：${theme.label.value}，点击切换`" @click="theme.cycle()">
-        <span class="topbar__theme-key">外观</span>
-        {{ theme.label.value }}
-      </button>
-
-      <button type="button" class="account" @click="emit('settings')">
-        <span class="account__avatar" aria-hidden="true">我</span>
-        <span class="account__text">本地工作区</span>
-      </button>
+      <button type="button" class="btn btn--ghost btn--icon" title="设置" aria-label="打开设置" @click="emit('settings')"><PhGear :size="20" /></button>
     </div>
   </header>
 </template>
@@ -79,7 +69,7 @@ const envMeta = computed<{ label: string; tone: TagTone; pulse: boolean }>(() =>
 }
 
 .topbar__h1 {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   line-height: 1.3;
   letter-spacing: 0;

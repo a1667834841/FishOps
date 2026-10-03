@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
+import { PhX } from '@phosphor-icons/vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -70,7 +71,7 @@ function onKeydown(event: KeyboardEvent): void {
             <h2 id="diagnostics-title" class="drawer__title">系统状态与开发诊断</h2>
             <p class="drawer__desc">验证 Workbench 与扩展 background 之间的 Bridge 链路。</p>
           </div>
-          <button ref="closeRef" type="button" class="btn btn--sm" @click="emit('close')">关闭</button>
+          <button ref="closeRef" type="button" class="btn btn--ghost btn--icon" aria-label="关闭诊断" title="关闭" @click="emit('close')"><PhX :size="20" /></button>
         </header>
         <div class="drawer__body">
           <slot />

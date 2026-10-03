@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
 import DiagnosticsDrawer from './components/DiagnosticsDrawer.vue'
 import { useBridgeStatus } from './composables/useBridgeStatus'
 import { DEFAULT_PAGE, findNavItem, type PageId } from './data/navigation'
-import AnalyticsPage from './pages/AnalyticsPage.vue'
 import BridgeDemo from './pages/BridgeDemo.vue'
-import ChatCenterPage from './pages/ChatCenterPage.vue'
-import CollectPage from './pages/CollectPage.vue'
 import OverviewPage from './pages/OverviewPage.vue'
-import ProductsPage from './pages/ProductsPage.vue'
-import PublishPage from './pages/PublishPage.vue'
-import SettingsPage from './pages/SettingsPage.vue'
+const AnalyticsPage = defineAsyncComponent(() => import('./pages/AnalyticsPage.vue'))
+const ChatCenterPage = defineAsyncComponent(() => import('./pages/ChatCenterPage.vue'))
+const CollectPage = defineAsyncComponent(() => import('./pages/CollectPage.vue'))
+const ProductsPage = defineAsyncComponent(() => import('./pages/ProductsPage.vue'))
+const PublishPage = defineAsyncComponent(() => import('./pages/PublishPage.vue'))
+const SettingsPage = defineAsyncComponent(() => import('./pages/SettingsPage.vue'))
 
 /** 页面导航只用本地状态：不写入 URL 或存储，刷新后回到概览。 */
 const page = ref<PageId>(DEFAULT_PAGE)
@@ -27,7 +27,7 @@ const envNotice = computed<{ tone: 'warn' | 'error'; text: string } | null>(() =
   if (!inExtension) {
     return {
       tone: 'warn',
-      text: '当前不是扩展内页，与扩展相关的功能不可用。请通过 chrome-extension://<id>/workbench.html 打开工作台。',
+      text: '未连接扩展，请从浏览器扩展打开工作台。',
     }
   }
   if (status.value.state === 'error') {
@@ -62,7 +62,7 @@ async function go(next: PageId): Promise<void> {
     <div class="workspace">
       <AppTopbar :page="currentItem" @diagnostics="diagnosticsOpen = true" @settings="go('settings')" />
 
-      <main id="main" ref="mainRef" class="content" tabindex="-1">
+      <main id="main" ref="mainRef" class="content" :class="{ 'content--wide': page === 'chat' || page === 'products' }" tabindex="-1">
         <div v-if="envNotice" class="notice" :class="`notice--${envNotice.tone}`" role="status">
           <p class="notice__text">{{ envNotice.text }}</p>
           <button type="button" class="btn btn--sm" @click="diagnosticsOpen = true">查看诊断</button>
@@ -91,7 +91,7 @@ async function go(next: PageId): Promise<void> {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   align-items: start;
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .skip {
@@ -113,19 +113,21 @@ async function go(next: PageId): Promise<void> {
 
 .workspace {
   min-width: 0;
-  padding: 24px 28px 48px;
+  padding: 20px 24px 32px;
 }
 
 .content {
-  max-width: 1180px;
+  max-width: 1440px;
+  margin-inline: auto;
   display: grid;
-  gap: 18px;
+  gap: 16px;
   align-content: start;
 }
 
 .content:focus {
   outline: none;
 }
+.content--wide { max-width: none; }
 
 .notice {
   display: flex;

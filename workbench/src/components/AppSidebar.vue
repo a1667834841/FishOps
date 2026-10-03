@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { PhSquaresFour, PhDownloadSimple, PhChatsCircle, PhPackage, PhPaperPlaneTilt, PhChartBar, PhGear } from '@phosphor-icons/vue'
 import { primaryNav, settingsNav, type NavItem, type PageId } from '../data/navigation'
 
 defineProps<{ current: PageId }>()
@@ -8,6 +9,7 @@ const emit = defineEmits<{ navigate: [page: PageId] }>()
 
 /** 窄屏下导航默认折叠，桌面端该状态无效（CSS 始终展示导航）。 */
 const menuOpen = ref(false)
+const icons = { overview: PhSquaresFour, collect: PhDownloadSimple, chat: PhChatsCircle, products: PhPackage, publish: PhPaperPlaneTilt, analytics: PhChartBar, settings: PhGear }
 
 function go(item: NavItem): void {
   menuOpen.value = false
@@ -46,9 +48,8 @@ function go(item: NavItem): void {
             :aria-current="item.id === current ? 'page' : undefined"
             @click="go(item)"
           >
-            <span class="nav__glyph" aria-hidden="true">{{ item.glyph }}</span>
+            <component :is="icons[item.id]" :size="20" aria-hidden="true" />
             <span class="nav__label">{{ item.label }}</span>
-            <span v-if="item.phase" class="nav__phase">{{ item.phase }}</span>
           </button>
         </li>
       </ul>
@@ -61,10 +62,9 @@ function go(item: NavItem): void {
           :aria-current="settingsNav.id === current ? 'page' : undefined"
           @click="go(settingsNav)"
         >
-          <span class="nav__glyph" aria-hidden="true">{{ settingsNav.glyph }}</span>
+          <PhGear :size="20" aria-hidden="true" />
           <span class="nav__label">{{ settingsNav.label }}</span>
         </button>
-        <p class="nav__version">MVP 开发版 · v0.1.0</p>
       </div>
     </nav>
   </aside>
@@ -73,15 +73,15 @@ function go(item: NavItem): void {
 <style scoped>
 .sidebar {
   position: sticky;
-  top: 12px;
+  top: 0;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 24px);
-  margin: 12px 0 12px 12px;
-  padding: 14px 10px 12px;
-  border-radius: var(--radius-panel);
+  height: 100dvh;
+  margin: 0;
+  padding: 24px 12px 16px;
+  border-radius: 0;
   background: var(--sidebar-bg);
-  border: 1px solid var(--sidebar-border);
+  border-right: 1px solid var(--sidebar-border);
   color: var(--sidebar-text);
 }
 
@@ -112,7 +112,7 @@ function go(item: NavItem): void {
   font-size: 16px;
   font-weight: 700;
   line-height: 1.2;
-  color: #fff;
+  color: var(--text);
 }
 
 .brand__sub {
@@ -171,7 +171,7 @@ function go(item: NavItem): void {
 
 .nav__item:hover {
   background: var(--sidebar-hover);
-  color: #fff;
+  color: var(--text);
 }
 
 .nav__item:active {
@@ -185,7 +185,7 @@ function go(item: NavItem): void {
 
 .nav__item.is-active {
   background: var(--sidebar-active);
-  color: #fff;
+  color: var(--text);
   font-weight: 600;
 }
 
@@ -259,7 +259,7 @@ function go(item: NavItem): void {
     border: 1px solid var(--sidebar-border);
     border-radius: var(--radius-control);
     background: var(--sidebar-hover);
-    color: #fff;
+    color: var(--text);
     cursor: pointer;
   }
 
