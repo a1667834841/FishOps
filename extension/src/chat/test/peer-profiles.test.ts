@@ -10,7 +10,7 @@ import type { Conversation } from '../../../../shared/types/chat'
 import {
   PeerProfileResolver,
   parseSessionSyncProfiles,
-  parseUserQueryAvatar,
+  parseUserQueryProfile,
   type PeerProfileRequest,
   type PeerProfileRequester,
 } from '../peer-profiles'
@@ -89,22 +89,28 @@ test('parseSessionSyncProfiles：无法确认归属时跳过（不猜、不混�
   assert.deepEqual(parseSessionSyncProfiles(syncPayload([{ id: '1', ownerId: 'me', ownerLogo: AVATAR, guestId: 'peer', guestLogo: AVATAR2 }])), [])
 })
 
-test('parseSessionSyncProfiles：http（非 https）logo 被拒绝', () => {
+test('parseSessionSyncProfiles：http（非 https）logo 被拒绝，但仍回传 peerId 用于纠正', () => {
   const payload = syncPayload([{ id: '1', ownerId: 'me', guestId: 'peer', guestLogo: 'http://img.alicdn.com/x.jpg' }])
-  assert.deepEqual(parseSessionSyncProfiles(payload, 'me'), [])
+  // 非法 logo 不采用（peerAvatarUrl 字段缺席），但归属已验证的 peerUserId 仍回传。
+  assert.deepEqual(parseSessionSyncProfiles(payload, 'me'), [{ sessionId: '1', peerUserId: 'peer' }])
 })
 
-test('parseUserQueryAvatar：提取 data.userInfo.logo 并校验 https', () => {
-  assert.equal(parseUserQueryAvatar({ ret: ['SUCCESS'], data: { userInfo: { logo: AVATAR } } }), AVATAR)
-  assert.equal(parseUserQueryAvatar({ data: { userInfo: { logo: 'http://img.alicdn.com/x.jpg' } } }), undefined)
-  assert.equal(parseUserQueryAvatar({ data: {} }), undefined)
-  assert.equal(parseUserQueryAvatar('nope'), undefined)
+test('parseUserQueryProfile：提取 data.userInfo 的 logo/昵称并校验 https', () => {
+  assert.deepEqual(parseUserQueryProfile({ ret: ['SUCCESS'], data: { userInfo: { logo: AVATAR, fishNick: '买家' } } }), {
+    peerAvatarUrl: AVATAR,
+    peerUserName: '买家',
+  })
+  assert.deepEqual(parseUserQueryProfile({ data: { userInfo: { logo: 'http://img.alicdn.com/x.jpg' } } }), {})
+  assert.deepEqual(parseUserQueryProfile({ data: {} }), {})
+  assert.deepEqual(parseUserQueryProfile('nope'), {})
 })
 
-test('resolveMissing：会话已有头像时不发起任何请求', async () => {
+test('resolveMissing：会话资料已完备时不发起任何请求', async () => {
   const requester = new FakeRequester(() => syncPayload([]))
   const resolver = new PeerProfileResolver({ requester, myUserId: 'me' })
-  const updates = await resolver.resolveMissing([conv({ sessionId: '1', peerAvatarUrl: AVATAR })])
+  const updates = await resolver.resolveMissing([
+    conv({ sessionId: '1', peerUserId: 'peer', peerUserName: '买家', peerAvatarUrl: AVATAR }),
+  ])
   assert.deepEqual(updates, [])
   assert.equal(requester.calls.length, 0)
 })
@@ -164,30 +170,131 @@ test('resolveMissing：失败回报粗粒度诊断，不泄露异常文本', asy
   assert.equal(JSON.stringify(failures).includes('secret response'), false)
 })
 
-test('resolveMissing：session.sync 失败时回退 user.query（按 peerId）', async () => {
+test('resolveMissing：session.sync 失败时回退 pc.user.query v4.0（isOwner:false / sessionType:1）', async () => {
+  const requester = new FakeRequester((request) => {
+    if (request.api === 'session.sync') throw new Error('boom')
+    return { data: { userInfo: { logo: AVATAR, fishNick: '买家' } } }
+  })
+  const resolver = new PeerProfileResolver({ requester, myUserId: 'me' })
+  const updates = await resolver.resolveMissing([conv({ sessionId: '1', peerUserId: 'peer' })])
+  assert.deepEqual(updates, [{ sessionId: '1', peerAvatarUrl: AVATAR, peerUserName: '买家' }])
+  const queryCall = requester.calls.find((c) => c.api === 'user.query')
+  assert.deepEqual(queryCall?.data, { type: 0, sessionType: 1, sessionId: '1', isOwner: false })
+})
+
+test('resolveMissing：user.query 回退不使用 userId（无自身 ID 回退面）', async () => {
   const requester = new FakeRequester((request) => {
     if (request.api === 'session.sync') throw new Error('boom')
     return { data: { userInfo: { logo: AVATAR } } }
   })
   const resolver = new PeerProfileResolver({ requester, myUserId: 'me' })
-  const updates = await resolver.resolveMissing([conv({ sessionId: '1', peerUserId: 'peer' })])
-  assert.deepEqual(updates, [{ sessionId: '1', peerUserId: 'peer', peerAvatarUrl: AVATAR }])
+  // 会话记录的 peer 正是自己（账号变化遗留）；回退仍按 session 作用域取对方，不按 userId 猜。
+  const updates = await resolver.resolveMissing([conv({ sessionId: '1', peerUserId: 'me' })])
+  assert.deepEqual(updates, [{ sessionId: '1', peerAvatarUrl: AVATAR }])
   const queryCall = requester.calls.find((c) => c.api === 'user.query')
-  assert.deepEqual(queryCall?.data, { type: 0, userId: 'peer', sessionId: '1' })
+  assert.equal('userId' in (queryCall?.data ?? {}), false)
+})
+
+test('parseSessionSyncProfiles：sessionTypes[1] 普通单聊结构（ownerInfo/userInfo 位于 session 内）', () => {
+  const payload = {
+    data: {
+      sessions: [
+        {
+          memberFlags: 1,
+          message: { summary: 'hi' },
+          session: {
+            sessionId: 123,
+            sessionType: 1,
+            ownerInfo: { userId: 'me', logo: AVATAR },
+            userInfo: { userId: 'peer', fishNick: '买家', logo: AVATAR2 },
+          },
+        },
+      ],
+    },
+  }
+  assert.deepEqual(parseSessionSyncProfiles(payload, 'me'), [
+    { sessionId: '123', peerUserId: 'peer', peerUserName: '买家', peerAvatarUrl: AVATAR2 },
+  ])
+})
+
+test('parseSessionSyncProfiles：携带 fishNick / nick 作为对方昵称（fishNick 优先）', () => {
+  const payload = {
+    data: {
+      sessions: [
+        {
+          session: {
+            sessionId: '1',
+            ownerInfo: { userId: 'me' },
+            userInfo: { userId: 'peer', nick: '普通昵称', fishNick: '闲鱼昵称', logo: AVATAR },
+          },
+        },
+      ],
+    },
+  }
+  assert.deepEqual(parseSessionSyncProfiles(payload, 'me'), [
+    { sessionId: '1', peerUserId: 'peer', peerUserName: '闲鱼昵称', peerAvatarUrl: AVATAR },
+  ])
+})
+
+test('parseSessionSyncProfiles：myUserId 带 @goofish 后缀时仍能归一归属', () => {
+  // owner 是本人（无后缀），但 myUserId 携带后缀 → 归一后应匹配，不可误跳过。
+  const payload = syncPayload([{ id: '1', ownerId: 'me', guestId: 'peer', guestLogo: AVATAR }])
+  assert.deepEqual(parseSessionSyncProfiles(payload, 'me@goofish'), [
+    { sessionId: '1', peerUserId: 'peer', peerAvatarUrl: AVATAR },
+  ])
+})
+
+test('parseUserQueryProfile：v4.0 响应不含 userId，按会话作用域返回对方资料', () => {
+  assert.deepEqual(parseUserQueryProfile({ data: { userInfo: { logo: AVATAR, fishNick: '闲鱼昵称', nick: '普通' } } }), {
+    peerAvatarUrl: AVATAR,
+    peerUserName: '闲鱼昵称',
+  })
+  // 无 logo / 无昵称 → 空对象（表示无可用资料）。
+  assert.deepEqual(parseUserQueryProfile({ data: { userInfo: { type: 0 } } }), {})
+})
+
+test('resolveMissing：peer 等于自己（账号变化遗留）时用 session.sync 纠正并覆盖错头像', async () => {
+  const requester = new FakeRequester((request) => {
+    if (request.api === 'session.sync') {
+      return syncPayload([{ id: '1', ownerId: 'me', guestId: 'real-peer', guestLogo: AVATAR }])
+    }
+    return { data: {} }
+  })
+  const resolver = new PeerProfileResolver({ requester, myUserId: 'me' })
+  // 旧缓存把 peer 错记为自己，且带着（错误的）旧头像。
+  const updates = await resolver.resolveMissing([
+    conv({ sessionId: '1', peerUserId: 'me', peerAvatarUrl: AVATAR2 }),
+  ])
+  assert.deepEqual(updates, [{ sessionId: '1', peerUserId: 'real-peer', peerAvatarUrl: AVATAR }])
+})
+
+test('resolveMissing：session.sync 成功但无 logo 时仍回传 peerId / 昵称', async () => {
+  const requester = new FakeRequester((request) => {
+    if (request.api === 'session.sync') {
+      return {
+        data: {
+          sessions: [
+            { session: { sessionId: '1', ownerInfo: { userId: 'me' }, userInfo: { userId: 'peer', fishNick: '买家' } } },
+          ],
+        },
+      }
+    }
+    return { data: {} }
+  })
+  const resolver = new PeerProfileResolver({ requester, myUserId: 'me' })
+  const updates = await resolver.resolveMissing([conv({ sessionId: '1', peerUserId: 'peer' })])
+  assert.deepEqual(updates, [{ sessionId: '1', peerUserId: 'peer', peerUserName: '买家' }])
 })
 
 test('resolveMissing：单条 user.query 失败不影响其它会话', async () => {
   const requester = new FakeRequester((request) => {
     if (request.api === 'session.sync') throw new Error('no sync')
-    if (request.data.userId === 'bad') throw new Error('reject')
+    if (request.data.sessionId === '1') throw new Error('reject')
     return { data: { userInfo: { logo: AVATAR } } }
   })
   const resolver = new PeerProfileResolver({ requester, myUserId: 'me', concurrency: 1 })
-  const updates = await resolver.resolveMissing([
-    conv({ sessionId: '1', peerUserId: 'bad' }),
-    conv({ sessionId: '2', peerUserId: 'good' }),
-  ])
-  assert.deepEqual(updates, [{ sessionId: '2', peerUserId: 'good', peerAvatarUrl: AVATAR }])
+  const updates = await resolver.resolveMissing([conv({ sessionId: '1' }), conv({ sessionId: '2' })])
+  assert.deepEqual(updates, [{ sessionId: '2', peerAvatarUrl: AVATAR }])
 })
 
 test('resolveMissing：同一 sessionId 只查一次（去重）', async () => {
@@ -196,10 +303,7 @@ test('resolveMissing：同一 sessionId 只查一次（去重）', async () => {
     return { data: { userInfo: { logo: AVATAR } } }
   })
   const resolver = new PeerProfileResolver({ requester, myUserId: 'me' })
-  const updates = await resolver.resolveMissing([
-    conv({ sessionId: '1', peerUserId: 'peer' }),
-    conv({ sessionId: '1', peerUserId: 'peer' }),
-  ])
+  const updates = await resolver.resolveMissing([conv({ sessionId: '1' }), conv({ sessionId: '1' })])
   assert.equal(updates.length, 1)
   assert.equal(requester.calls.filter((c) => c.api === 'user.query').length, 1)
 })
@@ -216,7 +320,7 @@ test('resolveMissing：user.query 回退并发有界', async () => {
     return { data: { userInfo: { logo: AVATAR } } }
   })
   const resolver = new PeerProfileResolver({ requester, myUserId: 'me', concurrency: 2 })
-  const conversations = Array.from({ length: 6 }, (_, i) => conv({ sessionId: String(i + 1), peerUserId: `peer${i}` }))
+  const conversations = Array.from({ length: 6 }, (_, i) => conv({ sessionId: String(i + 1) }))
   const updates = await resolver.resolveMissing(conversations)
   assert.equal(updates.length, 6)
   assert.ok(maxActive <= 2, `并发应 <= 2，实际 ${maxActive}`)

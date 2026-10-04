@@ -32,7 +32,7 @@ test('fetchPeerProfileInPage：保留 mtop.request 的 this 绑定（生产页�
   }
   ;(globalThis as { lib?: Lib }).lib = { mtop }
   const serialized = eval(`(${fetchPeerProfileInPage.toString()})`) as typeof fetchPeerProfileInPage
-  const result = await serialized({ api: 'session.sync', data: { sessionTypes: [3], fetchNum: 30 } })
+  const result = await serialized({ api: 'session.sync', data: { sessionTypes: [1], fetchNum: 30 } })
   assert.equal(result.ok, true)
 })
 
@@ -46,10 +46,10 @@ test('fetchPeerProfileInPage：成功透传 payload，且参数固定为官方 S
       },
     },
   }
-  const result = await fetchPeerProfileInPage({ api: 'user.query', data: { type: 0, userId: 'p', sessionId: '1' } })
+  const result = await fetchPeerProfileInPage({ api: 'user.query', data: { type: 0, sessionType: 1, sessionId: '1', isOwner: false } })
   assert.equal(result.ok, true)
-  assert.equal(captured?.['api'], 'mtop.taobao.idlemessage.user.query')
-  assert.equal(captured?.['v'], '1.0')
+  assert.equal(captured?.['api'], 'mtop.taobao.idlemessage.pc.user.query')
+  assert.equal(captured?.['v'], '4.0')
   assert.equal(captured?.['appKey'], '34839810')
   assert.equal(captured?.['accountSite'], 'xianyu')
   assert.equal(captured?.['needLogin'], true)
@@ -77,8 +77,8 @@ test('fetchPeerProfileInPage：SDK reject 返回 MTOP_REJECTED（不透传原文
 test('PEER_PROFILE_API_MAP / isPeerProfilePageResult：契约稳定', () => {
   assert.equal(PEER_PROFILE_API_MAP['session.sync'].api, 'mtop.taobao.idlemessage.pc.session.sync')
   assert.equal(PEER_PROFILE_API_MAP['session.sync'].v, '3.0')
-  assert.equal(PEER_PROFILE_API_MAP['user.query'].api, 'mtop.taobao.idlemessage.user.query')
-  assert.equal(PEER_PROFILE_API_MAP['user.query'].v, '1.0')
+  assert.equal(PEER_PROFILE_API_MAP['user.query'].api, 'mtop.taobao.idlemessage.pc.user.query')
+  assert.equal(PEER_PROFILE_API_MAP['user.query'].v, '4.0')
   assert.equal(isPeerProfilePageResult({ ok: true, payload: {} }), true)
   assert.equal(isPeerProfilePageResult({ ok: false, code: 'SDK_MISSING' }), true)
   assert.equal(isPeerProfilePageResult({}), false)

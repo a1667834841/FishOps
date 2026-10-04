@@ -319,23 +319,55 @@ export function directionFor(senderId: string, myUserId?: string): ChatDirection
 }
 
 /**
- * 按当前用户 ID 纠正单条消息方向（仅 `in → out`，绝不降级）。
+ * 方向纠正选项。
+ */
+export interface CorrectDirectionOptions {
+  /**
+   * 是否允许 `out → in` 降级（账号变化重算用）。
+   *
+   * 默认 `false`：读取时只做 `in → out` 纠正，避免破坏本地发送回显 / 平台回声。
+   * 当依据**新的可靠 self** 全量重算（`ChatSync.setMyUserId`）时置 `true`：
+   * 发送者明确不是新 self 的 `out` 会降级为 `in`（旧账号遗留），使历史方向与新身份一致。
+   */
+  allowDemotion?: boolean
+}
+
+/**
+ * 按当前用户 ID 纠正单条消息方向。
  *
- * - 仅当发送者明确匹配当前用户时升级为 `out`（不猜测）；
- * - 已确认的 `out` 一律保留，避免破坏本地发送回显 / 平台回声；
- * - history 来源的 `out` 消息回填 `receiverId` 为会话对方；实时来源保留原有接收者。
+ * 规则（安全优先，绝不猜测）：
+ * - 发送者**为空**（未知）时一律不改动，返回 `null`（无法证伪，不误伤本地回显）；
+ * - 发送者归一后**等于**当前用户 → `out`；history 来源回填 `receiverId` 为会话对方，
+ *   实时来源保留原有接收者；
+ * - 发送者归一后**不等于**当前用户 → `in`；仅当 `allowDemotion` 为真且当前为 `out` 时才降级
+ *   （默认不允许，保护已确认的本地发送回显 / 平台回声）。
  *
  * 返回 `null` 表示无需变更（调用方可据此避免无效写入）。
  */
-export function correctMessageDirection(message: ChatMessage, myUserId?: string): ChatMessage | null {
-  if (!myUserId) return null
-  if (message.direction === 'out') return null
-  if (directionFor(message.senderId, myUserId) !== 'out') return null
-  return {
-    ...message,
-    direction: 'out',
-    receiverId: message.source === 'history' ? message.sessionId : message.receiverId,
+export function correctMessageDirection(
+  message: ChatMessage,
+  myUserId?: string,
+  options: CorrectDirectionOptions = {},
+): ChatMessage | null {
+  const me = normalizeUserId(myUserId)
+  if (!me) return null
+  const sender = normalizeUserId(message.senderId)
+  // 发送者未知：无法判断归属，保持原方向（不猜、不误伤本地回显）。
+  if (!sender) return null
+
+  if (sender === me) {
+    if (message.direction === 'out') return null
+    return {
+      ...message,
+      direction: 'out',
+      receiverId: message.source === 'history' ? message.sessionId : message.receiverId,
+    }
   }
+
+  // 发送者明确不是本人：默认仅保护 out 不降级；账号变化重算时允许降级为 in。
+  if (message.direction === 'in') return null
+  if (options.allowDemotion !== true) return null
+  return { ...message, direction: 'in' }
 }
 
 interface BuildMessageInput {

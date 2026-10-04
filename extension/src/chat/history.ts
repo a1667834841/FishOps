@@ -114,6 +114,7 @@ export function parseConversationItem(item: unknown, myUserId?: string): Convers
   const content = isRecord(msg['content']) ? (msg['content'] as Record<string, unknown>) : {}
   const custom = isRecord(content['custom']) ? (content['custom'] as Record<string, unknown>) : {}
   const extension = isRecord(msg['extension']) ? (msg['extension'] as Record<string, unknown>) : {}
+  const sender = isRecord(msg['sender']) ? (msg['sender'] as Record<string, unknown>) : {}
   const reminderUrl = extension['reminderUrl']
 
   const modifyTime = typeof userConv['modifyTime'] === 'number' ? userConv['modifyTime'] : 0
@@ -129,11 +130,20 @@ export function parseConversationItem(item: unknown, myUserId?: string): Convers
   const explicitPeer = normalizeUserId(peerUserId)
   const peerIsSelf = selfId.length > 0 && explicitPeer.length > 0 && explicitPeer === selfId
 
+  // 昵称来源：`reminderTitle` 是**最后一条消息发送者**的昵称，不能无条件当作对方昵称。
+  // 最近消息发送者是 self 时，其昵称是本人，若直接当 peerUserName 会把自己显示成对方
+  // （即便 `peerUserId` 指向对方）。因此仅当能**正向确认发送者就是对方**时才采用该昵称；
+  // 发送者是本人、或归属未知（发送者字段缺失 / 无法判定）时一律不填，绝不猜测。
+  const lastSenderId = normalizeUserId(extension['senderUserId']) || normalizeUserId(sender['uid'])
+  const senderIsPeer = explicitPeer.length > 0 && lastSenderId.length > 0 && lastSenderId === explicitPeer
+  const reminderTitle = typeof extension['reminderTitle'] === 'string' ? extension['reminderTitle'] : ''
+  const peerUserName = peerIsSelf || !senderIsPeer ? '' : reminderTitle
+
   return {
     sessionId,
     cid,
     peerUserId: peerIsSelf ? undefined : peerUserId ?? undefined,
-    peerUserName: peerIsSelf ? '' : typeof extension['reminderTitle'] === 'string' ? extension['reminderTitle'] : '',
+    peerUserName,
     peerAvatarUrl: extractAvatarUrl([
       userConv['extension'],
       extension,

@@ -105,13 +105,13 @@ test('生产接线：注入的 peerProfileRequester 在会话同步时被实际�
   assert.equal(runtime.getStore().getConversation('111')?.peerUserId, 'peer')
 })
 
-test('生产接线：peerUserId 可靠时 user.query 兜底无需 myUserId', async () => {
+test('生产接线：普通单聊按 session 作用域回退 user.query（无需 myUserId）', async () => {
   const requester = new FakeRequester((request) => {
     if (request.api === 'session.sync') return { ret: ['SUCCESS'], data: { sessions: [] } }
     return { data: { userInfo: { logo: AVATAR } } }
   })
 
-  // 不传 myUserId：session.sync 路径安全跳过，由按 peerUserId 的 user.query 兜底。
+  // 不传 myUserId：session.sync 路径无法判定归属，由 session 作用域的 user.query 回退。
   const runtime = createChatRuntime({
     transport: new FakeTransport(conversationsBody(true)),
     peerProfileRequester: requester,
@@ -120,8 +120,8 @@ test('生产接线：peerUserId 可靠时 user.query 兜底无需 myUserId', asy
   const result = (await syncConversations(runtime)) as { ok: boolean }
   assert.equal(result.ok, true)
   const queryCall = requester.calls.find((c) => c.api === 'user.query')
-  assert.ok(queryCall, '无 myUserId 时应走 user.query 兜底')
-  assert.deepEqual(queryCall?.data, { type: 0, userId: '999', sessionId: '111' })
+  assert.ok(queryCall, '无 myUserId 时应走 user.query 回退')
+  assert.deepEqual(queryCall?.data, { type: 0, sessionType: 1, sessionId: '111', isOwner: false })
   assert.equal(runtime.getStore().getConversation('111')?.peerAvatarUrl, AVATAR)
 })
 
@@ -214,7 +214,7 @@ test('生产默认接线：无显式注入时用 chrome.scripting MAIN world 自
     assert.equal(injections[0].world, 'MAIN')
     assert.equal(injections[0].target?.tabId, 7)
     assert.equal(injections[0].func, fetchPeerProfileInPage)
-    assert.deepEqual(injections[0].args, [{ api: 'session.sync', data: { sessionTypes: [3], fetchNum: 30 } }])
+    assert.deepEqual(injections[0].args, [{ api: 'session.sync', data: { sessionTypes: [1], fetchNum: 30 } }])
     assert.equal(runtime.getStore().getConversation('111')?.peerAvatarUrl, AVATAR)
   } finally {
     if (savedChrome === undefined) delete (globalThis as { chrome?: unknown }).chrome

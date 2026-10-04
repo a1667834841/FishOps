@@ -9,7 +9,7 @@
  */
 import type { ChatEventKind, ChatMessage, Conversation, SyncError } from '../../../shared/types/chat'
 import { ChatHistoryClient, ChatHistoryError } from './history'
-import { parseWebSocketMessage, correctMessageDirection, type ParseContext } from './parser'
+import { parseWebSocketMessage, correctMessageDirection, normalizeUserId, type ParseContext } from './parser'
 import type { PeerProfileResolver } from './peer-profiles'
 import { ChatStore, type UpsertResult } from './store'
 
@@ -119,10 +119,12 @@ export class ChatSync {
    * 场景：runtime 首次组装时登录态尚未就绪（myUserId 缺失），历史消息全被漏判为 `in`
    * （自己也在左侧）；后续准备流程解析出真实 ID 后调用本方法，把已有缓存（含持久化）纠正。
    *
-   * 规则（安全优先，绝不做猜测）：
+   * 规则（安全优先，绝不猜测）：
    * - 仅当新 ID 非空时执行重新归一；未知 ID 保持原样（诚实按 in，不猜）；
-   * - 仅做 `in → out` 纠正（senderId 明确匹配新 ID），**绝不把已确认的 `out` 降级为 `in`**
-   *   （保护本地发送回显 `pendingEcho` 与平台回声）；
+   * - 依据**新的可靠 self**全量重算方向：发送者归一后等于 self → `out`，不等 → `in`；
+   *   因此账号变化（或旧账号遗留）的 `out` 会被降级为 `in`（不再冻结）；
+   * - 发送者为空（未知）的消息一律不动（无法证伪，不误伤本地回显 `pendingEcho`）；
+   * - `pendingEcho` 同样参与判定，不作特殊冻结：仅当其发送者明确匹配 self 时才保持 `out`；
    * - 只重写 `direction`（history 来源同时回填 `receiverId`），其余字段（头像、pendingEcho
    *   等）原样保留，不丢数据。
    */
@@ -137,13 +139,18 @@ export class ChatSync {
     this.rederiveDirections(next)
   }
 
-  /** 按当前用户 ID 重新归一 store 中已缓存消息方向（仅 in → out 纠正，绝不降级）。 */
+  /**
+   * 按当前用户 ID 重新归一 store 中已缓存消息方向。
+   *
+   * 依据可靠 self 严格重算：发送者明确等于 self → `out`，明确不等（且 sender 非空）→ `in`；
+   * 发送者未知则保持原方向。账号变化时旧 `out` 会降级为 `in`。
+   */
   private rederiveDirections(myUserId: string): void {
     const all = this.store.getAllMessages()
     if (all.length === 0) return
     const changed: ChatMessage[] = []
     for (const message of all) {
-      const corrected = correctMessageDirection(message, myUserId)
+      const corrected = correctMessageDirection(message, myUserId, { allowDemotion: true })
       if (corrected) changed.push(corrected)
     }
     if (changed.length === 0) return
@@ -216,13 +223,16 @@ export class ChatSync {
     try {
       for (let page = 0; page < pages; page++) {
         const result = await this.history.listConversations({ cursor, pageSize: options.pageSize })
-        // LWP 会话数据不含头像；合并时保留 store 中已有的对方头像，避免重复同步把它抹掉。
+        // LWP 会话数据不含头像 / 对方 ID；合并时保留 store 中已补齐 / 已校正的值，
+        // 避免重复同步把头像与对方 ID 抹掉（昵称不保留，由 latest 解析与 session.sync 共同负责）。
         const incoming = result.conversations.map((conv) => {
           const existing = this.store.getConversation(conv.sessionId)
-          if (existing?.peerAvatarUrl && !conv.peerAvatarUrl) {
-            return { ...conv, peerAvatarUrl: existing.peerAvatarUrl }
+          if (!existing) return conv
+          return {
+            ...conv,
+            ...(existing.peerAvatarUrl && !conv.peerAvatarUrl ? { peerAvatarUrl: existing.peerAvatarUrl } : {}),
+            ...(existing.peerUserId && !conv.peerUserId ? { peerUserId: existing.peerUserId } : {}),
           }
-          return conv
         })
         const count = this.store.upsertConversations(incoming)
         added += count.added
@@ -241,36 +251,59 @@ export class ChatSync {
   }
 
   /**
-   * 为缺失对方头像的会话补齐头像（只读 mtop）。
+   * 解析并按需补齐 / 纠正会话的对方资料（只读 mtop）。
    *
-   * 仅补齐 `peerAvatarUrl` 为空的会话，且写入前再次确认当前仍缺头像，保留已有头像。
-   * 任何失败都只返回提示，绝不影响已经完成的会话同步。
+   * 不再只补「缺头像」：将全部会话交给 resolver，它会用 session.sync 的可靠结果纠正
+   * 账号变化遗留的错 peer（peerUserId 缺 / 等于自己）、补齐昵称与头像（含覆盖错 peer 的旧头像）。
+   * 任何失败都只返回粗粒度提示，绝不影响已完成的会话同步；仍缺头像时给出可见提示，不静默。
    */
   private async resolvePeerAvatars(): Promise<string[] | undefined> {
     if (!this.peerProfiles) return undefined
     try {
-      const missing = this.store.listConversations().filter((conv) => !conv.peerAvatarUrl)
-      if (missing.length === 0) return undefined
-      const updates = await this.peerProfiles.resolveMissing(missing)
-      if (updates.length === 0) return undefined
+      const all = this.store.listConversations()
+      if (all.length === 0) return undefined
+      const updates = await this.peerProfiles.resolveMissing(all)
 
       const merged: Conversation[] = []
       for (const update of updates) {
         const current = this.store.getConversation(update.sessionId)
-        if (!current || current.peerAvatarUrl) continue
-        merged.push({
-          ...current,
-          peerAvatarUrl: update.peerAvatarUrl,
-          ...(update.peerUserId === undefined ? {} : { peerUserId: update.peerUserId }),
-        })
+        if (!current) continue
+        const next: Conversation = { ...current }
+        let changed = false
+        if (
+          update.peerUserId !== undefined &&
+          normalizeUserId(update.peerUserId) !== normalizeUserId(current.peerUserId)
+        ) {
+          next.peerUserId = update.peerUserId
+          changed = true
+        }
+        if (update.peerUserName !== undefined && update.peerUserName !== current.peerUserName) {
+          next.peerUserName = update.peerUserName
+          changed = true
+        }
+        // 头像：仅当确实拿到、且与现值不同才写（纠正错 peer 时覆盖旧头像）。
+        if (update.peerAvatarUrl !== undefined && update.peerAvatarUrl !== current.peerAvatarUrl) {
+          next.peerAvatarUrl = update.peerAvatarUrl
+          changed = true
+        }
+        if (changed) merged.push(next)
       }
-      if (merged.length === 0) return undefined
-      this.store.upsertConversations(merged)
-      await this.store.flush()
-      return [`已补齐 ${merged.length} 个会话的对方头像`]
+
+      const notes: string[] = []
+      if (merged.length > 0) {
+        this.store.upsertConversations(merged)
+        await this.store.flush()
+        notes.push(`已补齐/校正 ${merged.length} 个会话的对方头像/昵称`)
+      }
+      // 可见的粗粒度提示：仍缺头像的会话数（不静默、不假成功）。
+      const stillMissing = this.store.listConversations().filter((conv) => !conv.peerAvatarUrl).length
+      if (stillMissing > 0) {
+        notes.push(`${stillMissing} 个会话仍未取到对方头像（session.sync/user.query 未返回可用 logo 或身份不符）`)
+      }
+      return notes.length === 0 ? undefined : notes
     } catch {
       // 兜底：头像补齐绝不让会话同步失败。
-      return ['对方头像补齐失败（不影响会话同步）']
+      return ['对方资料解析失败（不影响会话同步）']
     }
   }
 }

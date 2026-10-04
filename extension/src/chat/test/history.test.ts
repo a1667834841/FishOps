@@ -34,7 +34,8 @@ function convItem(cid: string, modifyTime: number, summary: string, title: strin
           cid,
           createAt: modifyTime,
           content: { custom: { summary } },
-          extension: { reminderTitle: title, reminderUrl: 'https://x?itemId=456&peerUserId=999' },
+          // 最后一条消息由对方（peerUserId=999）发出，reminderTitle 才是对方昵称。
+          extension: { reminderTitle: title, senderUserId: '999', reminderUrl: 'https://x?itemId=456&peerUserId=999' },
         },
       },
     },
@@ -253,7 +254,7 @@ test('会话解析：peerUserId 不等于自己时正常保留', () => {
           cid: '111@goofish',
           createAt: 1000,
           content: { custom: { summary: 'hi' } },
-          extension: { reminderTitle: '买家', reminderUrl: 'https://x?peerUserId=peer' },
+          extension: { reminderTitle: '买家', senderUserId: 'peer', reminderUrl: 'https://x?peerUserId=peer' },
         },
       },
     },
@@ -261,4 +262,66 @@ test('会话解析：peerUserId 不等于自己时正常保留', () => {
   const conv = parseConversationItem(item, 'me')
   assert.equal(conv?.peerUserId, 'peer')
   assert.equal(conv?.peerUserName, '买家')
+})
+
+test('会话解析：最后消息是自己发的时，绝不把 reminderTitle 当作对方昵称（未知不填）', () => {
+  // 真实缺陷：最后消息 senderUserId=self（reminderTitle 是自己的昵称），
+  // 但 peerUserId 指向对方；旧实现会把自己昵称显示成对方。
+  const item = {
+    singleChatUserConversation: {
+      cid: '111@goofish',
+      modifyTime: 1000,
+      lastMessage: {
+        message: {
+          cid: '111@goofish',
+          createAt: 1000,
+          content: { custom: { summary: 'hi' } },
+          extension: { reminderTitle: '我自己', senderUserId: 'me', reminderUrl: 'https://x?peerUserId=peer' },
+        },
+      },
+    },
+  }
+  const conv = parseConversationItem(item, 'me')
+  assert.equal(conv?.peerUserId, 'peer', 'peerUserId 仍指向对方')
+  assert.equal(conv?.peerUserName, '', '最后消息是自己时不能把 reminderTitle 当对方昵称')
+})
+
+test('会话解析：发送者归属未知时昵称不填（不猜）', () => {
+  // 无 senderUserId：无法确认 reminderTitle 属于谁 → 不填。
+  const item = {
+    singleChatUserConversation: {
+      cid: '111@goofish',
+      modifyTime: 1000,
+      lastMessage: {
+        message: {
+          cid: '111@goofish',
+          createAt: 1000,
+          content: { custom: { summary: 'hi' } },
+          extension: { reminderTitle: '某人', reminderUrl: 'https://x?peerUserId=peer' },
+        },
+      },
+    },
+  }
+  const conv = parseConversationItem(item, 'me')
+  assert.equal(conv?.peerUserName, '', '发送者归属未知时不填昵称')
+})
+
+test('会话解析：sender.uid 作为最后消息发送者的回退来源', () => {
+  const item = {
+    singleChatUserConversation: {
+      cid: '111@goofish',
+      modifyTime: 1000,
+      lastMessage: {
+        message: {
+          cid: '111@goofish',
+          createAt: 1000,
+          content: { custom: { summary: 'hi' } },
+          sender: { uid: 'peer@goofish' },
+          extension: { reminderTitle: '买家', reminderUrl: 'https://x?peerUserId=peer' },
+        },
+      },
+    },
+  }
+  const conv = parseConversationItem(item, 'me')
+  assert.equal(conv?.peerUserName, '买家', 'sender.uid 归一后等于 peerUserId 时采用昵称')
 })

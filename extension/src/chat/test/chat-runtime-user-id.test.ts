@@ -118,3 +118,38 @@ test('setMyUserId：相同 ID 重复调用幂等，不产生变化', async () =>
   assert.equal(first, 'out')
   assert.equal(store.getMessages('peer1')[0].direction, 'out')
 })
+
+test('setMyUserId：账号变化时旧 out（sender=旧 self）降级为 in', async () => {
+  const runtime = createChatRuntime({ myUserId: 'oldAccount' })
+  await runtime.init()
+  const store = runtime.getStore()
+  store.upsertMessages([
+    message({ messageId: 'h', sessionId: 'peer1', senderId: 'oldAccount', direction: 'out', receiverId: 'peer1', createAt: 1000 }),
+    message({ messageId: 'p', sessionId: 'peer1', senderId: 'peer', createAt: 2000 }),
+  ])
+
+  // 切换到新账号：旧 out 的发送者是旧 self，依据新可靠 self 应降级为 in。
+  runtime.setMyUserId('newAccount')
+
+  const messages = store.getMessages('peer1')
+  assert.equal(messages.find((m) => m.messageId === 'h')?.direction, 'in', '旧账号的 out 应降级为 in')
+  assert.equal(messages.find((m) => m.messageId === 'p')?.direction, 'in', '对方消息保持 in')
+})
+
+test('setMyUserId：pendingEcho 不冻结——仅当其发送者明确匹配 self 时才保持 out', async () => {
+  const runtime = createChatRuntime({ myUserId: 'oldAccount' })
+  await runtime.init()
+  const store = runtime.getStore()
+  store.upsertMessages([
+    message({ messageId: 'echo-mine', sessionId: 'peer1', senderId: 'newAccount', direction: 'out', receiverId: 'peer1', pendingEcho: true, createAt: 3000 }),
+    message({ messageId: 'echo-old', sessionId: 'peer1', senderId: 'oldAccount', direction: 'out', receiverId: 'peer1', pendingEcho: true, createAt: 1000 }),
+    message({ messageId: 'echo-unknown', sessionId: 'peer1', senderId: '', direction: 'out', receiverId: 'peer1', pendingEcho: true, createAt: 2000 }),
+  ])
+
+  runtime.setMyUserId('newAccount')
+
+  const messages = store.getMessages('peer1')
+  assert.equal(messages.find((m) => m.messageId === 'echo-mine')?.direction, 'out', '发送者明确匹配新 self 的回显保持 out')
+  assert.equal(messages.find((m) => m.messageId === 'echo-old')?.direction, 'in', '属于旧账号的回显降级为 in（不冻结）')
+  assert.equal(messages.find((m) => m.messageId === 'echo-unknown')?.direction, 'out', '发送者未知时不猜，保持原方向')
+})

@@ -6,7 +6,12 @@
  * 它在页面上下文复用官方 mtop SDK（`window.lib.mtop.request`，与项目
  * `background/direct-publish-page.ts` 同一条官方 SDK 路径），只读调用两条已实测接口：
  * - `mtop.taobao.idlemessage.pc.session.sync`（v3.0）
- * - `mtop.taobao.idlemessage.user.query`（v1.0）
+ * - `mtop.taobao.idlemessage.pc.user.query`（v4.0）
+ *
+ * 口径依据（ego-browser 只读捕获页面自身请求 + SDK 实测，未导出个人数据）：
+ * - 普通单聊会话 `sessionTypes` 为 `[1]`；`[3]` 只会返回系统会话（伪 UID，不可用）；
+ * - `pc.user.query` v4.0 请求 `{ type:0, sessionType:1, sessionId, isOwner:false }` 返回**对方**
+ *   `data.userInfo.{logo,fishNick,nick}`（`isOwner:false` 在“自己是 owner / guest”两种角色下均实测为对方）。
  *
  * 硬约束：
  * 1. **完全自包含**：函数体不得引用本模块作用域的任何变量 / 常量 / 辅助函数；
@@ -33,7 +38,7 @@ export async function fetchPeerProfileInPage(request: PeerProfileRequest): Promi
   // api → { api, v } 映射必须内联：注入函数无法引用模块级常量。
   const configs: Record<string, { api: string; v: string }> = {
     'session.sync': { api: 'mtop.taobao.idlemessage.pc.session.sync', v: '3.0' },
-    'user.query': { api: 'mtop.taobao.idlemessage.user.query', v: '1.0' },
+    'user.query': { api: 'mtop.taobao.idlemessage.pc.user.query', v: '4.0' },
   }
 
   const globalObject = globalThis as {
@@ -90,5 +95,5 @@ export function isPeerProfilePageResult(value: unknown): value is PeerProfilePag
 /** 公开接口名到 mtop 接口的映射（供接线方与测试使用）。 */
 export const PEER_PROFILE_API_MAP: Record<PeerProfileApi, { api: string; v: string }> = {
   'session.sync': { api: 'mtop.taobao.idlemessage.pc.session.sync', v: '3.0' },
-  'user.query': { api: 'mtop.taobao.idlemessage.user.query', v: '1.0' },
+  'user.query': { api: 'mtop.taobao.idlemessage.pc.user.query', v: '4.0' },
 }

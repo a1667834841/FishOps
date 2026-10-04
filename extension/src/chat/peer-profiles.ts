@@ -3,11 +3,15 @@
  *
  * 背景：闲鱼聊天 WebSocket（LWP）协议**不携带用户头像**。真实头像来自 mtop 只读接口：
  * - `mtop.taobao.idlemessage.pc.session.sync`（v3.0）
- *   请求 `{ sessionTypes, fetchNum }`，响应 `data.sessions[].session.{ownerInfo,userInfo}`，
- *   双方各带 `userId` 与 `logo`（https 绝对 URL）。
- * - `mtop.taobao.idlemessage.user.query`（v1.0）
- *   请求 `{ type, userId, sessionId }`，响应 `data.userInfo.logo`。按传入 `userId` 精确查询，
- *   返回的 `userInfo` 即该 peer，因此不会把当前用户头像混淆成对方。
+ *   请求 `{ sessionTypes:[1], fetchNum }`（**普通单聊为 `[1]`**；`[3]` 只会返回系统会话），
+ *   响应 `data.sessions[].session.{ownerInfo,userInfo}`，双方各带 `userId` / `nick` / `fishNick`
+ *   / `logo`（https 绝对 URL）。以 **userId 归一后精确等于可信 self** 判定哪一侧是自己，
+ *   另一侧才是对方（**不靠 owner 角色推测**）。
+ * - `mtop.taobao.idlemessage.pc.user.query`（v4.0）
+ *   请求 `{ type:0, sessionType:1, sessionId, isOwner:false }`，响应 `data.userInfo.logo`。
+ *   实测（ego-browser 只读捕获页面自身请求）：`isOwner:false` 在「自己是 owner / guest」
+ *   两种角色下都返回**对方**（counterparty）资料，因此可按 sessionId 作可靠回退；
+ *   响应不含 `userId`，可靠性来自 sessionId + isOwner 的会话作用域，而非客户端猜 ID。
  *
  * 安全边界：
  * - 只读调用：不发送消息、不标记已读、不写平台状态；
@@ -19,7 +23,7 @@
  */
 import { isRecord } from '../../../shared/chat/index'
 import type { Conversation } from '../../../shared/types/chat'
-import { toSafeHttpsUrl } from './parser'
+import { normalizeUserId, toSafeHttpsUrl } from './parser'
 
 /** 支持的只读 mtop 接口。 */
 export type PeerProfileApi = 'session.sync' | 'user.query'
@@ -40,26 +44,41 @@ export interface PeerProfileRequester {
   request(request: PeerProfileRequest): Promise<unknown>
 }
 
-/** `session.sync` 单聊会话类型（与页面实测一致）。 */
-export const DEFAULT_SESSION_SYNC_SESSION_TYPES = [3] as const
+/** `session.sync` 普通单聊会话类型（页面实测为 `[1]`；`[3]` 仅系统会话，不可用）。 */
+export const DEFAULT_SESSION_SYNC_SESSION_TYPES = [1] as const
 /** `session.sync` 默认拉取条数（与页面实测一致）。 */
 export const DEFAULT_SESSION_SYNC_FETCH_NUM = 30
 /** `user.query` 回退默认并发上限。 */
 export const DEFAULT_PEER_PROFILE_CONCURRENCY = 3
 
-/** 补齐结果：仅包含成功解析到的对方头像。 */
+/** 补齐结果：仅包含成功解析到的对方资料（头像 / 昵称 / 校正后的用户 ID）。 */
 export interface PeerProfileUpdate {
   sessionId: string
   /** 对方用户 ID；来自 session.sync 或沿用会话已有的 peerUserId。 */
   peerUserId?: string
-  /** 通过 https 校验的对方头像 URL。 */
-  peerAvatarUrl: string
+  /** 对方昵称（session.sync 的 fishNick / nick）；缺失时不回传。 */
+  peerUserName?: string
+  /** 通过 https 校验的对方头像 URL；session.sync 未返回或非法时不回传。 */
+  peerAvatarUrl?: string
 }
 
 /** 从 userInfo 对象提取 `logo`（经 https 校验）。 */
 function logoFromUserInfo(value: unknown): string | undefined {
   if (!isRecord(value)) return undefined
   return toSafeHttpsUrl(value['logo'])
+}
+
+/**
+ * 从 userInfo 对象提取昵称：优先 `fishNick`（闲鱼昵称），回退 `nick`；均为空返回 undefined。
+ * 仅做 trim，不做任何猜测性拼接。
+ */
+function nickFromUserInfo(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined
+  const fish = value['fishNick']
+  if (typeof fish === 'string' && fish.trim().length > 0) return fish.trim()
+  const nick = value['nick']
+  if (typeof nick === 'string' && nick.trim().length > 0) return nick.trim()
+  return undefined
 }
 
 /** 从 `session.sync` / `user.query` 响应解析 userId（字符串化为原始值）。 */
@@ -79,15 +98,24 @@ function sessionIdOf(value: unknown): string {
 }
 
 /**
- * 解析 `mtop.taobao.idlemessage.user.query` 响应，返回 `data.userInfo.logo`。
+ * 解析 `mtop.taobao.idlemessage.pc.user.query` v4.0 响应，提取 `data.userInfo` 的头像与昵称。
  *
- * 因为请求按 `userId` 精确查询，返回的 `userInfo` 即该 peer，无需再判断归属。
+ * 可靠性说明：v4.0 响应**不含 `userId`**，无法在客户端按 ID 核对；可靠性来自请求的会话作用域
+ * （`sessionId` + `isOwner:false` 经页面实测稳定返回对方）。因此调用方必须已确认该 sessionId
+ * 对应普通单聊，且本地已知对方身份方向。
  */
-export function parseUserQueryAvatar(payload: unknown): string | undefined {
-  if (!isRecord(payload)) return undefined
+export function parseUserQueryProfile(payload: unknown): { peerAvatarUrl?: string; peerUserName?: string } {
+  if (!isRecord(payload)) return {}
   const data = payload['data']
-  if (!isRecord(data)) return undefined
-  return logoFromUserInfo(data['userInfo'])
+  if (!isRecord(data)) return {}
+  const userInfo = data['userInfo']
+  if (!isRecord(userInfo)) return {}
+  const logo = logoFromUserInfo(userInfo)
+  const nick = nickFromUserInfo(userInfo)
+  return {
+    ...(logo === undefined ? {} : { peerAvatarUrl: logo }),
+    ...(nick === undefined ? {} : { peerUserName: nick }),
+  }
 }
 
 /**
@@ -102,11 +130,13 @@ export function parseSessionSyncProfiles(payload: unknown, myUserId?: string): P
   const data = payload['data']
   if (!isRecord(data) || !Array.isArray(data['sessions'])) return []
 
+  const me = normalizeUserId(myUserId)
   const out: PeerProfileUpdate[] = []
   const seen = new Set<string>()
 
   for (const entry of data['sessions'] as unknown[]) {
     if (!isRecord(entry)) continue
+    // 实测：ownerInfo / userInfo 位于 entry.session 内（不在 entry 上）。
     const session = entry['session']
     if (!isRecord(session)) continue
 
@@ -114,19 +144,20 @@ export function parseSessionSyncProfiles(payload: unknown, myUserId?: string): P
     if (!sessionId || seen.has(sessionId)) continue
 
     // 缺少当前用户 ID 时无法判断归属：跳过，不猜。
-    if (!myUserId) continue
+    if (!me) continue
 
     const owner = session['ownerInfo']
     const guest = session['userInfo']
-    const ownerId = userIdOf(owner)
-    const guestId = userIdOf(guest)
+    // 双方 ID 均归一后比较，容忍 @goofish 后缀 / 类型差异，避免因格式不一致误判归属而跳过。
+    const ownerId = normalizeUserId(userIdOf(owner))
+    const guestId = normalizeUserId(userIdOf(guest))
 
     let peerInfo: unknown
     let peerId: string | undefined
-    if (ownerId === myUserId && guestId !== undefined && guestId !== myUserId) {
+    if (ownerId === me && guestId.length > 0 && guestId !== me) {
       peerInfo = guest
       peerId = guestId
-    } else if (guestId === myUserId && ownerId !== undefined && ownerId !== myUserId) {
+    } else if (guestId === me && ownerId.length > 0 && ownerId !== me) {
       peerInfo = owner
       peerId = ownerId
     } else {
@@ -134,11 +165,17 @@ export function parseSessionSyncProfiles(payload: unknown, myUserId?: string): P
       continue
     }
 
-    const logo = logoFromUserInfo(peerInfo)
-    if (!logo) continue
-
+    // 归属已确认即可回传：即使 logo 缺失，也回传 peerId / 昵称用于纠正会话元数据，
+    // 其头像由后续 user.query（按 peerId）尝试补齐。
     seen.add(sessionId)
-    out.push({ sessionId, ...(peerId === undefined ? {} : { peerUserId: peerId }), peerAvatarUrl: logo })
+    const logo = logoFromUserInfo(peerInfo)
+    const nick = nickFromUserInfo(peerInfo)
+    out.push({
+      sessionId,
+      ...(peerId === undefined ? {} : { peerUserId: peerId }),
+      ...(nick === undefined ? {} : { peerUserName: nick }),
+      ...(logo === undefined ? {} : { peerAvatarUrl: logo }),
+    })
   }
 
   return out
@@ -157,13 +194,15 @@ export interface PeerProfileResolverDeps {
 }
 
 /**
- * 会话对方头像补齐器。
+ * 会话对方资料解析 / 校正器。
  *
  * 调用顺序：
- * 1. `session.sync` 批量拉取（一次请求覆盖多个会话，最高效且含 userId 自证归属）；
- * 2. 对仍缺失、且已知 `peerUserId` 的会话，用 `user.query` 按 peerId 精确回退。
+ * 1. `session.sync`（`sessionTypes:[1]`）批量拉取（一次请求覆盖多个普通单聊，含双方 userId/nick/fishNick/logo）；
+ * 2. 对仍缺头像的会话，用 `pc.user.query` v4.0（`isOwner:false`）按 sessionId 回退，返回对方资料。
  *
- * 已存在头像的会话不处理；任何单条失败都只跳过该条，不影响其它会话，也不抛给调用方。
+ * 与旧行为的区别：不再仅补「缺头像」的会话。当会话的对方 ID 缺失 / 等于自己（身份变化遗留
+ * 的错 peer）时也会重新解析，用 session.sync 的可靠结果**纠正 peerUserId / 昵称 / 头像**。
+ * 任何单条失败都只跳过该条，不影响其它会话，也不抛给调用方。
  */
 export class PeerProfileResolver {
   private readonly requester: PeerProfileRequester
@@ -185,13 +224,24 @@ export class PeerProfileResolver {
     this.myUserId = myUserId
   }
 
-  /** 为缺失头像的会话补齐对方头像；返回仅含成功补齐项的更新列表。 */
+  /**
+   * 解析并按需纠正会话的对方资料；返回需要写入的更新列表（含 peerUserId / 昵称 / 头像）。
+   *
+   * 目标筛选（任一项成立即需处理）：缺头像 / 缺 peerUserId / peerUserId 等于当前用户
+   * （账号变化遗留的错 peer）/ 缺昵称。已完备的会话不发起任何请求。
+   */
   async resolveMissing(conversations: readonly Conversation[]): Promise<PeerProfileUpdate[]> {
-    // 只处理缺头像、且有 sessionId 的会话；按 sessionId 去重。
+    const me = normalizeUserId(this.myUserId)
     const targets = new Map<string, Conversation>()
     for (const conv of conversations) {
       if (!conv.sessionId) continue
-      if (conv.peerAvatarUrl && conv.peerAvatarUrl.length > 0) continue
+      const peer = normalizeUserId(conv.peerUserId)
+      const needsWork =
+        !conv.peerAvatarUrl ||
+        !conv.peerUserId ||
+        !conv.peerUserName ||
+        (me.length > 0 && peer === me)
+      if (!needsWork) continue
       if (!targets.has(conv.sessionId)) targets.set(conv.sessionId, conv)
     }
     if (targets.size === 0) return []
@@ -227,14 +277,12 @@ export class PeerProfileResolver {
       const target = targets.get(profile.sessionId)
       if (!target || updates.has(profile.sessionId)) continue
       // session.sync 以 sessionId 精确对应目标，且双方身份已由 myUserId 校验；其 peerId 可校正旧会话元数据。
+      const peerUserId = profile.peerUserId ?? target.peerUserId
       updates.set(profile.sessionId, {
         sessionId: profile.sessionId,
-        ...(profile.peerUserId === undefined
-          ? target.peerUserId === undefined
-            ? {}
-            : { peerUserId: target.peerUserId }
-          : { peerUserId: profile.peerUserId }),
-        peerAvatarUrl: profile.peerAvatarUrl,
+        ...(peerUserId === undefined ? {} : { peerUserId }),
+        ...(profile.peerUserName === undefined ? {} : { peerUserName: profile.peerUserName }),
+        ...(profile.peerAvatarUrl === undefined ? {} : { peerAvatarUrl: profile.peerAvatarUrl }),
       })
     }
   }
@@ -243,9 +291,12 @@ export class PeerProfileResolver {
     targets: Map<string, Conversation>,
     updates: Map<string, PeerProfileUpdate>,
   ): Promise<void> {
+    // 回退条件：仍缺头像、且有 sessionId 的会话（本层会话均为普通单聊，sessionType=1）。
+    // isOwner:false 经页面实测在两种角色下都返回对方，因此无需（也无从）按 userId 猜。
     const queue = [...targets.values()].filter((conv) => {
-      if (updates.has(conv.sessionId)) return false
-      return typeof conv.peerUserId === 'string' && conv.peerUserId.length > 0
+      if (!conv.sessionId) return false
+      const existing = updates.get(conv.sessionId)
+      return !(existing?.peerAvatarUrl && existing.peerAvatarUrl.length > 0)
     })
     if (queue.length === 0) return
 
@@ -253,11 +304,11 @@ export class PeerProfileResolver {
       try {
         const payload = await this.requester.request({
           api: 'user.query',
-          data: { type: 0, userId: conv.peerUserId, sessionId: conv.sessionId },
+          data: { type: 0, sessionType: 1, sessionId: conv.sessionId, isOwner: false },
         })
-        const logo = parseUserQueryAvatar(payload)
-        if (!logo) return null
-        return { sessionId: conv.sessionId, peerUserId: conv.peerUserId, peerAvatarUrl: logo } satisfies PeerProfileUpdate
+        const profile = parseUserQueryProfile(payload)
+        if (profile.peerAvatarUrl === undefined && profile.peerUserName === undefined) return null
+        return { sessionId: conv.sessionId, ...profile } satisfies PeerProfileUpdate
       } catch {
         // 单条失败只上报粗粒度诊断，不影响其它会话。
         this.onRequestFailure?.('user.query', 'REQUEST_FAILED')
@@ -266,7 +317,10 @@ export class PeerProfileResolver {
     })
 
     for (const update of results) {
-      if (update && !updates.has(update.sessionId)) updates.set(update.sessionId, update)
+      if (!update) continue
+      const existing = updates.get(update.sessionId)
+      // 合并到 session.sync 已给出的校正结果上（保留其 peerUserId）。
+      updates.set(update.sessionId, existing ? { ...existing, ...update } : update)
     }
   }
 }
