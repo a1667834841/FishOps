@@ -37,6 +37,7 @@ interface FakeElement {
   getBoundingClientRect?: () => { width: number; height: number }
   closest: (selector: string) => FakeElement | null
   querySelector: (selector: string) => FakeElement | null
+  querySelectorAll?: (selector: string) => FakeElement[]
   click: () => void
 }
 
@@ -80,6 +81,18 @@ interface FakeDomOptions {
   publishButtonCount?: number
   /** 多候选场景中干扰元素的文本（默认“发布设置”） */
   publishButtonDecoyText?: string
+  /** 配送方式场景：'free' 包邮；'paid' 收费（需填邮费）；缺省不渲染 radio group */
+  shippingMode?: 'free' | 'paid'
+  /** 初始选中的配送 radio value（0 包邮 / 1 按距离计费 / 2 一口价 / 3 无需邮寄），缺省按 mode 推断 */
+  shippingCheckedValue?: string
+  /** 邮费输入框初始值（默认空串） */
+  postFeeValue?: string
+  /** 所在地控件场景：字符串为默认地址；'' 为空；false 表示不渲染所在地控件 */
+  location?: string | false
+  /** 官方内联表单校验提示（root guard 探测）；visible:false 模拟已隐藏的旧提示 */
+  officialValidation?: Array<{ text: string; visible?: boolean }>
+  /** 官方 toast 浮层提示（root guard 探测）；visible:false 模拟已隐藏的旧 toast */
+  officialToasts?: Array<{ text: string; visible?: boolean }>
 }
 
 /**
@@ -111,6 +124,9 @@ function createInjectionSandbox(options: FakeDomOptions = {}) {
     querySelector() {
       return null
     },
+    querySelectorAll() {
+      return []
+    },
     click() {
       this.events.push('click')
     },
@@ -133,6 +149,15 @@ function createInjectionSandbox(options: FakeDomOptions = {}) {
     return input
   }
 
+  // 官方提示元素（toast / 内联校验）：textContent 承载原文；visible:false 用 hidden 模拟隐藏。
+  const makeNotice = (n: { text: string; visible?: boolean }): FakeElement =>
+    makeElement('DIV', {
+      textContent: n.text,
+      ...(n.visible === false ? { hidden: true } : {}),
+    })
+  const officialValidationEls = (options.officialValidation ?? []).map(makeNotice)
+  const officialToastEls = (options.officialToasts ?? []).map(makeNotice)
+
   const titleEl = makeElement('TEXTAREA', { value: '' })
   const descEl = makeElement('DIV', { textContent: '' })
   const useLabeledPrice =
@@ -150,6 +175,9 @@ function createInjectionSandbox(options: FakeDomOptions = {}) {
   // 文本恰为“发布”；visible/tall 尺寸用于可见性校验。
   const publishButtonEl = makeElement('BUTTON', {
     textContent: options.publishButtonText ?? '发布',
+    // 真实 DOM 的 HTMLButtonElement 始终拥有 value 属性（默认空串），这里如实建模，
+    // 用于锁定“读取按钮文案必须按标签类型取值（BUTTON 走 textContent）、绝不误读 value”的行为。
+    value: '',
     className:
       options.publishButton === 'disabled'
         ? 'publish-button disabled'
@@ -174,6 +202,87 @@ function createInjectionSandbox(options: FakeDomOptions = {}) {
     })
   }
 
+  // ---- 配送（邮费）与所在地真实 DOM 建模（对齐真实发布页 selectors） ----
+  const radioLabels = ['包邮', '按距离计费', '一口价', '无需邮寄']
+  const radioValues = ['0', '1', '2', '3']
+  const radioInputs: FakeElement[] = []
+  const makeShippingRadio = (value: string): FakeElement => {
+    const input = makeElement('INPUT', { value, className: 'ant-radio-input' })
+    let checked = value === (options.shippingCheckedValue ?? (options.shippingMode === 'paid' ? '2' : '0'))
+    Object.defineProperty(input, 'checked', {
+      configurable: true,
+      get: () => checked,
+      set: (next: boolean) => {
+        checked = next
+      },
+    })
+    // 模拟原生 radio 点击：同组互斥，点击后选中自身。
+    input.dispatchEvent = (event: { type: string }) => {
+      input.events.push(event.type)
+      if (event && (event.type === 'click' || event.type === 'change')) {
+        for (const other of radioInputs) {
+          const descriptor = Object.getOwnPropertyDescriptor(other, 'checked')
+          if (descriptor && descriptor.set) descriptor.set.call(other, false)
+        }
+        checked = true
+      }
+      return true
+    }
+    radioInputs.push(input)
+    return input
+  }
+  const shippingRadios = radioValues.map((value) => makeShippingRadio(value))
+  const shippingLabels = shippingRadios.map((input, index) => {
+    const label = makeElement('LABEL', {
+      className: 'ant-radio-wrapper',
+      textContent: radioLabels[index],
+    })
+    label.querySelector = (selector: string) =>
+      selector.indexOf('ant-radio-input') >= 0 || selector.indexOf('input') >= 0 ? input : null
+    return label
+  })
+  const shippingGroup = makeElement('DIV', { className: 'ant-radio-group' })
+  shippingGroup.textContent = radioLabels.join('')
+  shippingGroup.querySelectorAll = (selector: string) =>
+    selector.indexOf('ant-radio-wrapper') >= 0 ? shippingLabels : []
+  shippingGroup.querySelector = (selector: string) => {
+    if (selector.indexOf(':checked') >= 0) {
+      return radioInputs.find((input) => Boolean((input as { checked?: boolean }).checked)) ?? null
+    }
+    return null
+  }
+
+  const postFeeInputEl = makeElement('INPUT', {
+    value: options.postFeeValue ?? '',
+    placeholder: '0.00',
+    className: 'ant-input',
+  })
+  const postFeeFormItem = makeElement('DIV', { className: 'ant-form-item' })
+  postFeeFormItem.querySelector = (selector: string) =>
+    selector.indexOf('ant-input') >= 0 || selector.indexOf('input') >= 0 ? postFeeInputEl : null
+  postFeeInputEl.closest = (selector: string) =>
+    selector.indexOf('form-item') >= 0 ? postFeeFormItem : null
+  postFeeInputEl.getBoundingClientRect = () => ({ width: 236, height: 34 })
+  const postFeeLabel = makeElement('LABEL', {
+    className: 'ant-form-item-required',
+    textContent: '邮费*',
+  })
+  postFeeLabel.closest = (selector: string) =>
+    selector.indexOf('form-item') >= 0 ? postFeeFormItem : null
+
+  const locationPresent = options.location !== false
+  const locationContentEl = makeElement('DIV', {
+    textContent: typeof options.location === 'string' ? options.location : '外滩',
+  })
+  const locationFormItem = makeElement('DIV', {
+    className: 'ant-form-item ant-form-item-has-success',
+  })
+  locationFormItem.querySelector = (selector: string) =>
+    selector.indexOf('ant-form-item-control-input-content') >= 0 ? locationContentEl : null
+  const locationLabel = makeElement('LABEL', { textContent: '宝贝所在地' })
+  locationLabel.closest = (selector: string) =>
+    selector.indexOf('form-item') >= 0 ? locationFormItem : null
+
   const fakeDocument = {
     querySelector(selector: string) {
       if (options.captcha && selector.indexOf('baxia') >= 0) return makeElement('DIV')
@@ -191,9 +300,13 @@ function createInjectionSandbox(options: FakeDomOptions = {}) {
       }
       if (selector.indexOf('标题') >= 0 && options.title !== false) return titleEl
       if (selector.indexOf('editor') >= 0 && options.desc !== false) return descEl
+      if (selector.indexOf('itemPostFeeDTO_postPriceInCent') >= 0) return postFeeLabel
+      if (selector.indexOf('itemAddrDTO') >= 0) return locationPresent ? locationLabel : null
       return null
     },
     querySelectorAll(selector: string) {
+      if (selector.indexOf('form-item-explain') >= 0) return officialValidationEls
+      if (selector.indexOf('toast') >= 0) return officialToastEls
       if (selector.indexOf('publish-button') >= 0) {
         if (options.publishButton === false) return []
         const count = options.publishButtonCount ?? 1
@@ -217,6 +330,9 @@ function createInjectionSandbox(options: FakeDomOptions = {}) {
       ) {
         return priceCandidateList()
       }
+      if (selector.indexOf('ant-radio-group') >= 0) {
+        return options.shippingMode ? [shippingGroup] : []
+      }
       return []
     },
   }
@@ -230,6 +346,7 @@ function createInjectionSandbox(options: FakeDomOptions = {}) {
     }
   }
   class FakeInputEvent extends FakeEvent {}
+  class FakeMouseEvent extends FakeEvent {}
 
   class FakeFile implements FakeFileLike {
     name: string
@@ -268,6 +385,7 @@ function createInjectionSandbox(options: FakeDomOptions = {}) {
     DataTransfer: FakeDataTransfer,
     Event: FakeEvent,
     InputEvent: FakeInputEvent,
+    MouseEvent: FakeMouseEvent,
     setTimeout,
     clearTimeout,
     URL,
@@ -276,7 +394,18 @@ function createInjectionSandbox(options: FakeDomOptions = {}) {
 
   return {
     sandbox,
-    elements: { titleEl, descEl, priceEl, origEl, decoyEl, fileEl, publishButtonEl },
+    elements: {
+      titleEl,
+      descEl,
+      priceEl,
+      origEl,
+      decoyEl,
+      fileEl,
+      publishButtonEl,
+      shippingGroup,
+      postFeeInputEl,
+      locationContentEl,
+    },
   }
 }
 
@@ -413,6 +542,106 @@ test('注入填充: 非 HTTPS 图片被拦截并指出序号，整体图片不�
   assert.equal(result.imagesFailed[0]?.index, 1)
   assert.ok(result.imagesFailed[0]?.error.includes('HTTPS'))
   assert.equal(result.mainImageUploaded, false)
+})
+
+test('注入填充 root guard: 可见 toast「当前分类不支持网页端发布」→ PUBLISH_CATEGORY_UNSUPPORTED', async () => {
+  const { sandbox } = createInjectionSandbox({
+    officialToasts: [{ text: '当前分类不支持网页端发布' }],
+  })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.officialBlock?.code, 'PUBLISH_CATEGORY_UNSUPPORTED')
+  assert.equal(result.officialBlock?.source, 'toast')
+  assert.ok(result.officialBlock?.message.includes('不支持网页端发布'))
+})
+
+test('注入填充 root guard: 表单内联「商品描述不能包含emoji」→ FORM_VALIDATION_FAILED（不误判图片）', async () => {
+  const { sandbox } = createInjectionSandbox({
+    officialValidation: [{ text: '商品描述不能包含emoji' }],
+  })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.officialBlock?.code, 'FORM_VALIDATION_FAILED')
+  assert.equal(result.officialBlock?.source, 'form-validation')
+  assert.ok(result.officialBlock?.message.includes('emoji'))
+})
+
+test('注入填充 root guard: 分类不支持优先于 emoji（根本阻断最高优先）', async () => {
+  const { sandbox } = createInjectionSandbox({
+    officialToasts: [{ text: '当前分类不支持网页端发布' }],
+    officialValidation: [{ text: '商品描述不能包含emoji' }],
+  })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.officialBlock?.code, 'PUBLISH_CATEGORY_UNSUPPORTED')
+})
+
+test('注入填充 root guard: 隐藏的旧 toast 不污染当前判定（不得误报阻断）', async () => {
+  const { sandbox } = createInjectionSandbox({
+    officialToasts: [{ text: '当前分类不支持网页端发布', visible: false }],
+    officialValidation: [{ text: '商品描述不能包含emoji', visible: false }],
+    previewImages: 1,
+  })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.officialBlock, undefined)
+})
+
+test('注入填充 root guard: 无可见官方提示时 officialBlock 缺省', async () => {
+  const { sandbox } = createInjectionSandbox({ previewImages: 1 })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.officialBlock, undefined)
 })
 
 test('注入填充: 页面控件缺失时返回结构化失败而非抛出/假成功', async () => {
@@ -666,6 +895,24 @@ test('注入提交: 页面状态有效时只点击一次真实发布按钮', () 
   assert.equal(elements.publishButtonEl.events.filter((e) => e === 'click').length, 1)
 })
 
+test('注入提交: 真实 BUTTON 带空 value 时仍按 textContent 识别“发布”并点击一次', () => {
+  // 回归用例：真实 DOM 的 HTMLButtonElement 始终存在 value 属性（默认空串）。
+  // readText 必须按标签类型取值——BUTTON 走 textContent，绝不能因 `'value' in el` 命中
+  // 而误读空 value，导致按钮文案判定失败、拒绝提交（任务 publish_08193f7154da42cb）。
+  const { sandbox, elements } = createInjectionSandbox({ previewImages: 1 })
+  elements.descEl.textContent = '统一描述'
+  elements.priceEl.value = '14.70'
+  elements.publishButtonEl.value = ''
+  elements.publishButtonEl.textContent = '发布'
+
+  const fn = materializeInjected(injectClickPublishSubmit, sandbox)
+  const result = fn()
+
+  assert.equal(result.clicked, true)
+  assert.equal(result.buttonClass, 'publish-button')
+  assert.equal(elements.publishButtonEl.events.filter((e) => e === 'click').length, 1)
+})
+
 test('注入提交: 使用收紧后的真实作用域选择器，绝不回退到裸选择器', () => {
   const source = injectClickPublishSubmit.toString()
 
@@ -792,4 +1039,172 @@ test('注入提交: 未检测到已上传图片时拒绝提交', () => {
   assert.equal(result.clicked, false)
   assert.equal(result.code, 'FORM_FIELD_CHANGED')
   assert.equal(elements.publishButtonEl.events.length, 0)
+})
+
+// ============================ 配送（邮费）与所在地 ============================
+
+test('注入填充: 配送为包邮时映射邮费 0 并标记 postFeeFilled', async () => {
+  const { sandbox } = createInjectionSandbox({ shippingMode: 'free' })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    shipping: { mode: 'free' },
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.postFeeFilled, true)
+  assert.equal(result.shippingStatus, 'free')
+})
+
+test('注入填充: 配送为收费时切换“一口价”并填入显式邮费（回读通过）', async () => {
+  const { sandbox, elements } = createInjectionSandbox({
+    shippingMode: 'paid',
+    shippingCheckedValue: '0',
+  })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    shipping: { mode: 'paid', postFee: 12.5 },
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.postFeeFilled, true)
+  assert.equal(result.shippingStatus, 'paid')
+  assert.equal(elements.postFeeInputEl.value, '12.5')
+})
+
+test('注入填充: 收费配送缺有效邮费金额时结构化失败（绝不伪造收费）', async () => {
+  const { sandbox } = createInjectionSandbox({ shippingMode: 'paid' })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    shipping: { mode: 'paid' },
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.postFeeFilled, false)
+  assert.ok(result.errors.some((e) => e.includes('邮费')))
+})
+
+test('注入填充: 所在地已有官方默认地址时保留并标记 ready', async () => {
+  const { sandbox } = createInjectionSandbox({ location: '外滩' })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.locationFilled, true)
+  assert.equal(result.locationStatus, 'ready')
+  assert.equal(result.locationValue, '外滩')
+})
+
+test('注入填充: 所在地为空时标记需用户选择且绝不自动选地区', async () => {
+  const { sandbox } = createInjectionSandbox({ location: '' })
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: 't',
+    desc: 'd',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  assert.equal(result.locationFilled, false)
+  assert.equal(result.locationStatus, 'needs_user_selection')
+  assert.ok(result.errors.some((e) => e.includes('所在地')))
+})
+
+test('注入提交: 一口价邮费为空时拒绝提交（FORM_VALIDATION_FAILED）', () => {
+  const { sandbox, elements } = createInjectionSandbox({
+    previewImages: 1,
+    shippingMode: 'paid',
+    shippingCheckedValue: '2',
+    postFeeValue: '',
+  })
+  elements.descEl.textContent = '统一描述'
+  elements.priceEl.value = '14.70'
+
+  const fn = materializeInjected(injectClickPublishSubmit, sandbox)
+  const result = fn()
+
+  assert.equal(result.clicked, false)
+  assert.equal(result.code, 'FORM_VALIDATION_FAILED')
+  assert.equal(elements.publishButtonEl.events.filter((e) => e === 'click').length, 0)
+})
+
+test('注入提交: 所在地为空时拒绝提交（FORM_VALIDATION_FAILED）', () => {
+  const { sandbox, elements } = createInjectionSandbox({ previewImages: 1, location: '' })
+  elements.descEl.textContent = '统一描述'
+  elements.priceEl.value = '14.70'
+
+  const fn = materializeInjected(injectClickPublishSubmit, sandbox)
+  const result = fn()
+
+  assert.equal(result.clicked, false)
+  assert.equal(result.code, 'FORM_VALIDATION_FAILED')
+  assert.equal(elements.publishButtonEl.events.filter((e) => e === 'click').length, 0)
+})
+
+test('注入填充: 返回安全 timings（仅数字，无页面原文）', async () => {
+  const { sandbox } = createInjectionSandbox()
+  const fn = materializeInjected(injectFillPublishForm, sandbox)
+
+  const result = await fn({
+    title: '内部标题不得外泄',
+    desc: '内部描述不得外泄',
+    price: 1,
+    originalPrice: 5,
+    imageUrls: ['https://img.example.com/1.jpg'],
+    waitTimeoutMs: 20,
+    renderSettleMs: 1,
+  })
+
+  for (const key of ['totalMs', 'fieldsMs', 'imagesMs', 'validationMs'] as const) {
+    assert.equal(typeof result.timings[key], 'number')
+    assert.ok(result.timings[key] >= 0)
+  }
+  // timings 必须只是数字，绝不携带标题 / URL 等页面原文
+  const json = JSON.stringify(result.timings)
+  assert.ok(!json.includes('内部标题'))
+  assert.ok(!json.includes('img.example.com'))
+})
+
+test('注入提交: 返回安全 timings.totalMs', () => {
+  const { sandbox, elements } = createInjectionSandbox({ previewImages: 1 })
+  elements.descEl.textContent = '统一描述'
+  elements.priceEl.value = '14.70'
+
+  const fn = materializeInjected(injectClickPublishSubmit, sandbox)
+  const result = fn()
+
+  assert.equal(typeof result.timings.totalMs, 'number')
+  assert.ok(result.timings.totalMs >= 0)
 })

@@ -335,3 +335,98 @@ test('suggest 点击建议词：仅填充并关闭建议，绝不触发任务创
   assert.equal(api.count(CommandTypes.CAPTURE_CREATE), 0)
   assert.equal(controller.getState().tasks.items.length, 0)
 })
+
+test('createBatchTasks：按词依次调用现有 CAPTURE_CREATE，成功即进入列表，防并发重复提交', async () => {
+  const api = new FakeBridgeApi()
+  api.respond(CommandTypes.TASK_LIST, () => ({ tasks: [] }))
+
+  let idCounter = 1
+  api.respond(CommandTypes.CAPTURE_CREATE, (payload: unknown) => {
+    const p = payload as { keyword: string }
+    const id = `task_${idCounter++}`
+    return {
+      task: makeTask(id, {
+        payload: { keyword: p.keyword },
+        createdAt: 1000 * idCounter,
+        updatedAt: 1000 * idCounter,
+      }),
+    }
+  })
+
+  const controller = new CaptureController({ api })
+  controller.start()
+
+  const payloads = [
+    { keyword: '机械键盘' },
+    { keyword: '静电容键盘' },
+    { keyword: '薄膜键盘' },
+  ]
+
+  const result = await controller.createBatchTasks(payloads)
+
+  assert.equal(result.successes.length, 3)
+  assert.equal(result.failures.length, 0)
+  assert.equal(controller.getState().tasks.items.length, 3)
+  assert.equal(controller.getState().create.phase, 'ok')
+  // 3 个任务依次创建，调用了 3 次 CAPTURE_CREATE
+  assert.equal(api.count(CommandTypes.CAPTURE_CREATE), 3)
+
+  // 并发防重：若 phase 为 running 则被拦截忽略
+  // 模拟并发调用
+  const concurrentP1 = controller.createBatchTasks([{ keyword: '测试1' }])
+  const concurrentP2 = controller.createBatchTasks([{ keyword: '测试2' }])
+  await Promise.all([concurrentP1, concurrentP2])
+  // 只有 1 个会执行，因为第 2 个在 phase==='running' 时被直接返回空
+  assert.equal(api.count(CommandTypes.CAPTURE_CREATE), 4)
+})
+
+test('createBatchTasks：部分失败保留成功并展示失败词，支持仅针对失败项重试', async () => {
+  const api = new FakeBridgeApi()
+  api.respond(CommandTypes.TASK_LIST, () => ({ tasks: [] }))
+
+  let count = 0
+  api.respond(CommandTypes.CAPTURE_CREATE, (payload: unknown) => {
+    const p = payload as { keyword: string }
+    count++
+    if (p.keyword === '违规词') {
+      throw new Error('平台敏感词拦截')
+    }
+    return {
+      task: makeTask(`t_${count}`, {
+        payload: { keyword: p.keyword },
+      }),
+    }
+  })
+
+  const controller = new CaptureController({ api })
+  controller.start()
+
+  const initialPayloads = [
+    { keyword: '词1' },
+    { keyword: '违规词' },
+    { keyword: '词3' },
+  ]
+
+  const batchResult = await controller.createBatchTasks(initialPayloads)
+
+  // 验证结果：词1与词3成功，违规词失败
+  assert.equal(batchResult.successes.length, 2)
+  assert.equal(batchResult.failures.length, 1)
+  assert.equal(batchResult.failures[0].keyword, '违规词')
+
+  // 成功任务已进入任务列表，保留未丢失
+  assert.equal(controller.getState().tasks.items.length, 2)
+  assert.equal(controller.getState().create.phase, 'failed')
+  assert.ok(controller.getState().create.error?.detail.includes('违规词'))
+
+  // 模拟重试：仅重试失败项（用户修复词或再次提交违规词）
+  // 假设修复为“合规词”并重试
+  const retryPayloads = [{ keyword: '合规词' }]
+  const retryResult = await controller.createBatchTasks(retryPayloads)
+  assert.equal(retryResult.successes.length, 1)
+  assert.equal(retryResult.failures.length, 0)
+
+  // 任务列表累计为 3 个
+  assert.equal(controller.getState().tasks.items.length, 3)
+  assert.equal(controller.getState().create.phase, 'ok')
+})

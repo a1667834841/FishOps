@@ -11,6 +11,7 @@ import {
   SessionChatPersistence,
   type StorageAreaLike,
 } from '../session-persistence'
+import { ChatStore } from '../store'
 
 function fakeStorage(): StorageAreaLike & { data: Map<string, unknown> } {
   const data = new Map<string, unknown>()
@@ -86,6 +87,33 @@ test('容量上限：只保留最新的 maxMessages 条', async () => {
     loaded.map((m) => m.createAt),
     [2, 3],
   )
+})
+
+test('字段白名单：保留 senderAvatarUrl，保存/加载不丢头像', async () => {
+  const storage = fakeStorage()
+  const persistence = new SessionChatPersistence(storage)
+  const withAvatar: ChatMessage = {
+    ...msg('m1', 1, 'hi'),
+    senderAvatarUrl: 'https://img.example.com/sender.png',
+  }
+  await persistence.saveMessages([withAvatar])
+  const loaded = await persistence.loadMessages()
+  assert.equal(loaded[0].senderAvatarUrl, 'https://img.example.com/sender.png')
+})
+
+test('回归：ChatStore.init 从持久化恢复后消息头像不丢', async () => {
+  const storage = fakeStorage()
+  const persistence = new SessionChatPersistence(storage)
+  const store = new ChatStore(persistence)
+  store.upsertMessages([
+    { ...msg('m1', 1, 'hi'), senderAvatarUrl: 'https://img.example.com/sender.png' },
+  ])
+  await store.flush()
+
+  const restored = new ChatStore(persistence)
+  await restored.init()
+  const [message] = restored.getMessages('s1')
+  assert.equal(message.senderAvatarUrl, 'https://img.example.com/sender.png')
 })
 
 test('会话 upsert：去重并按上限截断', async () => {

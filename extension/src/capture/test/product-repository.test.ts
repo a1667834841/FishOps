@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import {
   MemoryProductRepository,
   createMemoryProductRepository,
+  mergeProductForUpsert,
 } from '../../../../shared/capture/product-repository'
 import type { Product } from '../../../../shared/types/product'
 
@@ -55,6 +56,90 @@ test('按 itemId 去重 upsert，并追加快照', async () => {
   assert.equal(list.total, 2)
   const a = list.products.find((p) => p.itemId === 'A')!
   assert.equal(a.wantCnt, 20) // 最近一次覆盖
+})
+
+test('upsert 保护已有图片集合：不完整新采集不覆盖，合并去重保序', async () => {
+  const repo = createMemoryProductRepository()
+  await repo.upsertProducts(
+    [product({ itemId: 'A', images: ['https://a/1.jpg', 'https://a/2.jpg'] })],
+    1000,
+  )
+
+  // 新采集缺少 images → 必须保留已有完整集合。
+  await repo.upsertProducts([product({ itemId: 'A', wantCnt: 5 })], 2000)
+  let [p] = (await repo.list({ source: 'all' })).products
+  assert.deepEqual(p!.images, ['https://a/1.jpg', 'https://a/2.jpg'])
+
+  // 新采集带部分 / 重复图片 → 合并去重保序（已有在前）。
+  await repo.upsertProducts(
+    [product({ itemId: 'A', images: ['https://a/2.jpg', 'https://a/3.jpg'] })],
+    3000,
+  )
+  ;[p] = (await repo.list({ source: 'all' })).products
+  assert.deepEqual(p!.images, ['https://a/1.jpg', 'https://a/2.jpg', 'https://a/3.jpg'])
+})
+
+test('稀疏重采保留价格和发布时间的数值，明确零价仍可更新', () => {
+  const existing = product({
+    price: '¥100', priceNumber: 100, originalPrice: '¥200', originalPriceNumber: 200,
+    publishTime: '2026/10/1', publishTimeMs: 1790784000000,
+  })
+  const merged = mergeProductForUpsert(existing, product({
+    price: '', priceNumber: 0, originalPrice: '', originalPriceNumber: 0,
+    publishTime: '', publishTimeMs: 0,
+  }))
+  assert.equal(merged.priceNumber, 100)
+  assert.equal(merged.originalPriceNumber, 200)
+  assert.equal(merged.publishTimeMs, 1790784000000)
+  assert.equal(mergeProductForUpsert(existing, product({ price: '¥0', priceNumber: 0 })).priceNumber, 0)
+})
+
+test('mergeProductForUpsert：图片合并不覆盖已有集合（IndexedDB 复用同一合并逻辑）', () => {
+  // IndexedDB 与内存实现共用本函数，此处直接覆盖合并语义。
+  const existing = product({ itemId: 'A', images: ['https://a/1.jpg'] })
+  const incoming = product({ itemId: 'A', images: ['https://a/1.jpg', 'https://a/2.jpg'] })
+  assert.deepEqual(mergeProductForUpsert(existing, incoming).images, ['https://a/1.jpg', 'https://a/2.jpg'])
+
+  // 新采集无 images 时保留已有；两者都无则仍为 undefined。
+  assert.deepEqual(mergeProductForUpsert(existing, product({ itemId: 'A' })).images, ['https://a/1.jpg'])
+  assert.equal(mergeProductForUpsert(product({ itemId: 'B' }), product({ itemId: 'B' })).images, undefined)
+})
+
+test('upsert 稀疏保护：新采集空字符串绝不清空已有卖家 / 地区 / 标题等非空值', async () => {
+  const repo = createMemoryProductRepository()
+  await repo.upsertProducts(
+    [
+      product({
+        itemId: 'A',
+        title: 'iPhone 17',
+        sellerNick: '张三',
+        sellerCity: '上海',
+        tags: '全新',
+        desc: '九成新',
+      }),
+    ],
+    1000,
+  )
+
+  // 第二次采集：平台本次未返回这些字段 → 归一化为空串，绝不允许清空已有非空值。
+  await repo.upsertProducts(
+    [product({ itemId: 'A', title: '', sellerNick: '', sellerCity: '', tags: '', desc: '' })],
+    2000,
+  )
+  let [p] = (await repo.list({ source: 'all' })).products
+  assert.equal(p!.title, 'iPhone 17')
+  assert.equal(p!.sellerNick, '张三')
+  assert.equal(p!.sellerCity, '上海')
+  assert.equal(p!.tags, '全新')
+  assert.equal(p!.desc, '九成新')
+
+  // 新采集给出非空值时仍按 newest-wins 覆盖。
+  await repo.upsertProducts([product({ itemId: 'A', sellerNick: '李四', sellerCity: '北京' })], 3000)
+  ;[p] = (await repo.list({ source: 'all' })).products
+  assert.equal(p!.sellerNick, '李四')
+  assert.equal(p!.sellerCity, '北京')
+  // 未随本次采集返回的字段依旧保留旧值。
+  assert.equal(p!.tags, '全新')
 })
 
 test('列表关键字过滤 / 排序 / 分页', async () => {

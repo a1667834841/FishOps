@@ -88,6 +88,8 @@ export class MockPlatform implements CapturePlatform {
   readonly errors = new Map<number, unknown>()
   readonly hooks = new Map<number, () => Promise<void> | void>()
   readonly searchCalls: number[] = []
+  /** 每次搜索的关键词（用于验证任务调度顺序）。 */
+  readonly searchKeywords: string[] = []
   readonly detailCalls: string[] = []
   /** suggest 调用记录（关键词）。 */
   readonly suggestCalls: string[] = []
@@ -97,6 +99,8 @@ export class MockPlatform implements CapturePlatform {
   suggestImpl?: (keyword: string) => Promise<string[]>
   /** suggest 需要抛出的错误（未设置 suggestImpl 时使用）。 */
   suggestError: unknown = null
+  /** 详情需要抛出的错误（未设置时正常返回 detailPayload）。 */
+  detailError: unknown = null
   detailPayload: unknown = {
     data: {
       itemDO: {
@@ -117,6 +121,7 @@ export class MockPlatform implements CapturePlatform {
 
   async search(params: CaptureSearchParams): Promise<unknown> {
     this.searchCalls.push(params.pageNumber)
+    this.searchKeywords.push(params.keyword)
     const hook = this.hooks.get(params.pageNumber)
     if (hook) await hook()
     const error = this.errors.get(params.pageNumber)
@@ -126,6 +131,7 @@ export class MockPlatform implements CapturePlatform {
 
   async detail(itemId: string): Promise<unknown> {
     this.detailCalls.push(itemId)
+    if (this.detailError) throw this.detailError
     return this.detailPayload
   }
 

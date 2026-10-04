@@ -8,7 +8,7 @@
  * - 订阅 TaskManager 变更，产出 `TASK_CHANGED` 事件（含完整任务快照，可驱动进度条）；
  * - Worker 启动时执行孤儿任务恢复（running → paused），**绝不自动续跑**。
  *
- * 边界：只做采集；不发送 / 回复聊天、不调用 AI、不触发飞书与发布。
+ * 边界：只做采集；不发送 / 回复聊天、不调用 AI、通过注入端口同步已采集商品到飞书，不触发发布。
  */
 import {
   CommandTypes,
@@ -54,18 +54,24 @@ export interface CaptureEventEnvelope {
 }
 
 export interface CaptureRuntimeDeps {
+  /** 采集完成前同步已入库商品到飞书。 */
+  syncProducts?: import('../capture/controller').CaptureControllerDeps['syncProducts']
   /** 平台调用端口（基于 P3 `platform.search` / `platform.detail`）。 */
   platform: CapturePlatform
   /** 商品库仓储（IndexedDB 或内存）。 */
   repository: ProductRepository
   /** 任务存储；缺省自动使用 chrome.storage.session / 内存。 */
   tasks?: TaskManager
-  /** 期望最小请求间隔（毫秒），会被强制不低于 1500。 */
+  /** 搜索请求基础间隔（毫秒）；搜索按「基础间隔 + 随机增量」节流，缺省 500ms。 */
   minIntervalMs?: number
+  /** 搜索请求随机增量上限（毫秒）；缺省 500ms。 */
+  intervalJitterMs?: number
   /** 时间源，默认 `Date.now`。 */
   now?: () => number
   /** 休眠实现，默认 `setTimeout`。 */
   sleep?: (ms: number) => Promise<void>
+  /** 均匀随机源，返回 [0,1)，默认 `Math.random`；测试可注入以获得确定性。 */
+  random?: () => number
   /** 任务变更事件回调（background 用于广播 `TASK_CHANGED`）。 */
   onEvent?: (event: CaptureEventEnvelope) => void
   /** 获取当前登录用户 ID（用于确认商品归属）。 */
@@ -98,11 +104,14 @@ export function createCaptureRuntime(deps: CaptureRuntimeDeps): CaptureRuntime {
   const tasks = deps.tasks ?? new TaskManager()
   const controller = new CaptureController({
     tasks,
+    syncProducts: deps.syncProducts,
     platform: deps.platform,
     repository: deps.repository,
     ...(deps.minIntervalMs === undefined ? {} : { minIntervalMs: deps.minIntervalMs }),
+    ...(deps.intervalJitterMs === undefined ? {} : { intervalJitterMs: deps.intervalJitterMs }),
     ...(deps.now === undefined ? {} : { now: deps.now }),
     ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+    ...(deps.random === undefined ? {} : { random: deps.random }),
     ...(deps.getCurrentUserId === undefined ? {} : { getCurrentUserId: deps.getCurrentUserId }),
   })
 
@@ -125,14 +134,17 @@ export function createCaptureRuntime(deps: CaptureRuntimeDeps): CaptureRuntime {
     })
   })
 
-  // 启动恢复仅执行一次；running → paused，保留断点，不自动续跑。
+  // 启动恢复仅执行一次：running → paused（保留断点，不自动续跑）；pending 重新入队调度。
   let initPromise: Promise<void> | null = null
   const ensureInit = (): Promise<void> => {
     if (!initPromise) {
-      initPromise = tasks.recoverOnStartup({
-        strategy: 'paused',
-        reason: 'Service Worker 重启，采集任务已挂起，等待手动续采',
-      }).then(() => undefined)
+      initPromise = tasks
+        .recoverOnStartup({
+          strategy: 'paused',
+          reason: 'Service Worker 重启，采集任务已挂起，等待手动续采',
+        })
+        .then(() => controller.requeuePending())
+        .then(() => undefined)
     }
     return initPromise
   }

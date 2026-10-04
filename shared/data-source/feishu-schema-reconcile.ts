@@ -34,6 +34,7 @@ export type FeishuSchemaReconcileStrategy = typeof FEISHU_SCHEMA_RECONCILE_STRAT
 export const LOCAL_TO_FEISHU_FIELD_NAME: Readonly<Record<string, string>> = {
   itemId: '商品ID',
   title: '商品标题',
+  desc: '商品描述',
   price: '价格原文',
   priceNumber: '价格',
   originalPrice: '原价原文',

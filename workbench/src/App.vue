@@ -3,8 +3,11 @@ import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
 import DiagnosticsDrawer from './components/DiagnosticsDrawer.vue'
+import { useAppBootstrap } from './composables/useAppBootstrap'
 import { useBridgeStatus } from './composables/useBridgeStatus'
 import { DEFAULT_PAGE, findNavItem, type PageId } from './data/navigation'
+import type { PublishDraft } from './features/publish/publish-draft-store'
+import { publishDraftStore } from './features/publish/publish-draft-store'
 import BridgeDemo from './pages/BridgeDemo.vue'
 import OverviewPage from './pages/OverviewPage.vue'
 const AnalyticsPage = defineAsyncComponent(() => import('./pages/AnalyticsPage.vue'))
@@ -18,9 +21,13 @@ const SettingsPage = defineAsyncComponent(() => import('./pages/SettingsPage.vue
 const page = ref<PageId>(DEFAULT_PAGE)
 const diagnosticsOpen = ref(false)
 const mainRef = ref<HTMLElement | null>(null)
+/** 跨页面传递的待发布草稿（从 ProductsPage 飞书 Tab 或自营 Tab 传递到 PublishPage） */
+const pendingDraft = ref<PublishDraft | null>(null)
 
 const currentItem = computed(() => findNavItem(page.value))
 const { status, inExtension } = useBridgeStatus()
+// 应用级启动时自动准备聊天运行时并同步会话
+useAppBootstrap()
 
 /** 非扩展环境或 Bridge 异常时，在内容区顶部给出明确提示。 */
 const envNotice = computed<{ tone: 'warn' | 'error'; text: string } | null>(() => {
@@ -31,7 +38,13 @@ const envNotice = computed<{ tone: 'warn' | 'error'; text: string } | null>(() =
     }
   }
   if (status.value.state === 'error') {
-    return { tone: 'error', text: `与扩展的 Bridge 连接异常：${status.value.message ?? '未知错误'}` }
+    return { tone: 'error', text: `连接失败：${status.value.message ?? '与扩展或闲鱼运行时连接异常'}` }
+  }
+  if (status.value.state === 'unauthorized') {
+    return { tone: 'warn', text: status.value.message ?? '闲鱼账号未登录，请先在闲鱼网页版登录后重试。' }
+  }
+  if (status.value.state === 'captcha') {
+    return { tone: 'warn', text: status.value.message ?? '闲鱼安全验证拦截，请在闲鱼网页版完成滑块/验证码验证。' }
   }
   return null
 })
@@ -51,6 +64,18 @@ async function go(next: PageId): Promise<void> {
   // 把键盘焦点移到内容区，便于读屏与键盘用户感知页面已切换。
   await nextTick()
   mainRef.value?.focus({ preventScroll: true })
+}
+
+/** 接收选品并导航到发布中心（绝不自动调用任务创建/填表/发布提交） */
+function handlePublishItem(draft: PublishDraft): void {
+  pendingDraft.value = draft
+  publishDraftStore.setDraft(draft)
+  void go('publish')
+}
+
+function handleClearDraft(): void {
+  pendingDraft.value = null
+  publishDraftStore.clearDraft()
 }
 </script>
 
@@ -72,8 +97,13 @@ async function go(next: PageId): Promise<void> {
           <OverviewPage v-if="page === 'overview'" @navigate="go" />
           <CollectPage v-else-if="page === 'collect'" @navigate="go" @diagnostics="diagnosticsOpen = true" />
           <ChatCenterPage v-else-if="page === 'chat'" @navigate="go" @diagnostics="diagnosticsOpen = true" />
-          <ProductsPage v-else-if="page === 'products'" @navigate="go" />
-          <PublishPage v-else-if="page === 'publish'" @navigate="go" />
+          <ProductsPage v-else-if="page === 'products'" @navigate="go" @publish-item="handlePublishItem" />
+          <PublishPage
+            v-else-if="page === 'publish'"
+            :draft="pendingDraft"
+            @navigate="go"
+            @clear-draft="handleClearDraft"
+          />
           <AnalyticsPage v-else-if="page === 'analytics'" @navigate="go" />
           <SettingsPage v-else @diagnostics="diagnosticsOpen = true" />
         </Transition>

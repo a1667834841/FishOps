@@ -909,14 +909,13 @@ export class SettingsController extends StateStore<SettingsState> {
     const willHaveAppId = Boolean(appId || current.hasAppId)
     const willHaveSecret = Boolean(appSecret || current.hasAppSecret)
     const willHaveToken = Boolean(spreadsheetToken || current.hasSpreadsheetToken)
-    const willHaveProdTable = Boolean(productTableId || current.hasProductTableId)
 
-    if (!willHaveAppId || !willHaveSecret || !willHaveToken || !willHaveProdTable) {
+    if (!willHaveAppId || !willHaveSecret || !willHaveToken) {
       this.patch({
         feishu: {
           ...this.state.feishu,
           savePhase: 'failed',
-          saveError: '请完整填写 App ID、App Secret、Spreadsheet Token 和商品表 Table ID',
+          saveError: '请完整填写 App ID、App Secret 和 Spreadsheet Token',
           saveSuccess: null,
         },
       })

@@ -7,9 +7,10 @@
  *
  * 边界：只读、只写本地 store；不发送、不自动回复、不调用 AI。
  */
-import type { ChatEventKind, ChatMessage, SyncError } from '../../../shared/types/chat'
+import type { ChatEventKind, ChatMessage, Conversation, SyncError } from '../../../shared/types/chat'
 import { ChatHistoryClient, ChatHistoryError } from './history'
-import { parseWebSocketMessage, type ParseContext } from './parser'
+import { parseWebSocketMessage, correctMessageDirection, type ParseContext } from './parser'
+import type { PeerProfileResolver } from './peer-profiles'
 import { ChatStore, type UpsertResult } from './store'
 
 /** 同步依赖。 */
@@ -19,6 +20,11 @@ export interface ChatSyncDeps {
   history?: ChatHistoryClient
   /** 分页之间的等待时间，默认沿用协议建议的 300ms。 */
   sleep?: (ms: number) => Promise<void>
+  /**
+   * 可选的对方头像补齐器（只读 mtop，见 `peer-profiles.ts`）。
+   * 未提供时不做头像补齐；补齐失败一律不中断会话同步。
+   */
+  peerProfiles?: PeerProfileResolver
 }
 
 /** 单次同步结果。 */
@@ -97,16 +103,56 @@ export class ChatSync {
   private readonly history?: ChatHistoryClient
   private readonly parseCtx: ParseContext
   private readonly sleep: (ms: number) => Promise<void>
+  private readonly peerProfiles?: PeerProfileResolver
 
   constructor(deps: ChatSyncDeps, parseCtx: ParseContext = {}) {
     this.store = deps.store
     this.history = deps.history
     this.parseCtx = parseCtx
     this.sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    this.peerProfiles = deps.peerProfiles
   }
 
   /**
-   * 摄入一条实时 WebSocket 原始消息。
+   * 动态更新当前登录用户 ID，并重新归一已缓存消息方向。
+   *
+   * 场景：runtime 首次组装时登录态尚未就绪（myUserId 缺失），历史消息全被漏判为 `in`
+   * （自己也在左侧）；后续准备流程解析出真实 ID 后调用本方法，把已有缓存（含持久化）纠正。
+   *
+   * 规则（安全优先，绝不做猜测）：
+   * - 仅当新 ID 非空时执行重新归一；未知 ID 保持原样（诚实按 in，不猜）；
+   * - 仅做 `in → out` 纠正（senderId 明确匹配新 ID），**绝不把已确认的 `out` 降级为 `in`**
+   *   （保护本地发送回显 `pendingEcho` 与平台回声）；
+   * - 只重写 `direction`（history 来源同时回填 `receiverId`），其余字段（头像、pendingEcho
+   *   等）原样保留，不丢数据。
+   */
+  setMyUserId(myUserId?: string): void {
+    const next = typeof myUserId === 'string' && myUserId.length > 0 ? myUserId : undefined
+    this.parseCtx.myUserId = next
+    this.history?.setMyUserId(next)
+    // 头像补齐器若支持动态用户同步，顺带通知（避免其冻结在旧 ID 而错判归属）。
+    const withUser = this.peerProfiles as unknown as { setMyUserId?: (id?: string) => void } | undefined
+    withUser?.setMyUserId?.(next)
+    if (next === undefined) return
+    this.rederiveDirections(next)
+  }
+
+  /** 按当前用户 ID 重新归一 store 中已缓存消息方向（仅 in → out 纠正，绝不降级）。 */
+  private rederiveDirections(myUserId: string): void {
+    const all = this.store.getAllMessages()
+    if (all.length === 0) return
+    const changed: ChatMessage[] = []
+    for (const message of all) {
+      const corrected = correctMessageDirection(message, myUserId)
+      if (corrected) changed.push(corrected)
+    }
+    if (changed.length === 0) return
+    this.store.upsertMessages(changed)
+    // 归一结果异步落盘；失败不抛出（store 的 onFlushError 会兑底，不影响调用方）。
+    void this.store.flush().catch(() => {})
+  }
+
+  /** 摄入一条实时 WebSocket 原始消息。
    * 解析失败返回 `{ ok: false, error }`，绝不写入 store，也不抛错。
    */
   ingestRealtime(raw: unknown): SyncResult {
@@ -144,7 +190,8 @@ export class ChatSync {
     try {
       for (let page = 0; page < pages; page++) {
         const result = await this.history.listMessageHistory(sessionId, { cursor, count: options.count })
-        const count = this.store.upsertMessages(result.messages.map(normalizeMessage))
+        // 历史批次是权威边界：以它的时间上界剔除已覆盖的本地发送回显（仅此类批次可当边界）。
+        const count = this.store.upsertMessages(result.messages.map(normalizeMessage), { authoritativeHistory: true })
         added += count.added
         updated += count.updated
         if (!result.hasMore || result.nextCursor <= 0) break
@@ -169,7 +216,15 @@ export class ChatSync {
     try {
       for (let page = 0; page < pages; page++) {
         const result = await this.history.listConversations({ cursor, pageSize: options.pageSize })
-        const count = this.store.upsertConversations(result.conversations)
+        // LWP 会话数据不含头像；合并时保留 store 中已有的对方头像，避免重复同步把它抹掉。
+        const incoming = result.conversations.map((conv) => {
+          const existing = this.store.getConversation(conv.sessionId)
+          if (existing?.peerAvatarUrl && !conv.peerAvatarUrl) {
+            return { ...conv, peerAvatarUrl: existing.peerAvatarUrl }
+          }
+          return conv
+        })
+        const count = this.store.upsertConversations(incoming)
         added += count.added
         updated += count.updated
         if (!result.hasMore || result.nextCursor === undefined) break
@@ -177,10 +232,45 @@ export class ChatSync {
         await this.sleep(300)
       }
       await this.store.flush()
-      return { ok: true, added, updated }
+      const notes = await this.resolvePeerAvatars()
+      return { ok: true, added, updated, ...(notes === undefined ? {} : { notes }) }
     } catch (error) {
       // transport reject（无 tab / 未登录 / 超时）/ LWP 业务失败 / 持久化失败：归一为结构化错误。
       return { ok: false, added, updated, error: toSyncError(error) }
+    }
+  }
+
+  /**
+   * 为缺失对方头像的会话补齐头像（只读 mtop）。
+   *
+   * 仅补齐 `peerAvatarUrl` 为空的会话，且写入前再次确认当前仍缺头像，保留已有头像。
+   * 任何失败都只返回提示，绝不影响已经完成的会话同步。
+   */
+  private async resolvePeerAvatars(): Promise<string[] | undefined> {
+    if (!this.peerProfiles) return undefined
+    try {
+      const missing = this.store.listConversations().filter((conv) => !conv.peerAvatarUrl)
+      if (missing.length === 0) return undefined
+      const updates = await this.peerProfiles.resolveMissing(missing)
+      if (updates.length === 0) return undefined
+
+      const merged: Conversation[] = []
+      for (const update of updates) {
+        const current = this.store.getConversation(update.sessionId)
+        if (!current || current.peerAvatarUrl) continue
+        merged.push({
+          ...current,
+          peerAvatarUrl: update.peerAvatarUrl,
+          ...(update.peerUserId === undefined ? {} : { peerUserId: update.peerUserId }),
+        })
+      }
+      if (merged.length === 0) return undefined
+      this.store.upsertConversations(merged)
+      await this.store.flush()
+      return [`已补齐 ${merged.length} 个会话的对方头像`]
+    } catch {
+      // 兜底：头像补齐绝不让会话同步失败。
+      return ['对方头像补齐失败（不影响会话同步）']
     }
   }
 }

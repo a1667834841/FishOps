@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { PhPalette, PhCpu, PhTable, PhChats, PhHeartbeat, PhUserCircle, PhEye, PhEyeSlash, PhStethoscope } from '@phosphor-icons/vue'
 import Callout from '../components/Callout.vue'
 import PanelCard from '../components/PanelCard.vue'
@@ -27,9 +27,16 @@ import {
   type ReplyStrategyDraft,
   type SettingsState,
 } from '../features/settings/settings-controller'
+import { REPLY_EVENTS, ReplyController, type ReplyState } from '../features/reply/reply-controller'
 import { broadcastFeishuTargetChanged } from '../features/products/feishu-schema-controller'
 
 const emit = defineEmits<{ diagnostics: [] }>()
+
+/**
+ * 规则 CRUD 面板按需加载：仅在设置页打开「回复策略」分区时渲染，
+ * 避免其余分区的组件加载与渲染开销。
+ */
+const ReplyRulesPanel = defineAsyncComponent(() => import('../components/chat/ReplyRulesPanel.vue'))
 
 const theme = useTheme()
 const settingsSections = [
@@ -55,6 +62,8 @@ const bridgeLabels: Record<BridgeState, string> = {
   checking: '检测中',
   online: '已连接',
   error: '异常',
+  unauthorized: '闲鱼未登录',
+  captcha: '需要验证码',
 }
 
 const capabilityTones: Record<CapabilityPhase, 'neutral' | 'info' | 'ok' | 'warn' | 'error'> = {
@@ -325,6 +334,16 @@ async function onTestFeishu(): Promise<void> {
 }
 
 // ==================== 3. 回复策略表单与 AI 暂停 ====================
+
+// 规则 CRUD 复用聊天中心的回复规则控制器：与全局策略共享同一后台来源
+//（CHAT_RULES_GET / CHAT_RULES_SET）。规则保存只提交 rules 字段，不会覆盖上方全局策略；
+// 事件订阅、前台恢复与卸载清理都由 useBridgeController 统一处理。
+const { state: replyRulesState, controller: replyRulesController } = useBridgeController<ReplyState, ReplyController>({
+  events: REPLY_EVENTS,
+  timeoutMs: 30000,
+  create: (api) => new ReplyController({ api }),
+})
+
 const replyDraft = ref<ReplyStrategyDraft>({
   enabled: false,
   mode: 'suggest',
@@ -766,16 +785,16 @@ async function onTogglePause(): Promise<void> {
 
         <div class="form-row">
           <div class="field form-col">
-            <label class="field__label" for="feishu-prod-table">商品表 Table ID (必填)</label>
+            <label class="field__label" for="feishu-prod-table">旧商品表 Table ID（可选）</label>
             <input
               id="feishu-prod-table"
               v-model="feishuForm.productTableId"
               class="input mono"
               type="text"
-              :required="!state.feishu.hasProductTableId"
               :placeholder="state.feishu.hasProductTableId ? '••••••••（已在后台配置）' : 'tblxxxxxxxxxxxxxx'"
               :disabled="state.feishu.savePhase === 'running'"
             />
+            <span class="field__hint">采集同步会自动创建每日表；此项仅用于旧表分析和手动导出。</span>
           </div>
 
           <div class="field form-col">
@@ -820,7 +839,7 @@ async function onTogglePause(): Promise<void> {
             :disabled="
               state.availability !== 'ready' ||
               state.feishu.testPhase === 'running' ||
-              (!state.feishu.configured && !feishuForm.productTableId)
+              (!state.feishu.configured && !feishuForm.spreadsheetToken)
             "
             @click="onTestFeishu"
           >
@@ -1096,6 +1115,14 @@ async function onTogglePause(): Promise<void> {
         </div>
       </form>
     </PanelCard>
+
+    <!-- 回复规则 CRUD：复用聊天中心面板的 rulesOnly 模式。全局策略仍由上方表单管理，这里不重复渲染全局配置。 -->
+    <ReplyRulesPanel
+      v-if="activeSection === 'reply'"
+      rules-only
+      :reply="replyRulesState"
+      :controller="replyRulesController"
+    />
 
     <!-- 4. 后台模块状态 -->
     <PanelCard

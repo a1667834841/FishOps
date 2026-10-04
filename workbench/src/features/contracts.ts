@@ -54,6 +54,11 @@ export type {
 } from '../../../shared/types/dataset'
 export type {
   PublishContentRule,
+  PublishCreatePayload,
+  PublishDiagEntry,
+  PublishDiagnostics,
+  PublishDiagStage,
+  PublishDiagStatus,
   PublishErrorCode,
   PublishFillSummary,
   PublishImageRule,
@@ -62,6 +67,7 @@ export type {
   PublishManualConfirmationStatus,
   PublishPriceRule,
   PublishRule,
+  PublishSource,
   PublishSubmitOutcome,
   PublishSubmitRecord,
   PublishTask,
@@ -71,6 +77,31 @@ export type {
   PublishTaskListFilter,
   PublishTaskStatus,
 } from '../../../shared/types/publish'
+// 诊断时间线保留上限（与后台 diagnostics 记录器共用同一常量，避免 UI 侧自造数字）。
+export { PUBLISH_DIAG_TIMELINE_LIMIT } from '../../../shared/types/publish'
+export type {
+  FeishuProductsOrder,
+  FeishuProductsPageResult,
+  FeishuProductGetPayload,
+  FeishuProductGetResult,
+  FeishuProductMaterial,
+} from '../../../shared/types/feishu-products'
+export type {
+  CatalogProduct,
+  ProductCatalogQueryPayload,
+  ProductCatalogQueryResult,
+  ProductCatalogSource,
+} from '../../../shared/types/product-catalog'
+export {
+  PRODUCT_CATALOG_DEFAULT_PAGE_SIZE,
+  PRODUCT_CATALOG_MAX_PAGE_SIZE,
+} from '../../../shared/types/product-catalog'
+import type { FeishuProductsPagePayload as SharedFeishuProductsPagePayload } from '../../../shared/types/feishu-products'
+
+/** 飞书商品分页请求负载（扩展支持后续翻页传递 state 绑定的 targetTableId，首请求缺省） */
+export interface FeishuProductsPagePayload extends SharedFeishuProductsPagePayload {
+  targetTableId?: string
+}
 
 // ---------------- 运行时常量与校验（与后台共用同一份实现） ----------------
 export {
@@ -140,5 +171,6 @@ export {
 export type TaskChangedEvent = EventPayloadMap['TASK_CHANGED']
 export type ChatRulesResult = CommandResultMap['CHAT_RULES_GET']
 export type DataSourceInfo = CommandResultMap['DATA_SOURCE_LIST']['dataSources'][number]
+export type PublishGetResult = CommandResultMap['PUBLISH_GET']
 export type PublishSubmitPayload = CommandPayloadMap['PUBLISH_SUBMIT']
 export type PublishSubmitResult = CommandResultMap['PUBLISH_SUBMIT']

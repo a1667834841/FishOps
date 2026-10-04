@@ -9,7 +9,9 @@ import {
   displayCaptureTime,
   displayPrice,
   escapeCsvCell,
+  mapCatalogProductToTableItem,
   pageInfo,
+  parseFeishuDatasetRowToProduct,
   productLink,
   trustedProductUrl,
 } from '../products-format'
@@ -87,4 +89,149 @@ test('buildProductsCsv：只包含传入的商品行', () => {
 test('csvFileName：包含日期时间戳', () => {
   const name = csvFileName(new Date(2026, 0, 2, 3, 4, 5).getTime())
   assert.equal(name, 'fishops-products-20260102-030405.csv')
+})
+
+test('parseFeishuDatasetRowToProduct：正确解析飞书多维表格行，保留 recordId 并避免冒充 my_published', () => {
+  const row = {
+    recordId: 'rec_abc_999',
+    '商品ID': 'item_10086',
+    '商品标题': [{ text: '优质二手单反相机' }],
+    '价格': 2999.5,
+    '原价': 4999,
+    '想要人数': 88,
+    '发布时间': 1788200000000,
+    '采集时间': '2026-10-01T12:00:00Z',
+    '卖家昵称': '数码小店',
+    '地区': '杭州',
+    '包邮': '是',
+    '商品标签': '相机,数码',
+    '封面URL': { link: 'https://img.alicdn.com/camera.png' },
+    '商品详情URL': { link: 'https://www.goofish.com/item?id=item_10086' },
+  }
+
+  const p = parseFeishuDatasetRowToProduct(row)
+  assert.equal(p.recordId, 'rec_abc_999')
+  assert.equal(p.itemId, 'item_10086')
+  assert.equal(p.title, '优质二手单反相机')
+  assert.equal(p.priceNumber, 2999.5)
+  assert.equal(p.originalPriceNumber, 4999)
+  assert.equal(p.wantCnt, 88)
+  assert.equal(p.sellerNick, '数码小店')
+  assert.equal(p.sellerCity, '杭州')
+  assert.equal(p.freeShip, '是')
+  assert.equal(p.coverUrl, 'https://img.alicdn.com/camera.png')
+  assert.equal(p.detailUrl, 'https://www.goofish.com/item?id=item_10086')
+  assert.equal(p.source, 'feishu_material')
+  assert.notEqual(p.source, 'my_published')
+})
+
+test('parseFeishuDatasetRowToProduct：itemId 缺失时严禁 Math.random 造 ID，且不能拿 recordId 拼接 goofish 链接', () => {
+  const row = {
+    recordId: 'rec_only_record_id_456',
+    '商品标题': '没有商品ID的飞书行',
+  }
+  const p = parseFeishuDatasetRowToProduct(row)
+  // 保留稳定 row identity
+  assert.equal(p.recordId, 'rec_only_record_id_456')
+  // itemId 明确为空字符串，严禁随机数、严禁把 recordId 填作 itemId
+  assert.equal(p.itemId, '')
+  assert.ok(!p.itemId.includes('feishu_'))
+  // productLink 不得拼出 goofish.com/item?id=rec_only_record_id_456
+  assert.equal(productLink(p), null)
+})
+
+test('parseFeishuDatasetRowToProduct：无 recordId 且无 itemId 时严禁造随机，结构错误明确为空 ID', () => {
+  const row = {}
+  const p = parseFeishuDatasetRowToProduct(row)
+  assert.equal(p.recordId, '')
+  assert.equal(p.itemId, '')
+  assert.equal(productLink(p), null)
+  assert.equal(p.source, 'feishu_material')
+})
+
+test('mapCatalogProductToTableItem: 飞书来源保留 recordId, desc, images, 映射为 feishu_material', () => {
+  const catalogItem = {
+    source: 'feishu' as const,
+    itemId: 'item_fs_1',
+    recordId: 'rec_fs_1',
+    title: '飞书采集商品',
+    price: '¥88.00',
+    priceNumber: 88,
+    originalPrice: '¥188.00',
+    originalPriceNumber: 188,
+    wantCnt: 12,
+    coverUrl: 'https://img.alicdn.com/fs.jpg',
+    detailUrl: 'https://www.goofish.com/item?id=item_fs_1',
+    desc: '飞书描述详情内容',
+    images: ['https://img.alicdn.com/fs.jpg', 'https://img.alicdn.com/fs2.jpg'],
+    sellerNick: '飞书卖家',
+    sellerCity: '北京',
+    freeShip: '是',
+    tags: '数码',
+    captureTimeMs: 1788200000000,
+  }
+
+  const tableItem = mapCatalogProductToTableItem(catalogItem)
+  assert.equal(tableItem.source, 'feishu_material')
+  assert.equal(tableItem.recordId, 'rec_fs_1')
+  assert.equal(tableItem.itemId, 'item_fs_1')
+  assert.equal(tableItem.title, '飞书采集商品')
+  assert.equal(tableItem.desc, '飞书描述详情内容')
+  assert.deepEqual(tableItem.images, ['https://img.alicdn.com/fs.jpg', 'https://img.alicdn.com/fs2.jpg'])
+  assert.equal(tableItem.priceNumber, 88)
+  assert.equal(tableItem.sellerCity, '北京')
+  assert.equal(tableItem.freeShip, '是')
+})
+
+test('mapCatalogProductToTableItem: my_published 来源映射为 my_published, 保留 desc, images, 补齐默认值', () => {
+  const catalogItem = {
+    source: 'my_published' as const,
+    itemId: 'item_my_1',
+    title: '我的在售商品',
+    price: '¥299',
+    priceNumber: 299,
+    originalPrice: '',
+    originalPriceNumber: 0,
+    wantCnt: 50,
+    coverUrl: 'https://img.alicdn.com/my.jpg',
+    detailUrl: 'https://www.goofish.com/item?id=item_my_1',
+    desc: '自营商品完整描述',
+    images: ['https://img.alicdn.com/my.jpg'],
+    sellerNick: '官方账号',
+    sellerCity: '深圳',
+    captureTimeMs: 1788300000000,
+  }
+
+  const tableItem = mapCatalogProductToTableItem(catalogItem)
+  assert.equal(tableItem.source, 'my_published')
+  assert.equal(tableItem.recordId, undefined)
+  assert.equal(tableItem.itemId, 'item_my_1')
+  assert.equal(tableItem.desc, '自营商品完整描述')
+  assert.deepEqual(tableItem.images, ['https://img.alicdn.com/my.jpg'])
+  assert.equal(tableItem.priceNumber, 299)
+  assert.equal(tableItem.price, '¥299')
+})
+
+test('mapCatalogProductToTableItem: 缺项安全补齐，价格和描述回退', () => {
+  const minimalItem = {
+    source: 'my_published' as const,
+    itemId: 'item_min',
+    title: '极简商品',
+    price: '',
+    priceNumber: 15,
+    originalPrice: '',
+    originalPriceNumber: 0,
+    wantCnt: 0,
+    coverUrl: '',
+    detailUrl: '',
+    desc: '',
+    images: [],
+  }
+
+  const tableItem = mapCatalogProductToTableItem(minimalItem)
+  assert.equal(tableItem.price, '¥15')
+  assert.equal(tableItem.desc, '')
+  assert.deepEqual(tableItem.images, [])
+  assert.equal(tableItem.publishTimeMs, 0)
+  assert.equal(tableItem.captureTimeMs, 0)
 })

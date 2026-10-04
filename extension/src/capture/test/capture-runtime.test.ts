@@ -127,8 +127,24 @@ test('CAPTURE_GET 未知任务返回 INVALID_PAYLOAD', async () => {
   assert.equal(response.error?.code, 'INVALID_PAYLOAD')
 })
 
-test('CAPTURE_PAUSE / CAPTURE_RESUME：断点续采', async () => {
-  const { runtime, platform } = setup()
+test('CAPTURE_CREATE：intervalJitterMs 非负有限数校验', async () => {
+  const { runtime, tasks } = setup()
+  for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY, 'x']) {
+    const response = await runtime.handleCommand(
+      cmd(CommandTypes.CAPTURE_CREATE, { keyword: 'k', intervalJitterMs: bad }),
+    )
+    assert.equal(response.ok, false, `intervalJitterMs=${String(bad)} 应被拒绝`)
+    assert.equal(response.error?.code, 'INVALID_PAYLOAD')
+  }
+  assert.equal((await tasks.list()).length, 0)
+  const okResponse = await runtime.handleCommand(
+    cmd(CommandTypes.CAPTURE_CREATE, { keyword: 'k', intervalJitterMs: 0 }),
+  )
+  assert.equal(okResponse.ok, true)
+})
+
+test('CAPTURE_PAUSE / CAPTURE_RESUME：断点续采（resume 只持久化 running，异步续采）', async () => {
+  const { runtime, platform, events } = setup()
   platform.pages.set(1, makePage([makeListItem({ itemId: 'p1' })]))
   platform.pages.set(2, makePage([makeListItem({ itemId: 'p2' })]))
 
@@ -154,7 +170,19 @@ test('CAPTURE_PAUSE / CAPTURE_RESUME：断点续采', async () => {
 
   const resumeRes = await runtime.handleCommand(cmd(CommandTypes.CAPTURE_RESUME, { id }))
   assert.equal(resumeRes.ok, true)
-  const resumed = (resumeRes.result as { task: Task }).task
+  // resume 只等待持久化，返回时已置 pending 重新排队，整轮采集仍在后台异步执行。
+  assert.equal((resumeRes.result as { task: Task }).task.status, 'pending')
+
+  await waitFor(() =>
+    events.some(
+      (event) =>
+        event.type === EventTypes.TASK_CHANGED &&
+        changedPayload(event).task.id === id &&
+        changedPayload(event).task.status === 'completed',
+    ),
+  )
+  const getRes = await runtime.handleCommand(cmd(CommandTypes.CAPTURE_GET, { id }))
+  const resumed = (getRes.result as { task: Task }).task
   assert.equal(resumed.status, 'completed')
   assert.equal((resumed.meta as { capture: CaptureCheckpoint }).capture.nextPage, 3)
 })
@@ -407,4 +435,107 @@ test('回归: 埋点 user_id 是当前账号、卖家 seller_id 不同 → 绝�
   const getRes = await runtime.handleCommand(cmd(CommandTypes.CAPTURE_GET, { id: created.id }))
   const task = (getRes.result as { task: Task }).task
   assert.equal((task.result as { ownershipUnconfirmed?: number } | undefined)?.ownershipUnconfirmed, 1)
+})
+
+
+test('回归：采集完成前必须把已入库商品同步到飞书', async () => {
+  const repository = new MemoryProductRepository()
+  const tasks = new TaskManager({ store: new MemoryTaskStore() })
+  const platform = new MockPlatform()
+  platform.pages.set(1, makePage([makeListItem({ itemId: 'sync_A' })]))
+  const synced: string[][] = []
+  let terminal: Task | null = null
+  const deps = {
+    platform, repository, tasks, sleep: async () => {},
+    onEvent: (event: CaptureEventEnvelope) => {
+      const task = changedPayload(event).task
+      if (task.status === 'completed' || task.status === 'failed') terminal = task
+    },
+    syncProducts: async (itemIds: string[]) => {
+      assert.ok((await repository.list({ source: 'all' })).products.find((p) => p.itemId === itemIds[0]))
+      synced.push(itemIds)
+      return { createdCount: itemIds.length, skippedCount: 0 }
+    },
+  }
+  const runtime = createCaptureRuntime(deps)
+  const response = await runtime.handleCommand(cmd(CommandTypes.CAPTURE_CREATE, { keyword: 'k', pages: 1 }))
+  const id = (response.result as { task: Task }).task.id
+  await waitFor(() => terminal !== null)
+  terminal = await tasks.getById(id)
+  assert.equal(terminal?.status, 'completed')
+  assert.deepEqual(synced, [['sync_A']])
+})
+
+test('飞书同步失败保留本地数据和断点，恢复后只重试同步', async () => {
+  const repository = new MemoryProductRepository()
+  const tasks = new TaskManager({ store: new MemoryTaskStore() })
+  const platform = new MockPlatform()
+  platform.pages.set(1, makePage([makeListItem({ itemId: 'retry_A' })]))
+  const events: CaptureEventEnvelope[] = []
+  let fail = true
+  let attempts = 0
+  const runtime = createCaptureRuntime({
+    platform, repository, tasks, sleep: async () => {},
+    onEvent: (event) => { events.push(event) },
+    syncProducts: async (ids) => {
+      attempts += 1
+      assert.deepEqual(ids, ['retry_A'])
+      if (fail) throw new Error('飞书未配置')
+      return { createdCount: 1, skippedCount: 0 }
+    },
+  })
+  const response = await runtime.handleCommand(cmd(CommandTypes.CAPTURE_CREATE, { keyword: 'k', pages: 1 }))
+  const id = (response.result as { task: Task }).task.id
+  await waitFor(() => events.some((event) => changedPayload(event).task.status === 'paused'))
+  assert.ok((await repository.list({ source: 'all' })).products.find((p) => p.itemId === 'retry_A'))
+  const paused = await tasks.getById(id)
+  assert.match(String(paused?.meta?.['pauseReason']), /飞书同步失败.*飞书未配置/)
+  assert.equal((paused?.meta?.['capture'] as CaptureCheckpoint).nextPage, 2)
+  fail = false
+  await runtime.handleCommand(cmd(CommandTypes.CAPTURE_RESUME, { id }))
+  await waitFor(() => events.some((event) => changedPayload(event).task.status === 'completed'))
+  assert.equal(attempts, 2)
+  assert.deepEqual(platform.searchCalls, [1])
+  assert.deepEqual((await tasks.getById(id))?.result?.['feishuSync'], { createdCount: 1, skippedCount: 0 })
+})
+
+test('跨日覆盖本地商品并重启 Worker 后，恢复同步仍读取原任务关键字与完整快照', async () => {
+  const repository = new MemoryProductRepository()
+  const store = new MemoryTaskStore()
+  const platform = new MockPlatform()
+  platform.pages.set(1, makePage([makeListItem({ itemId: 'frozen_A', priceText: '10' })]))
+  const capturedAt = Date.parse('2026-10-04T23:30:00+08:00')
+  let clock = capturedAt
+  let fail = true
+  let attempts = 0
+  const events: CaptureEventEnvelope[] = []
+  const deps = {
+    platform, repository, now: () => clock, sleep: async () => {},
+    onEvent: (event: CaptureEventEnvelope) => { events.push(event) },
+    syncProducts: async (_ids: string[], _keepGoing: () => Promise<boolean>, products: readonly import('../../../../shared/types/product').Product[]) => {
+      attempts += 1
+      assert.equal(products.length, 1)
+      assert.equal(products[0]!.captureKeyword, '原关键字')
+      assert.equal(products[0]!.captureTimeMs, capturedAt)
+      assert.equal(products[0]!.priceNumber, 10)
+      if (fail) throw new Error('飞书暂不可用')
+      return { createdCount: 1, skippedCount: 0 }
+    },
+  }
+  const tasks = new TaskManager({ store })
+  const runtime = createCaptureRuntime({ ...deps, tasks })
+  const response = await runtime.handleCommand(cmd(CommandTypes.CAPTURE_CREATE, { keyword: '原关键字', pages: 1 }))
+  const id = (response.result as { task: Task }).task.id
+  await waitFor(() => events.some((event) => changedPayload(event).task.status === 'paused'))
+  const original = (await repository.list({ source: 'all' })).products[0]!
+  clock = Date.parse('2026-10-05T12:30:00+08:00')
+  await repository.upsertProducts([{ ...original, captureKeyword: '新关键字', captureTimeMs: clock, desc: '新描述', priceNumber: 99 }], clock)
+  fail = false
+  const restarted = createCaptureRuntime({ ...deps, tasks: new TaskManager({ store }) })
+  await restarted.init()
+  await restarted.handleCommand(cmd(CommandTypes.CAPTURE_RESUME, { id }))
+  await waitFor(() => events.some((event) => changedPayload(event).task.status === 'completed'))
+  assert.equal(attempts, 2)
+  assert.deepEqual(platform.searchCalls, [1])
+  assert.equal((await repository.list({ source: 'all' })).products[0]!.captureKeyword, '新关键字')
 })

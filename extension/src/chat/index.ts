@@ -10,6 +10,7 @@
  * - `bridge-adapter.ts` 对接 P1 Bridge 的事件/命令适配层
  * - `socket-transport.ts` 只读 LWP transport（MAIN world 发送 + 白名单校验）
  * - `background-transport.ts` background 侧经 chrome.scripting 调用 MAIN world transport
+ * - `socket-readiness.ts` MAIN world 连接快照探测，补偿丢失的连接事件
  * - `chat-host.ts` MAIN world 组装（monitor + transport + 上报）
  * - `session-persistence.ts` chrome.storage.session 持久化实现
  */
@@ -21,4 +22,5 @@ export * from './sync'
 export * from './bridge-adapter'
 export * from './socket-transport'
 export * from './chat-host'
+export * from './socket-readiness'
 export * from './session-persistence'

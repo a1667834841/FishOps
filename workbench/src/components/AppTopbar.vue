@@ -18,15 +18,17 @@ const envMeta = computed<{ label: string; tone: TagTone; pulse: boolean }>(() =>
   const labels: Record<BridgeState, { label: string; tone: TagTone; pulse: boolean }> = {
     unavailable: { label: '未连接扩展', tone: 'warn', pulse: false },
     idle: { label: '扩展内页', tone: 'neutral', pulse: false },
-    checking: { label: '连接检测中', tone: 'accent', pulse: true },
+    checking: { label: '连接中…', tone: 'accent', pulse: true },
     online: {
-      label: status.value.rtt !== null ? `扩展已连接 · ${status.value.rtt} ms` : '扩展已连接',
+      label: status.value.rtt !== null ? `已连接 · ${status.value.rtt} ms` : '已连接',
       tone: 'ok',
       pulse: false,
     },
-    error: { label: 'Bridge 异常', tone: 'error', pulse: false },
+    error: { label: '连接失败', tone: 'error', pulse: false },
+    unauthorized: { label: '闲鱼未登录', tone: 'warn', pulse: false },
+    captcha: { label: '需要验证码', tone: 'warn', pulse: false },
   }
-  return labels[status.value.state]
+  return labels[status.value.state] ?? { label: '状态未知', tone: 'neutral', pulse: false }
 })
 </script>
 

@@ -33,7 +33,7 @@ const CONFIG: FeishuConfig = {
 }
 
 /** 本地投影相对既有写入字段配置多出的字段（并集补充项）。 */
-const LOCAL_ONLY_FIELDS = ['价格原文', '原价原文', '发布时间原文', '采集时间原文', '浏览量', '收藏数']
+const LOCAL_ONLY_FIELDS = ['商品描述', '价格原文', '原价原文', '发布时间原文', '采集时间原文', '浏览量', '收藏数']
 
 interface SchemaHarness {
   transport: HttpTransport
@@ -48,7 +48,9 @@ interface SchemaHarness {
 }
 
 function defaultFields(): Array<{ field_name: string; type: number }> {
-  return FEISHU_PRODUCT_FIELD_CONFIGS.map((field) => ({ field_name: field.name, type: field.type }))
+  return FEISHU_PRODUCT_FIELD_CONFIGS
+    .filter((field) => field.name !== '商品描述')
+    .map((field) => ({ field_name: field.name, type: field.type }))
 }
 
 function jsonResponse(body: unknown): Response {

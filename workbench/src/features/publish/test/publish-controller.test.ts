@@ -14,7 +14,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CommandTypes } from '@fishops/shared'
+import { CommandTypes, EventTypes } from '@fishops/shared'
 import type { Product, PublishTask } from '../../contracts'
 import type { BridgeApi } from '../../shared/bridge-api'
 import { PublishController } from '../publish-controller'
@@ -22,6 +22,7 @@ import {
   formatConfirmationStatus,
   formatPublishTaskStatus,
   formatRMB,
+  shouldAutoCloseConfirmModal,
   validateProductForPublish,
 } from '../publish-format'
 
@@ -59,6 +60,7 @@ class MockBridgeApi implements BridgeApi {
   public tasksToReturn: PublishTask[] = []
   public submitOutcomeToReturn: 'submitted' | 'unknown' = 'submitted'
   public submitErrorToThrow: any = null
+  private eventHandlers: Record<string, Array<(payload: any) => void>> = {}
 
   async call(type: any, payload: any): Promise<any> {
     this.sentCommands.push({ type, payload })
@@ -206,8 +208,17 @@ class MockBridgeApi implements BridgeApi {
     return {}
   }
 
-  on(): () => void {
-    return () => {}
+  on(type: any, handler: any): () => void {
+    if (!this.eventHandlers[type]) this.eventHandlers[type] = []
+    this.eventHandlers[type].push(handler)
+    return () => {
+      this.eventHandlers[type] = (this.eventHandlers[type] || []).filter((h) => h !== handler)
+    }
+  }
+
+  emit(type: any, payload: any): void {
+    const list = this.eventHandlers[type] || []
+    for (const h of list) h(payload)
   }
 
   resubscribe(): void {}
@@ -590,4 +601,710 @@ test('PublishController: submitPublish 命中不可重试错误（如已派发�
   const s = controller.getState()
   assert.equal(s.action.phase, 'failed')
   assert.ok(s.action.error?.hint.includes('不可重复点击'))
+})
+
+test('PublishController: submitPublish 命中 SUBMIT_VERIFY_UNAVAILABLE（基线/读取能力缺失，派发前拒发）给出行动指引', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+  controller.selectProduct('prod_1')
+  const filledTask = await controller.createAndFillTask()
+  assert.ok(filledTask)
+
+  // 后台为保证“官方在售商品数严格 +1”的可信验据，在派发点击前直接拒绝
+  const verifyErr = new Error('缺少官方商品库读取能力，无法核验是否真正发布，已拒绝提交')
+  ;(verifyErr as any).businessCode = 'SUBMIT_VERIFY_UNAVAILABLE'
+  api.submitErrorToThrow = verifyErr
+
+  const res = await controller.submitPublish(filledTask.id)
+  assert.equal(res, null)
+
+  const s = controller.getState()
+  assert.equal(s.action.phase, 'failed')
+  assert.equal(s.action.error?.code, 'SUBMIT_VERIFY_UNAVAILABLE')
+  assert.ok(
+    s.action.error?.hint.includes('已在派发点击前拒绝提交'),
+    'SUBMIT_VERIFY_UNAVAILABLE 必须给出“派发点击前拒绝提交”的行动指引',
+  )
+  assert.ok(s.action.error?.hint.includes('闲鱼已登录'), '指引需提示恢复登录 / 商品库读取能力')
+})
+
+test('PublishController: 真实后台事件序列：dispatching(in_progress) → clicked:false → rollback 权威快照清空 submitOutcome，catch 后 getTask 正常恢复按钮', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  controller.start()
+  await new Promise((r) => setTimeout(r, 10))
+
+  controller.selectProduct('prod_1')
+  const filledTask = await controller.createAndFillTask()
+  assert.ok(filledTask)
+  assert.equal(filledTask.status, 'waiting_confirmation')
+
+  // 1. 模拟提交时后台行为：
+  //    首先持久化 dispatching 记录（submitAttempted=true, submit.state='in_progress'）并广播事件
+  const dispatchingTask: PublishTask = {
+    ...filledTask,
+    meta: {
+      submitAttempted: true,
+    },
+    result: {
+      ...filledTask.result!,
+      submit: {
+        state: 'in_progress',
+        attemptedAt: Date.now(),
+      },
+    },
+  }
+
+  // 2. 模拟后台因为未找到按钮（clicked: false）而回滚：
+  //    清除 result.submit，复位 meta.submitAttempted=false，保留 submitToken
+  const rollbackTask: PublishTask = {
+    ...filledTask,
+    meta: {
+      submitAttempted: false,
+    },
+    result: {
+      ...filledTask.result!,
+      submit: undefined,
+      submitToken: 'token_mock_123',
+    },
+  }
+
+  // 在后台 tasks 中挂上 rollback 后的权威快照（供 catch 后的 getTask 读取）
+  api.tasksToReturn = [rollbackTask]
+
+  // 配置模拟后台：调用 PUBLISH_SUBMIT 时，先广播 dispatching 事件，然后抛出业务错误
+  const buttonNotFoundErr = new Error('未在发布页找到发布按钮')
+  ;(buttonNotFoundErr as any).code = 'INTERNAL'
+  ;(buttonNotFoundErr as any).businessCode = 'SUBMIT_BUTTON_NOT_FOUND'
+
+  // 自定义 call 处理 PUBLISH_SUBMIT
+  const originalCall = api.call.bind(api)
+  api.call = async (type: any, payload: any) => {
+    if (type === CommandTypes.PUBLISH_SUBMIT) {
+      // 真实后台时序：先广播 dispatching（前端 handleTaskUpdated 写入 submitOutcome=in_progress）
+      api.emit(EventTypes.PUBLISH_TASK_CHANGED, { task: dispatchingTask })
+      // 随后点击失败，后台回滚并抛错
+      throw buttonNotFoundErr
+    }
+    return originalCall(type, payload)
+  }
+
+  // 执行提交
+  const submitRes = await controller.submitPublish(filledTask.id)
+  assert.equal(submitRes, null)
+
+  // 等待 catch 块中的 getTask 执行完成
+  await new Promise((r) => setTimeout(r, 20))
+
+  const finalState = controller.getState()
+
+  // 关键断言 1：submitOutcome 绝不能残留 in_progress，必须被 rollback 权威快照清空为 null
+  assert.equal(
+    finalState.submitOutcome,
+    null,
+    'rollback 权威快照必须清空 submitOutcome，绝不能残留 in_progress',
+  )
+
+  // 关键断言 2：submittingTaskId 必须复位为 null
+  assert.equal(finalState.submittingTaskId, null)
+
+  // 关键断言 3：错误提示必须命中 SUBMIT_BUTTON_NOT_FOUND 且 code 为业务错误码
+  assert.ok(
+    finalState.action.error?.hint.includes('未在发布页找到发布按钮'),
+    '应当命中 SUBMIT_BUTTON_NOT_FOUND 的专属提示',
+  )
+  assert.equal(
+    finalState.action.error?.code,
+    'SUBMIT_BUTTON_NOT_FOUND',
+    'ErrorView.code 应为业务错误码 SUBMIT_BUTTON_NOT_FOUND 而非 INTERNAL',
+  )
+
+  // 关键断言 4：当前任务快照必须回到 rollback 后的状态（允许再次点击发布）
+  assert.equal(finalState.currentTask?.status, 'waiting_confirmation')
+  assert.notEqual(finalState.currentTask?.meta?.submitAttempted, true)
+  assert.equal(finalState.currentTask?.result?.submit, undefined)
+
+  // 关键断言 5：按钮恢复后再次提交能够成功
+  api.call = originalCall
+  api.submitOutcomeToReturn = 'submitted'
+  const retryRes = await controller.submitPublish(filledTask.id)
+  assert.ok(retryRes)
+  assert.equal(retryRes?.outcome, 'submitted')
+  assert.equal(controller.getState().submitOutcome?.outcome, 'submitted')
+})
+
+test('PublishController: 未知 (unknown) 或已 click 权威快照绝对不得解锁', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  controller.start()
+  await new Promise((r) => setTimeout(r, 10))
+
+  controller.selectProduct('prod_1')
+  const filledTask = await controller.createAndFillTask()
+  assert.ok(filledTask)
+
+  // 场景 A：后台已派发点击，状态为 unknown
+  const unknownTask: PublishTask = {
+    ...filledTask,
+    meta: {
+      submitAttempted: true,
+    },
+    result: {
+      ...filledTask.result!,
+      submit: {
+        state: 'unknown',
+        attemptedAt: Date.now(),
+      },
+      submitToken: undefined,
+    },
+  }
+
+  // 触发权威快照更新
+  api.emit(EventTypes.PUBLISH_TASK_CHANGED, { task: unknownTask })
+  const sUnknown = controller.getState()
+  assert.equal(sUnknown.submitOutcome?.outcome, 'unknown')
+
+  // 再次调用 submitPublish 必须被锁定拦截，绝不能重试
+  const blockedUnknown = await controller.submitPublish(filledTask.id)
+  assert.equal(blockedUnknown, null)
+  assert.ok(controller.getState().action.error?.title.includes('已派发过提交'))
+
+  // 场景 B：后台标记已尝试提交（submitAttempted=true），即使 result.submit 字段缺失，也绝对不能解锁
+  const attemptedTaskWithoutSubmit: PublishTask = {
+    ...filledTask,
+    meta: {
+      submitAttempted: true,
+    },
+    result: {
+      ...filledTask.result!,
+      submit: undefined,
+    },
+  }
+  api.emit(EventTypes.PUBLISH_TASK_CHANGED, { task: attemptedTaskWithoutSubmit })
+  const blockedAttempted = await controller.submitPublish(filledTask.id)
+  assert.equal(blockedAttempted, null)
+  assert.ok(controller.getState().action.error?.title.includes('已派发过提交'))
+})
+
+test('PublishController: 后台广播 rollback 权威快照事件（result.submit 删除 + submitAttempted 复位 false）即清空遗留 in_progress，无需等待 getTask', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  controller.start()
+  await new Promise((r) => setTimeout(r, 10))
+
+  controller.selectProduct('prod_1')
+  const filledTask = await controller.createAndFillTask()
+  assert.ok(filledTask)
+  assert.equal(filledTask.status, 'waiting_confirmation')
+
+  // 真实序列 1：后台先落盘 dispatching 记录并广播（submit.state='in_progress'）
+  const dispatchingTask: PublishTask = {
+    ...filledTask,
+    meta: { submitAttempted: true },
+    result: {
+      ...filledTask.result!,
+      submit: { state: 'in_progress', attemptedAt: Date.now() },
+    },
+  }
+  api.emit(EventTypes.PUBLISH_TASK_CHANGED, { task: dispatchingTask })
+  assert.equal(
+    controller.getState().submitOutcome?.outcome,
+    'in_progress',
+    'dispatching 广播后 submitOutcome 应进入 in_progress（UI 锁定）',
+  )
+
+  // 真实序列 2：注入侧确定性判为 clicked:false，后台回滚并发广播权威快照
+  // （result.submit 删除、meta.submitAttempted 复位 false、保留 submitToken）
+  const rollbackTask: PublishTask = {
+    ...filledTask,
+    meta: { submitAttempted: false },
+    result: {
+      ...filledTask.result!,
+      submit: undefined,
+      submitToken: 'token_mock_123',
+    },
+  }
+  api.emit(EventTypes.PUBLISH_TASK_CHANGED, { task: rollbackTask })
+
+  const s = controller.getState()
+  // 主路径：仅凭事件即可清空 in_progress，不依赖后续 getTask
+  assert.equal(s.submitOutcome, null, 'rollback 广播事件必须清空遗留的 in_progress')
+  assert.equal(s.currentTask?.status, 'waiting_confirmation')
+  assert.notEqual(s.currentTask?.meta?.submitAttempted, true)
+  assert.equal(s.currentTask?.result?.submit, undefined)
+
+  // 按钮恢复：可再次点击发布
+  api.submitOutcomeToReturn = 'submitted'
+  const retryRes = await controller.submitPublish(filledTask.id)
+  assert.ok(retryRes)
+  assert.equal(retryRes?.outcome, 'submitted')
+})
+
+test('PublishController: 非当前任务的陈旧 rollback 快照事件，绝不误清当前任务进行中的 submitOutcome', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  controller.start()
+  await new Promise((r) => setTimeout(r, 10))
+
+  controller.selectProduct('prod_1')
+  const taskA = await controller.createAndFillTask()
+  assert.ok(taskA)
+
+  // 当前任务 taskA 进入 dispatching（in_progress）
+  const dispatchingA: PublishTask = {
+    ...taskA,
+    meta: { submitAttempted: true },
+    result: {
+      ...taskA.result!,
+      submit: { state: 'in_progress', attemptedAt: Date.now() },
+    },
+  }
+  api.emit(EventTypes.PUBLISH_TASK_CHANGED, { task: dispatchingA })
+  assert.equal(controller.getState().submitOutcome?.outcome, 'in_progress')
+
+  // 另一条不相关任务的陈旧 rollback 快照到达：绝不能据此解锁 taskA
+  const staleOtherTask: PublishTask = {
+    ...taskA,
+    id: 'publish_other_task',
+    meta: { submitAttempted: false },
+    result: {
+      ...taskA.result!,
+      submit: undefined,
+    },
+  }
+  api.emit(EventTypes.PUBLISH_TASK_CHANGED, { task: staleOtherTask })
+
+  const s = controller.getState()
+  assert.equal(
+    s.submitOutcome?.outcome,
+    'in_progress',
+    '非当前任务的 rollback 快照绝不能清空当前任务的 in_progress',
+  )
+  assert.equal(s.submitOutcome?.taskId, dispatchingA.id)
+})
+
+// ---------------- executeConfirmedPublish：唯一确认入口的串行链路与安全防线 ----------------
+
+const PUBLISH_WRITE_TYPES = [
+  CommandTypes.PUBLISH_CREATE,
+  CommandTypes.PUBLISH_FILL_FORM,
+  CommandTypes.PUBLISH_SUBMIT,
+] as const
+
+function publishWriteTypes(api: MockBridgeApi): string[] {
+  return api.sentCommands
+    .map((c) => c.type)
+    .filter((t) => (PUBLISH_WRITE_TYPES as readonly string[]).includes(t))
+}
+
+/**
+ * 构造一条 waiting_confirmation 任务，默认与 selectProduct('prod_1') 的冻结草稿完全匹配
+ * （标题/描述/价格/原价/图片与 computeFinalPublishItem 结果一致），可按需覆盖某字段制造不一致。
+ */
+function makeWaitingTask(
+  overrides: {
+    id?: string
+    itemId?: string
+    source?: 'feishu' | 'my_published'
+    recordId?: string
+    targetTableId?: string
+    title?: string
+    desc?: string
+    price?: number
+    originalPrice?: number
+    mainImage?: string
+    detailImages?: string[]
+    submitToken?: string
+    submitAttempted?: boolean
+  } = {},
+): PublishTask {
+  const itemId = overrides.itemId ?? 'prod_1'
+  const title = overrides.title ?? '苹果 iPhone 15'
+  const price = overrides.price ?? 5000
+  const originalPrice = overrides.originalPrice ?? 25000
+  const mainImage = overrides.mainImage ?? 'https://img.alicdn.com/c1.jpg'
+  const detailImages = overrides.detailImages ?? []
+  return {
+    id: overrides.id ?? 'task_waiting_existing',
+    type: 'publish',
+    status: 'waiting_confirmation',
+    progress: 100,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    payload: {
+      source: overrides.source ?? 'my_published',
+      itemId,
+      ...(overrides.recordId ? { recordId: overrides.recordId } : {}),
+      ...(overrides.targetTableId ? { targetTableId: overrides.targetTableId } : {}),
+    },
+    ...(overrides.submitAttempted ? { meta: { submitAttempted: true } } : {}),
+    result: {
+      item: {
+        itemId,
+        sourceTitle: title,
+        sourcePrice: price,
+        sourceImages: [],
+        title,
+        desc: overrides.desc ?? '',
+        price,
+        priceInCent: Math.round(price * 100),
+        originalPrice,
+        originalPriceInCent: Math.round(originalPrice * 100),
+        mainImage,
+        detailImages,
+        allImages: [mainImage, ...detailImages],
+        confirmationStatus: 'waiting_review',
+      },
+      confirmationStatus: 'waiting_review',
+      submitToken: overrides.submitToken ?? 'token_existing_123',
+    },
+  }
+}
+
+test('PublishController.executeConfirmedPublish: 确认后严格串行 CREATE→FILL→SUBMIT 并成功提交', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+  controller.selectProduct('prod_1')
+
+  const res = await controller.executeConfirmedPublish()
+
+  assert.ok(res)
+  assert.equal(res?.outcome, 'submitted')
+  assert.deepEqual(
+    publishWriteTypes(api),
+    [CommandTypes.PUBLISH_CREATE, CommandTypes.PUBLISH_FILL_FORM, CommandTypes.PUBLISH_SUBMIT],
+    '必须严格按 CREATE → FILL_FORM → SUBMIT 串行执行',
+  )
+
+  const submitCmd = api.sentCommands.find((c) => c.type === CommandTypes.PUBLISH_SUBMIT)
+  const submitPayload = submitCmd?.payload as { id: string; submitToken: string; confirm: boolean }
+  assert.equal(submitPayload.confirm, true, '必须携带 confirm: true 字面量')
+  assert.ok(submitPayload.submitToken, '必须携带后台下发的一次性 submitToken')
+
+  const s = controller.getState()
+  assert.equal(s.submitOutcome?.outcome, 'submitted')
+  assert.equal(s.action.phase, 'ok')
+  assert.equal(s.submittingTaskId, null, '完成后必须释放提交锁')
+})
+
+test('PublishController.executeConfirmedPublish: 两次确认仅执行一链，绝不重复创建/填充/提交', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+  controller.selectProduct('prod_1')
+
+  // 模拟用户双击：并发两次确认
+  const [r1, r2] = await Promise.all([
+    controller.executeConfirmedPublish(),
+    controller.executeConfirmedPublish(),
+  ])
+
+  const types = publishWriteTypes(api)
+  assert.equal(types.filter((t) => t === CommandTypes.PUBLISH_CREATE).length, 1, '只允许创建一次任务')
+  assert.equal(types.filter((t) => t === CommandTypes.PUBLISH_FILL_FORM).length, 1, '只允许填充一次表单')
+  assert.equal(types.filter((t) => t === CommandTypes.PUBLISH_SUBMIT).length, 1, '只允许提交一次')
+
+  const outcomes = [r1?.outcome, r2?.outcome]
+  assert.equal(outcomes.filter((o) => o === 'submitted').length, 1, '仅一链成功，另一次被并发锁拦截')
+  assert.equal(outcomes.filter((o) => o === undefined).length, 1)
+})
+
+test('PublishController.executeConfirmedPublish: 后台 fill.ok 为 false / 非 waiting_confirmation 时立即中断，绝不 SUBMIT', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+  const baseCall = api.call.bind(api)
+  api.call = async (type: any, payload: any) => {
+    if (type === CommandTypes.PUBLISH_FILL_FORM) {
+      api.sentCommands.push({ type, payload })
+      return {
+        ok: false,
+        error: '表单填充遇到安全验证码',
+        task: {
+          id: (payload as { id: string }).id,
+          type: 'publish',
+          status: 'failed',
+          progress: 100,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          payload: { itemId: 'prod_1' },
+        },
+      }
+    }
+    return baseCall(type, payload)
+  }
+
+  await controller.loadProducts()
+  controller.selectProduct('prod_1')
+
+  const res = await controller.executeConfirmedPublish()
+
+  assert.equal(res, null, '填表未就绪时确认链路必须中断并返回 null')
+  assert.equal(
+    api.sentCommands.filter((c) => c.type === CommandTypes.PUBLISH_SUBMIT).length,
+    0,
+    'fill 失败时绝不允许调用 PUBLISH_SUBMIT',
+  )
+  assert.equal(controller.getState().action.phase, 'failed')
+})
+
+test('PublishController.executeConfirmedPublish: 结果 unknown 锁定且绝不自动重试', async () => {
+  const api = new MockBridgeApi()
+  api.submitOutcomeToReturn = 'unknown'
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+  controller.selectProduct('prod_1')
+
+  const res1 = await controller.executeConfirmedPublish()
+  assert.ok(res1)
+  assert.equal(res1?.outcome, 'unknown')
+  assert.equal(controller.getState().submitOutcome?.outcome, 'unknown')
+
+  // 再次确认必须被锁定拦截，且不产生第二次 SUBMIT
+  const submitBefore = api.sentCommands.filter((c) => c.type === CommandTypes.PUBLISH_SUBMIT).length
+  const res2 = await controller.executeConfirmedPublish()
+  assert.equal(res2, null)
+  assert.equal(
+    api.sentCommands.filter((c) => c.type === CommandTypes.PUBLISH_SUBMIT).length,
+    submitBefore,
+    'unknown 后绝不自动或重复提交',
+  )
+})
+
+test('PublishController.executeConfirmedPublish: 兼容旧已有 waiting_confirmation + 合法 submitToken 任务，直接复用令牌提交', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+  controller.selectProduct('prod_1')
+
+  // 模拟此前已存在、与该草稿完全匹配且尚未尝试提交的 waiting 任务（未编辑草稿，isDirty=false）
+  const existingWaitingTask = makeWaitingTask()
+  controller.setCurrentTask(existingWaitingTask)
+
+  const res = await controller.executeConfirmedPublish()
+  assert.ok(res)
+  assert.equal(res?.outcome, 'submitted')
+
+  const types = publishWriteTypes(api)
+  assert.equal(types.filter((t) => t === CommandTypes.PUBLISH_CREATE).length, 0, '复用 waiting 任务不得重新创建')
+  assert.equal(types.filter((t) => t === CommandTypes.PUBLISH_FILL_FORM).length, 0, '复用 waiting 任务不得重新填充')
+
+  const submitCmd = api.sentCommands.find((c) => c.type === CommandTypes.PUBLISH_SUBMIT)
+  assert.equal((submitCmd?.payload as { id: string }).id, 'task_waiting_existing')
+})
+
+test('PublishController.executeConfirmedPublish: 确认链路执行期间冻结草稿，编辑/切素材均被拒绝且不污染提交内容', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+  const baseCall = api.call.bind(api)
+
+  // 挂起 PUBLISH_CREATE，制造“链路执行中”的稳定窗口
+  let releaseCreate: () => void = () => {}
+  api.call = async (type: any, payload: any) => {
+    if (type === CommandTypes.PUBLISH_CREATE) {
+      api.sentCommands.push({ type, payload })
+      await new Promise<void>((resolve) => {
+        releaseCreate = resolve
+      })
+      return {
+        task: {
+          id: 'task_frozen_1',
+          type: 'publish',
+          status: 'pending',
+          progress: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          payload: { itemId: 'prod_1' },
+        },
+      }
+    }
+    return baseCall(type, payload)
+  }
+
+  await controller.loadProducts()
+  controller.selectProduct('prod_1')
+  const frozenTitle = controller.getState().editingDraft?.title
+
+  const chain = controller.executeConfirmedPublish()
+
+  // 此刻链路已开始（isPublishingChain = true），尝试编辑与切素材
+  controller.updateDraftField({ title: '被篡改的标题' })
+  controller.updateCustomRule({ priceMarkup: 999 })
+  controller.selectProduct('prod_2')
+
+  const during = controller.getState()
+  assert.equal(during.editingDraft?.title, frozenTitle, '确认链路执行期间标题必须冻结不可改')
+  assert.equal(during.editingDraft?.itemId, 'prod_1', '确认链路执行期间不得切换素材')
+  assert.equal(during.customRule.priceMarkup, 0, '确认链路执行期间不得修改规则')
+
+  releaseCreate()
+
+  const res = await chain
+  assert.ok(res)
+  assert.equal(res?.outcome, 'submitted', '冻结后草稿代数未漂移，链路应正常完成')
+
+  // 提交内容必须仍来自冻结时的原始草稿，而非被拒绝的篡改值
+  const createCmd = api.sentCommands.find((c) => c.type === CommandTypes.PUBLISH_CREATE)
+  const override = (createCmd?.payload as { override?: { title?: string } }).override
+  assert.equal(override?.title, frozenTitle)
+})
+
+test('PublishController.executeConfirmedPublish: 聚焦历史任务但素材不同时，绝不复用其令牌，改为创建新任务提交当前草稿', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+  controller.selectProduct('prod_1') // 当前草稿目标：prod_1
+  // 历史任务属于另一素材 prod_2（即使 waiting + 合法 token 也绝不复用）
+  controller.setCurrentTask(
+    makeWaitingTask({ id: 'task_hist_prod2', itemId: 'prod_2', title: '富士相机 XT4', price: 8000, originalPrice: 40000 }),
+  )
+
+  const res = await controller.executeConfirmedPublish()
+  assert.ok(res)
+  assert.equal(res?.outcome, 'submitted')
+
+  const types = publishWriteTypes(api)
+  assert.equal(types.filter((t) => t === CommandTypes.PUBLISH_CREATE).length, 1, '不同素材必须创建新任务')
+  assert.equal(types.filter((t) => t === CommandTypes.PUBLISH_FILL_FORM).length, 1, '不同素材必须重新填充')
+
+  const submitCmd = api.sentCommands.find((c) => c.type === CommandTypes.PUBLISH_SUBMIT)
+  const submitId = (submitCmd?.payload as { id: string }).id
+  assert.notEqual(submitId, 'task_hist_prod2', '绝不能提交历史任务的一次性令牌')
+  assert.equal(submitId, 'task_mock_1', '必须提交本次新建任务')
+})
+
+test('PublishController.executeConfirmedPublish: 同素材但历史任务最终内容与当前草稿不一致时，绝不复用其令牌', async () => {
+  const api = new MockBridgeApi()
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+  controller.selectProduct('prod_1')
+  // 同 itemId=prod_1，但最终标题与当前草稿不同（内容不一致）
+  controller.setCurrentTask(makeWaitingTask({ id: 'task_hist_stale', title: '旧的过时标题' }))
+
+  const res = await controller.executeConfirmedPublish()
+  assert.ok(res)
+  assert.equal(res?.outcome, 'submitted')
+
+  const types = publishWriteTypes(api)
+  assert.equal(types.filter((t) => t === CommandTypes.PUBLISH_CREATE).length, 1, '内容不一致必须重建任务')
+  assert.equal(types.filter((t) => t === CommandTypes.PUBLISH_FILL_FORM).length, 1, '内容不一致必须重新填充')
+  const submitCmd = api.sentCommands.find((c) => c.type === CommandTypes.PUBLISH_SUBMIT)
+  assert.notEqual((submitCmd?.payload as { id: string }).id, 'task_hist_stale')
+})
+
+test('PublishController.executeConfirmedPublish: createPayload 按 source 构造 typed 字段，绝不含 undefined 可选键', async () => {
+  // 飞书：无真实商品 ID 时不得出现 itemId 键，且不得出现 undefined 值
+  const feishuApi = new MockBridgeApi()
+  const feishuController = new PublishController({ api: feishuApi })
+  await feishuController.loadDraft({
+    source: 'feishu',
+    recordId: 'rec_1',
+    targetTableId: 'tbl_1',
+    title: '飞书相机',
+    price: 2000,
+  })
+  await feishuController.executeConfirmedPublish()
+
+  const feishuCreate = feishuApi.sentCommands.find((c) => c.type === CommandTypes.PUBLISH_CREATE)
+  const feishuPayload = (feishuCreate?.payload ?? {}) as Record<string, unknown>
+  assert.equal(feishuPayload.source, 'feishu')
+  assert.equal(feishuPayload.recordId, 'rec_1')
+  assert.equal(feishuPayload.targetTableId, 'tbl_1')
+  assert.ok(!('itemId' in feishuPayload), '飞书无真实商品 ID 时不得写入 itemId 键')
+  assert.deepEqual(
+    Object.entries(feishuPayload).filter(([, v]) => v === undefined).map(([k]) => k),
+    [],
+    '飞书 createPayload 不得含 undefined 值',
+  )
+
+  // 自营：不得出现 recordId / targetTableId 键
+  const localApi = new MockBridgeApi()
+  const localController = new PublishController({ api: localApi })
+  await localController.loadProducts()
+  localController.selectProduct('prod_1')
+  await localController.executeConfirmedPublish()
+
+  const localCreate = localApi.sentCommands.find((c) => c.type === CommandTypes.PUBLISH_CREATE)
+  const localPayload = (localCreate?.payload ?? {}) as Record<string, unknown>
+  assert.equal(localPayload.source, 'my_published')
+  assert.equal(localPayload.itemId, 'prod_1')
+  assert.ok(!('recordId' in localPayload), '自营不得写入 recordId 键')
+  assert.ok(!('targetTableId' in localPayload), '自营不得写入 targetTableId 键')
+  for (const obj of [localPayload, localPayload.override as Record<string, unknown>]) {
+    assert.deepEqual(
+      Object.entries(obj).filter(([, v]) => v === undefined).map(([k]) => k),
+      [],
+      '自营 createPayload / override 不得含 undefined 值',
+    )
+  }
+})
+
+// ---------------- 确认弹窗关闭策略：仅 submitted 自动关闭，failure / unknown 保持打开 ----------------
+
+test('shouldAutoCloseConfirmModal: 仅 submitted 自动关闭；failure(null) / unknown 一律保持弹窗打开', async () => {
+  // 纯函数边界：null / undefined 绝不关闭（链路中断或异常后必须保持弹窗）
+  assert.equal(shouldAutoCloseConfirmModal(null), false)
+  assert.equal(shouldAutoCloseConfirmModal(undefined), false)
+  assert.equal(shouldAutoCloseConfirmModal({ outcome: 'unknown' }), false)
+  assert.equal(shouldAutoCloseConfirmModal({ outcome: 'submitted' }), true)
+
+  // failure：填表未就绪，确认链路中断返回 null → 弹窗必须保持打开
+  const failApi = new MockBridgeApi()
+  const failController = new PublishController({ api: failApi })
+  const baseCall = failApi.call.bind(failApi)
+  failApi.call = async (type: any, payload: any) => {
+    if (type === CommandTypes.PUBLISH_FILL_FORM) {
+      failApi.sentCommands.push({ type, payload })
+      return {
+        ok: false,
+        error: '表单填充遇到安全验证码',
+        task: {
+          id: (payload as { id: string }).id,
+          type: 'publish',
+          status: 'failed',
+          progress: 100,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          payload: { itemId: 'prod_1' },
+        },
+      }
+    }
+    return baseCall(type, payload)
+  }
+  await failController.loadProducts()
+  failController.selectProduct('prod_1')
+  const failRes = await failController.executeConfirmedPublish()
+  assert.equal(failRes, null, 'fill 失败时确认链路必须返回 null')
+  assert.equal(shouldAutoCloseConfirmModal(failRes), false, '业务失败绝不得自动关闭弹窗伪装成功')
+
+  // unknown：已派发点击但结果未知 → 弹窗必须保持打开且锁定
+  const unknownApi = new MockBridgeApi()
+  unknownApi.submitOutcomeToReturn = 'unknown'
+  const unknownController = new PublishController({ api: unknownApi })
+  await unknownController.loadProducts()
+  unknownController.selectProduct('prod_1')
+  const unknownRes = await unknownController.executeConfirmedPublish()
+  assert.equal(unknownRes?.outcome, 'unknown')
+  assert.equal(shouldAutoCloseConfirmModal(unknownRes), false, 'unknown（结果未知）绝不得自动关闭弹窗伪装成功')
+
+  // submitted：仅成功允许自动关闭弹窗
+  const okApi = new MockBridgeApi()
+  const okController = new PublishController({ api: okApi })
+  await okController.loadProducts()
+  okController.selectProduct('prod_1')
+  const okRes = await okController.executeConfirmedPublish()
+  assert.equal(okRes?.outcome, 'submitted')
+  assert.equal(shouldAutoCloseConfirmModal(okRes), true, '仅 submitted 允许自动关闭弹窗')
 })

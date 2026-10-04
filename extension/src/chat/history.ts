@@ -31,7 +31,7 @@ import {
   type LwpResponse,
 } from '../../../shared/chat/index'
 import type { Conversation, ConversationPage, MessagePage } from '../../../shared/types/chat'
-import { parseHistoryMessageModel, type ParseContext } from './parser'
+import { extractAvatarUrl, normalizeUserId, parseHistoryMessageModel, type ParseContext } from './parser'
 
 /** 传输层：由宿主注入，负责把 LWP 请求送到闲鱼 WebSocket 并取回响应。 */
 export interface ChatTransport {
@@ -96,7 +96,7 @@ function firstFiniteNumber(...values: unknown[]): number | undefined {
  * cid 优先取 `singleChatUserConversation.cid`（会话实体自身），仅当缺失时才回退到
  * `lastMessage.message.cid`；排序索引优先取服务端 `sortIndex`，再回退 modifyTime / joinTime。
  */
-export function parseConversationItem(item: unknown): Conversation | null {
+export function parseConversationItem(item: unknown, myUserId?: string): Conversation | null {
   if (!isRecord(item)) return null
   const userConv = isRecord(item['singleChatUserConversation'])
     ? (item['singleChatUserConversation'] as Record<string, unknown>)
@@ -123,11 +123,24 @@ export function parseConversationItem(item: unknown): Conversation | null {
   const itemId = extractUrlParam(reminderUrl, 'itemId')
   const peerUserId = extractUrlParam(reminderUrl, 'peerUserId')
 
+  // peer 识别优先使用明确 ID：当 `peerUserId` 明确指向当前用户本人时，绝不把它当作对方
+  // （避免会话列表 peer 显示自己）。无法判定时保持原口径，不猜测、不编造。
+  const selfId = normalizeUserId(myUserId)
+  const explicitPeer = normalizeUserId(peerUserId)
+  const peerIsSelf = selfId.length > 0 && explicitPeer.length > 0 && explicitPeer === selfId
+
   return {
     sessionId,
     cid,
-    peerUserId: peerUserId ?? undefined,
-    peerUserName: typeof extension['reminderTitle'] === 'string' ? extension['reminderTitle'] : '',
+    peerUserId: peerIsSelf ? undefined : peerUserId ?? undefined,
+    peerUserName: peerIsSelf ? '' : typeof extension['reminderTitle'] === 'string' ? extension['reminderTitle'] : '',
+    peerAvatarUrl: extractAvatarUrl([
+      userConv['extension'],
+      extension,
+      // 真实头像字段 logo 位于 userInfo / ownerInfo 内（mtop user.query / session.sync）。
+      isRecord(userConv['userInfo']) ? userConv['userInfo'] : undefined,
+      isRecord(userConv['ownerInfo']) ? userConv['ownerInfo'] : undefined,
+    ]),
     lastMessage: typeof custom['summary'] === 'string' ? custom['summary'] : '',
     lastMessageTime: typeof msg['createAt'] === 'number' ? msg['createAt'] : modifyTime,
     unreadCount: typeof userConv['redPoint'] === 'number' ? userConv['redPoint'] : 0,
@@ -165,6 +178,16 @@ export class ChatHistoryClient {
     return [toFullCid(sessionId), false, cursor ?? INITIAL_CURSOR, count ?? this.messagePageSize, false]
   }
 
+  /**
+   * 动态更新当前登录用户 ID（用于 runtime 后置解析出登录态的场景）。
+   *
+   * 更新后同一客户端后续解析立即按新 ID 判定方向；已写入 store 的历史数据由 `ChatSync`
+   * 负责重新归一（避免自己消息长期停留在 `in` / 左侧）。
+   */
+  setMyUserId(myUserId?: string): void {
+    this.parseCtx.myUserId = myUserId
+  }
+
   /** 构造完整的会话列表 LWP 请求信封（便于测试与诊断）。 */
   buildConversationListRequest(cursor?: number, pageSize?: number): LwpRequest {
     return createLwpRequest(LWP_ROUTES.listConversations, this.buildConversationListBody(cursor, pageSize), this.midFactory())
@@ -185,7 +208,7 @@ export class ChatHistoryClient {
     const rawItems = Array.isArray(body['userConvs']) ? (body['userConvs'] as unknown[]) : Array.isArray(body) ? (body as unknown[]) : []
     const conversations: Conversation[] = []
     for (const item of rawItems) {
-      const conv = parseConversationItem(item)
+      const conv = parseConversationItem(item, this.parseCtx.myUserId)
       if (conv) conversations.push(conv)
     }
 

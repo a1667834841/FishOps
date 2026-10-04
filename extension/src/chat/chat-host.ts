@@ -11,6 +11,7 @@
  */
 import { CHAT_SOCKET_MAX_RAW_LENGTH, type ChatSocketEventPayload } from '@fishops/shared'
 import { ChatSocketTransport } from './socket-transport'
+import { ChatReadSocketTransport } from './read-transport'
 import type { ChatSocketStatus, ChatWebSocketMonitorHandlers, WebSocketLike } from './websocket'
 
 export interface ChatHostOptions {
@@ -27,6 +28,9 @@ export interface ChatHostOptions {
 
 export interface ChatHost {
   readonly transport: ChatSocketTransport
+  readonly readTransport: ChatReadSocketTransport
+  /** 读取当前 transport 复用连接的真实状态；未捕获连接时返回 null。 */
+  getSocketStatus(): ChatSocketStatus | null
   /** 传给 `installChatWebSocketMonitor` 的只读监听回调。 */
   readonly handlers: ChatWebSocketMonitorHandlers
   /** 记录 monitor 检测到的目标 socket，供 transport 复用。 */
@@ -66,6 +70,8 @@ export function createChatHost(options: ChatHostOptions): ChatHost {
     ...(options.clearTimer === undefined ? {} : { clearTimer: options.clearTimer }),
   })
 
+  const readTransport = new ChatReadSocketTransport({ getSocket: () => socket })
+
   const reportStatus = (status: ChatSocketStatus): void => {
     const event = statusToEvent(status)
     if (!event) return
@@ -74,7 +80,7 @@ export function createChatHost(options: ChatHostOptions): ChatHost {
 
   const handleSocketMessage = (raw: string): void => {
     // 先尝试作为 LWP 响应消化（history 请求）；命中则不再上报。
-    if (transport.handleMessage(raw)) return
+    if (transport.handleMessage(raw) || readTransport.handleMessage(raw)) return
     // 实时消息：仅在长度受限时上报原文，超限帧直接丢弃，避免拖垮 background。
     const tooLarge = raw.length > CHAT_SOCKET_MAX_RAW_LENGTH
     options.report({
@@ -102,6 +108,13 @@ export function createChatHost(options: ChatHostOptions): ChatHost {
 
   return {
     transport,
+    readTransport,
+    getSocketStatus: () => {
+      if (!socket) return null
+      if (socket.readyState === 1) return 'open'
+      if (socket.readyState === 0) return 'connecting'
+      return 'closed'
+    },
     handlers,
     attachSocket: (next) => {
       socket = next
@@ -110,6 +123,7 @@ export function createChatHost(options: ChatHostOptions): ChatHost {
     reportStatus,
     dispose: () => {
       transport.dispose()
+      readTransport.dispose()
     },
   }
 }

@@ -3,9 +3,10 @@
   "name": "FishOps Workbench (P1)",
   "version": "0.1.0",
   "description": "FishOps Workbench 工程骨架与 Bridge：验证 Workbench ↔ Extension 通信链路。",
-  "permissions": ["storage", "scripting", "tabs"],
+  "permissions": ["storage", "scripting", "tabs", "cookies"],
   "host_permissions": [
     "https://www.goofish.com/*",
+    "https://h5api.m.goofish.com/*",
     "https://open.feishu.cn/*"
   ],
   "optional_host_permissions": [

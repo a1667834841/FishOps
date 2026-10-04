@@ -41,6 +41,8 @@ export interface Product {
   captureTime: string
   /** 采集时间戳（毫秒）。 */
   captureTimeMs: number
+  /** 本次搜索采集使用的关键字；旧记录可能缺失。 */
+  captureKeyword?: string
   /** 卖家昵称。 */
   sellerNick: string
   /** 卖家地区。 */
@@ -84,11 +86,11 @@ export interface Product {
 }
 
 /**
- * 商品快照：每次采集成功写入一条，按 `id`（`itemId@capturedAt`）去重。
- * 供 P7 分析「想要人数增长」使用。
+ * 商品快照：分析记录按 itemId 与毫秒时间去重；搜索采集额外绑定关键字并保存完整内容。
+ * 同时供想要人数增长分析和飞书同步恢复使用。
  */
 export interface ProductSnapshot {
-  /** 快照 ID：`${itemId}@${capturedAt}`。 */
+  /** 快照 ID：itemId@capturedAt；搜索采集追加编码后的关键字。 */
   id: string
   /** 关联商品 ID。 */
   itemId: string
@@ -100,6 +102,8 @@ export interface ProductSnapshot {
   priceNumber: number
   /** 当时的价格原文。 */
   price: string
+  /** 当次采集的完整内容，供飞书失败重试使用，不能用商品库最新内容替代。 */
+  product?: Product
 }
 
 /** 商品 upsert 结果统计。 */

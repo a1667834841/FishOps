@@ -11,7 +11,8 @@
  *    严禁传递 Blob / File / HTMLElement / 函数 / class 实例等不可序列化对象；
  * 3. 返回值必须是可被 structured clone 的普通对象，便于 background 侧统一校验；
  * 4. 安全铁律（分层）：
- *    - `injectFillPublishForm` 仅做表单字段填充与只读回读，绝不 `.click()` / `submit()`；
+ *    - `injectFillPublishForm` 仅做表单字段填充、只读回读，以及当前可见官方阻断提示
+ *      （分类不支持网页端发布 / 描述含 emoji 等）的只读探测，绝不 `.click()` / `submit()`；
  *    - 唯一允许点击发布按钮的是 `injectClickPublishSubmit`，它只由用户显式触发的工作台
  *      “发布”命令经 host 侧调用，且只点击真实发布按钮
  *      `html.page-publish #content button[class*="publish-button"]`；
@@ -48,6 +49,17 @@ export interface PublishFillInjectionPayload {
   originalPrice: number
   /** 待上传图片 URL 列表（按顺序：第 1 张为主图） */
   imageUrls: string[]
+  /**
+   * 配送（邮费）意图：
+   * - `free`：包邮 / 免费配送，映射邮费 0（勾选发布页“包邮”）；
+   * - `paid`：需收取邮费，必须提供明确金额（勾选“一口价”并填入）；绝不伪造收费。
+   * 缺省时不触碰配送控件（向后兼容旧任务）。
+   */
+  shipping?: {
+    mode: 'free' | 'paid'
+    /** 收费金额（元，>= 0），mode === 'paid' 时必填 */
+    postFee?: number
+  }
   /** 等待关键控件出现的最长毫秒数，缺省 8000 */
   waitTimeoutMs?: number
   /** 触发上传后等待页面渲染的毫秒数，缺省 600 */
@@ -64,6 +76,41 @@ export interface PublishFillFailedImage {
   url: string
   /** 失败原因 */
   error: string
+}
+
+/**
+ * 官方发布页**当前可见**的阻断提示（root guard 探测结果）。
+ *
+ * 用途：在填表 / 图片等待结束后，读取页面当前真正可见的官方校验态（toast 浮层或
+ * 表单内联校验提示），把「分类不支持网页端发布」「描述含 emoji」这类真实阻断从
+ * 图片回读失败中区分出来，避免误判（例如把页面移除上传区误报成 `FORM_FIELD_CHANGED`）。
+ *
+ * 安全约束：仅只读识别当前**可见**元素；隐藏 / 已消失的旧 toast（display:none /
+ * 0 尺寸 / hidden）绝不参与，避免上一轮残留污染本轮；不点击、不切换分类、不绕过、不重试。
+ */
+export interface PublishOfficialBlock {
+  /** 结构化原因码：分类不支持网页端发布 / 官方表单校验失败（如 emoji） */
+  code: 'PUBLISH_CATEGORY_UNSUPPORTED' | 'FORM_VALIDATION_FAILED'
+  /** 官方提示原文（折叠空白并截断后的脱敏文本） */
+  message: string
+  /** 命中来源：toast 浮层 / 表单内联校验 */
+  source: 'toast' | 'form-validation'
+}
+
+/**
+ * 表单填充注入的**安全计时**（毫秒，仅数字，供 host 侧写入诊断时间线）。
+ *
+ * 绝不包含任何页面原文 / URL / token；仅用于度量各阶段耗时，便于定位“卡在哪一步”。
+ */
+export interface PublishFillInjectionTimings {
+  /** 注入函数整体耗时 */
+  totalMs: number
+  /** 字段（标题/描述/售价/原价/配送/所在地）填充与回读耗时 */
+  fieldsMs: number
+  /** 图片下载与上传回读耗时 */
+  imagesMs: number
+  /** 字段最终稳定回读与官方阻断探测耗时 */
+  validationMs: number
 }
 
 /**
@@ -86,6 +133,31 @@ export interface PublishFillInjectionResult {
   imagesUploadedCount: number
   /** 失败图片明细（带序号） */
   imagesFailed: PublishFillFailedImage[]
+  /**
+   * 邮费 / 配送是否已满足：包邮映射 0 或收费额已填入并回读通过。
+   * 未涉及配送时为 true。
+   */
+  postFeeFilled: boolean
+  /** 已确认的配送状态（free 包邮 / paid 收费），未涉及配送时缺省 */
+  shippingStatus?: 'free' | 'paid'
+  /** 页面当前邮费输入值（仅审计，不含用户隐私） */
+  postFeeValue?: string
+  /**
+   * 所在地是否已就绪：发布页已有合法地址或用户已选。
+   * 未涉及所在地控件（旧版/灰度）时为 true。
+   */
+  locationFilled: boolean
+  /** 发布页当前所在地文本（供编辑层提示“官方默认地址/需选择”） */
+  locationValue?: string
+  /** 所在地状态：ready 已有官方默认地址；needs_user_selection 需用户选择 */
+  locationStatus?: 'ready' | 'needs_user_selection'
+  /**
+   * 官方页面当前可见的阻断提示（root guard）：命中分类不支持 / 官方校验失败时为结构化对象，
+   * 否则缺省。该字段优先于图片回读失败被上层解读，避免把真实阻断误报成图片/字段失败。
+   */
+  officialBlock?: PublishOfficialBlock
+  /** 安全计时（毫秒），供 host 侧写入诊断时间线；绝不含页面原文 */
+  timings: PublishFillInjectionTimings
   /** 结构化错误信息汇总 */
   errors: string[]
 }
@@ -152,6 +224,12 @@ export const injectFillPublishForm = async (
   const imagesFailed: PublishFillFailedImage[] = []
   const waitTimeoutMs = typeof payload.waitTimeoutMs === 'number' ? payload.waitTimeoutMs : 8000
   const renderSettleMs = typeof payload.renderSettleMs === 'number' ? payload.renderSettleMs : 600
+
+  // 安全计时（毫秒）：仅用于诊断，绝不记录页面原文；即使抛异常也返回已测得的部分值。
+  const startedAt = Date.now()
+  let fieldsMs = 0
+  let imagesMs = 0
+  let validationMs = 0
 
   const delay = (ms: number): Promise<void> =>
     new Promise((resolve) => setTimeout(resolve, ms))
@@ -254,6 +332,109 @@ export const injectFillPublishForm = async (
     } catch {
       return null
     }
+  }
+
+  /**
+   * 判断元素当前是否**可见**（用于 root guard 只读探测）。
+   *
+   * 必须同时排除：hidden / aria-hidden / display:none / visibility:hidden / opacity:0
+   * 以及 0 尺寸（已卸载或尚未渲染）。这样“上一轮残留但已隐藏的旧 toast”不会污染本轮判定。
+   */
+  const isElementVisible = (el: Element | null): boolean => {
+    if (!el) return false
+    try {
+      const node = el as HTMLElement
+      if (node.hidden === true) return false
+      if (typeof node.getAttribute === 'function') {
+        if (node.getAttribute('hidden') !== null) return false
+        if (node.getAttribute('aria-hidden') === 'true') return false
+      }
+      const styleFn = (globalThis as { getComputedStyle?: (e: Element) => CSSStyleDeclaration }).getComputedStyle
+      if (typeof styleFn === 'function') {
+        const style = styleFn(node)
+        if (style) {
+          if (style.display === 'none' || style.visibility === 'hidden') return false
+          if (style.opacity !== '' && Number(style.opacity) === 0) return false
+        }
+      }
+      if (typeof node.getBoundingClientRect === 'function') {
+        const rect = node.getBoundingClientRect()
+        if (rect && (rect.width <= 0 || rect.height <= 0)) return false
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 采集当前**可见**的官方提示文本（toast 浮层 + 表单内联校验）。
+   *
+   * 只做只读遍历，绝不点击 / 修改页面。隐藏或 0 尺寸节点一律跳过。
+   */
+  const collectVisibleOfficialNotices = (): Array<{ text: string; source: 'toast' | 'form-validation' }> => {
+    const notices: Array<{ text: string; source: 'toast' | 'form-validation' }> = []
+    const push = (selector: string, source: 'toast' | 'form-validation'): void => {
+      try {
+        const nodes = document.querySelectorAll(selector)
+        for (let i = 0; i < nodes.length; i++) {
+          const node = nodes[i]
+          if (!isElementVisible(node)) continue
+          const text = String((node as HTMLElement).textContent ?? '')
+            .replace(/\s+/g, ' ')
+            .trim()
+          if (text) notices.push({ text, source })
+        }
+      } catch {
+        // 忽略无效选择器 / 异常，继续其它探针
+      }
+    }
+    // 表单内联校验提示（真实现场字段：form-item-explain）优先采集。
+    push('[class*="form-item-explain"]', 'form-validation')
+    // 官方 toast / 全局提示浮层。
+    push('[class*="toast"], .ant-message-notice-content, [role="alert"]', 'toast')
+    return notices
+  }
+
+  /**
+   * 识别官方当前可见的阻断提示并归类（root guard）。
+   *
+   * 优先级（官方 warning 优先于图片/字段回读失败）：
+   * 1. 分类不支持网页端发布 → PUBLISH_CATEGORY_UNSUPPORTED（分类不支持是根本阻断，最高优先）；
+   * 2. 描述含 emoji 等 → FORM_VALIDATION_FAILED（明确归因表单校验，绝不误判为图片失败）；
+   * 3. 其它可见的内联表单校验提示 → FORM_VALIDATION_FAILED。
+   *
+   * 未命中任何当前可见提示时返回 undefined，交由既有字段/图片回读判定。
+   */
+  const detectOfficialBlock = (): PublishOfficialBlock | undefined => {
+    const notices = collectVisibleOfficialNotices()
+    if (notices.length === 0) return undefined
+
+    const category = notices.find((n) =>
+      /不支持.{0,6}网页端发布|网页端发布.{0,6}不支持|分类不支持/.test(n.text),
+    )
+    if (category) {
+      return {
+        code: 'PUBLISH_CATEGORY_UNSUPPORTED',
+        message: category.text.slice(0, 200),
+        source: category.source,
+      }
+    }
+
+    const emoji = notices.find((n) => /emoji|表情/i.test(n.text))
+    if (emoji) {
+      return { code: 'FORM_VALIDATION_FAILED', message: emoji.text.slice(0, 200), source: emoji.source }
+    }
+
+    const validation = notices.find((n) => n.source === 'form-validation')
+    if (validation) {
+      return {
+        code: 'FORM_VALIDATION_FAILED',
+        message: validation.text.slice(0, 200),
+        source: 'form-validation',
+      }
+    }
+    return undefined
   }
 
   /**
@@ -477,6 +658,138 @@ export const injectFillPublishForm = async (
     }
   }
 
+  /**
+   * 配送方式（邮费）相关真实 DOM 定位。
+   *
+   * 真实现场：发布页有一组「包邮 / 按距离计费 / 一口价 / 无需邮寄」的
+   * `label.ant-radio-wrapper`，对应 `input.ant-radio-input` 的 value 0/1/2/3；
+   * 邮费输入框为 `label[for="itemPostFeeDTO_postPriceInCent"]` 所在 form-item 内的
+   * `input.ant-input`（placeholder=0.00），仅在选中收费方式（如“一口价”）时
+   * 解除 `ant-form-item-hidden` 隐藏。
+   */
+  const findShippingRadioGroup = (): HTMLElement | null => {
+    try {
+      const groups = Array.from(document.querySelectorAll('.ant-radio-group')) as HTMLElement[]
+      for (const group of groups) {
+        if (/包邮|按距离计费|一口价|无需邮寄/.test(String(group.textContent ?? ''))) return group
+      }
+    } catch {
+      // 忽略无效选择器
+    }
+    return null
+  }
+
+  const findShippingRadio = (labelText: string): HTMLInputElement | null => {
+    const group = findShippingRadioGroup()
+    if (!group) return null
+    try {
+      const labels = Array.from(group.querySelectorAll('label.ant-radio-wrapper')) as HTMLElement[]
+      for (const label of labels) {
+        if (normalizeText(label.textContent).indexOf(labelText) >= 0) {
+          const input = label.querySelector('input.ant-radio-input, input[type="radio"]')
+          return (input as HTMLInputElement | null) ?? null
+        }
+      }
+    } catch {
+      // 忽略
+    }
+    return null
+  }
+
+  const isShippingRadioChecked = (labelText: string): boolean => {
+    const input = findShippingRadio(labelText)
+    return Boolean(input && input.checked)
+  }
+
+  /**
+   * 切换配送方式（包邮 / 一口价）。
+   *
+   * 仅通过派发原生 click 事件触发 antd Radio 的选中，**绝不**调用元素原生 click 方法或 submit，
+   * 也绝不触碰任何发布按钮，保持“填充阶段无提交”的安全铁律。
+   */
+  const selectShippingRadio = (labelText: string): boolean => {
+    const input = findShippingRadio(labelText)
+    if (!input) return false
+    try {
+      if (input.checked) return true
+      const proto = Object.getPrototypeOf(input)
+      const descriptor = Object.getOwnPropertyDescriptor(proto, 'checked')
+      if (descriptor && typeof descriptor.set === 'function') descriptor.set.call(input, true)
+      else input.checked = true
+      input.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const findPostFeeInput = (): HTMLInputElement | null => {
+    try {
+      const label = document.querySelector(
+        'label[for="itemPostFeeDTO_postPriceInCent"]',
+      ) as HTMLElement | null
+      if (!label) return null
+      const formItem = closestOf(label, '.ant-form-item')
+      const scope: ParentNode = formItem ?? document
+      const input =
+        typeof scope.querySelector === 'function'
+          ? scope.querySelector('input.ant-input, input')
+          : null
+      return (input as HTMLInputElement | null) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  const isPostFeeInputVisible = (): boolean => {
+    const input = findPostFeeInput()
+    if (!input) return false
+    try {
+      const formItem = closestOf(input, '.ant-form-item')
+      if (formItem && String(formItem.className ?? '').indexOf('ant-form-item-hidden') >= 0) {
+        return false
+      }
+      const rect =
+        typeof input.getBoundingClientRect === 'function' ? input.getBoundingClientRect() : null
+      return Boolean(rect && rect.width > 0 && rect.height > 0)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 所在地（宝贝所在地）只读定位与读取。
+   *
+   * 真实现场：`label[for="itemAddrDTO"]` 所在 form-item 的
+   * `.ant-form-item-control-input-content` 文本即当前账号默认地址；
+   * 为空表示需用户在页面选择，**绝不自动凭空选择地区**。
+   */
+  const findLocationFormItem = (): HTMLElement | null => {
+    try {
+      const label = document.querySelector('label[for="itemAddrDTO"]') as HTMLElement | null
+      if (!label) return null
+      return closestOf(label, '.ant-form-item')
+    } catch {
+      return null
+    }
+  }
+
+  const readLocationValue = (): string => {
+    const formItem = findLocationFormItem()
+    if (!formItem) return ''
+    try {
+      const content =
+        typeof formItem.querySelector === 'function'
+          ? (formItem.querySelector('.ant-form-item-control-input-content') as HTMLElement | null)
+          : null
+      return normalizeText(content ? String(content.textContent ?? '') : '')
+    } catch {
+      return ''
+    }
+  }
+
   try {
     // ---- 0. 等待关键控件出现（对抗闲鱼发布页异步重渲染） ----
     await waitFor(() => {
@@ -487,6 +800,8 @@ export const injectFillPublishForm = async (
       const hasFile = Boolean(findFileInput())
       return hasDesc && hasPrice && hasFile
     }, waitTimeoutMs)
+
+    const fieldsStart = Date.now()
 
     // ---- 1. 标题与描述：适配“发布页无独立商品标题输入框”的真实现状 ----
     // 闲鱼发布页已将标题与描述统一为同一个“描述编辑器”（contenteditable），因此：
@@ -560,11 +875,83 @@ export const injectFillPublishForm = async (
       }
     }
 
+    // ---- 4.5 配送（邮费）：包邮映射 0，或按显式金额收费；绝不伪造收费 ----
+    let postFeeFilled = true
+    let shippingStatus: 'free' | 'paid' | undefined
+    let postFeeValue = ''
+    {
+      const shipping = payload.shipping
+      if (shipping && (shipping.mode === 'free' || shipping.mode === 'paid')) {
+        shippingStatus = shipping.mode
+        postFeeFilled = false
+        if (shipping.mode === 'free') {
+          // 包邮 / 免费配送：映射邮费 0（勾选“包邮”）
+          if (isShippingRadioChecked('包邮')) {
+            postFeeFilled = true
+          } else if (selectShippingRadio('包邮')) {
+            await waitFor(() => isShippingRadioChecked('包邮'), 2000)
+            postFeeFilled = isShippingRadioChecked('包邮')
+            if (!postFeeFilled) errors.push('选择“包邮”后回读校验失败，无法映射免费配送')
+          } else {
+            errors.push('未找到“包邮”配送方式控件，无法映射免费配送')
+          }
+        } else {
+          // 收费配送：勾选“一口价”并填入显式金额（绝不伪造收费）
+          const fee = typeof shipping.postFee === 'number' ? shipping.postFee : NaN
+          if (!Number.isFinite(fee) || fee < 0) {
+            errors.push('收费配送缺少有效邮费金额，拒绝伪造收费')
+          } else {
+            if (!isShippingRadioChecked('一口价')) {
+              selectShippingRadio('一口价')
+              await waitFor(() => isShippingRadioChecked('一口价'), 2000)
+            }
+            await waitFor(() => isPostFeeInputVisible(), 2000)
+            const feeInput = findPostFeeInput()
+            if (!feeInput) {
+              errors.push('未找到邮费输入框（itemPostFeeDTO_postPriceInCent）')
+            } else if (!isPostFeeInputVisible()) {
+              errors.push('邮费输入框未显示，无法填写收费邮费')
+            } else if (writeValue(feeInput, String(fee))) {
+              await delay(100)
+              postFeeValue = readValue(findPostFeeInput())
+              postFeeFilled = Number(postFeeValue) === Number(fee)
+              if (!postFeeFilled) errors.push('邮费填充后回读校验失败')
+            } else {
+              errors.push('写入邮费失败')
+            }
+          }
+        }
+        if (postFeeFilled) postFeeValue = readValue(findPostFeeInput())
+      }
+    }
+
+    // ---- 4.6 所在地：只读保留页面已有合法地址；为空则提示需用户选择，绝不自动选 ----
+    let locationFilled = true
+    let locationValue = ''
+    let locationStatus: 'ready' | 'needs_user_selection' | undefined
+    {
+      const locationFormItem = findLocationFormItem()
+      if (locationFormItem) {
+        locationValue = readLocationValue()
+        if (locationValue.length > 0) {
+          locationStatus = 'ready'
+          locationFilled = true
+        } else {
+          locationStatus = 'needs_user_selection'
+          locationFilled = false
+          errors.push('发布页宝贝所在地为空：请在发布页选择所在地后重试（绝不自动凭空选择地区）')
+        }
+      }
+    }
+
+    fieldsMs = Date.now() - fieldsStart
+
     // ---- 5. 图片逐张处理（HTTPS 校验 → fetch → Blob → File → DataTransfer） ----
     // fetchedCount 记录成功构造出 File 的数量；confirmedCount 记录写回控件后页面上
     // 真实回读确认的上传数量。二者分离，避免“构造成功”被误当作“页面已接受”。
     let fetchedCount = 0
     let confirmedCount = 0
+    const imagesStart = Date.now()
 
     if (!Array.isArray(payload.imageUrls) || payload.imageUrls.length === 0) {
       errors.push('待上传图片列表为空，无法完成图片填充')
@@ -639,6 +1026,10 @@ export const injectFillPublishForm = async (
       }
     }
 
+    imagesMs = Date.now() - imagesStart
+
+    const validationStart = Date.now()
+
     // ---- 6. 字段最终稳定回读：对抗异步重渲染把已填值清空 ----
     await delay(renderSettleMs)
     {
@@ -672,6 +1063,14 @@ export const injectFillPublishForm = async (
       }
     }
 
+    // ---- 6.5 官方阻断提示只读探测（root guard）----
+    // 在字段最终回读之后、依据图片/字段结果判定之前，读取页面当前真正可见的官方校验态：
+    // 「当前分类不支持网页端发布」或「商品描述不能包含emoji」等。仅只读探测，绝不点击 /
+    // 切换分类 / 绕过 / 重试；隐藏或已消失的旧 toast 不会污染。上层据此优先于图片回读失败判定。
+    const officialBlock = detectOfficialBlock()
+
+    validationMs = Date.now() - validationStart
+
     const allImagesSucceeded =
       payload.imageUrls.length > 0 &&
       imagesFailed.length === 0 &&
@@ -697,6 +1096,14 @@ export const injectFillPublishForm = async (
       detailImagesCount: Math.max(0, imagesUploadedCount - 1),
       imagesUploadedCount,
       imagesFailed,
+      postFeeFilled,
+      shippingStatus,
+      postFeeValue,
+      locationFilled,
+      locationValue,
+      locationStatus,
+      officialBlock,
+      timings: { totalMs: Date.now() - startedAt, fieldsMs, imagesMs, validationMs },
       errors,
     }
   } catch (err) {
@@ -710,6 +1117,9 @@ export const injectFillPublishForm = async (
       detailImagesCount: 0,
       imagesUploadedCount: 0,
       imagesFailed,
+      postFeeFilled: false,
+      locationFilled: false,
+      timings: { totalMs: Date.now() - startedAt, fieldsMs, imagesMs, validationMs },
       errors: [...errors, `注入填充执行异常: ${message}`],
     }
   }
@@ -727,6 +1137,7 @@ export interface PublishSubmitInjectionResult {
     | 'NOT_LOGGED_IN'
     | 'VERIFICATION_REQUIRED'
     | 'FORM_FIELD_CHANGED'
+    | 'FORM_VALIDATION_FAILED'
     | 'SUBMIT_BUTTON_NOT_FOUND'
     | 'SUBMIT_BUTTON_DISABLED'
   /** 人类可读的原因说明 */
@@ -735,6 +1146,8 @@ export interface PublishSubmitInjectionResult {
   buttonClass?: string
   /** 派发点击的时间戳（毫秒） */
   clickedAt: number
+  /** 安全计时（毫秒，仅数字），供 host 侧写入诊断时间线 */
+  timings: { totalMs: number }
 }
 
 /**
@@ -752,14 +1165,15 @@ export interface PublishSubmitInjectionResult {
  *    - 可点击：必须可见（非 hidden / aria-hidden，且 `getBoundingClientRect` 有正尺寸）
  *      且未禁用；
  *    绝不猜测或点击任何其它按钮 / 元素；
- * 3. 找到且可点击时**只点击一次**并立即返回；结果（是否真正发布成功）由 host 侧根据
- *    标签页跳转判定，页面内不做二次点击；
+ * 3. 找到且可点击时**只点击一次**并立即返回；是否真正发布成功由 host 侧依据官方「我的商品库」
+ *    在售商品数严格 +1（after === before + 1）判定，绝不凭标签页跳转判定，页面内不做二次点击；
  * 4. 未找到 / 不可点击 / 页面状态失效时，返回结构化 `clicked:false`，绝不假成功。
  *
  * 该函数会被注入到页面执行，必须完全自包含，禁止引用模块作用域变量。
  */
 export const injectClickPublishSubmit = (): PublishSubmitInjectionResult => {
   const clickedAt = Date.now()
+  const startedAt = clickedAt
   const queryFirst = (selectors: string[]): HTMLElement | null => {
     for (const sel of selectors) {
       try {
@@ -775,7 +1189,13 @@ export const injectClickPublishSubmit = (): PublishSubmitInjectionResult => {
   const notClicked = (
     code: PublishSubmitInjectionResult['code'],
     reason: string,
-  ): PublishSubmitInjectionResult => ({ clicked: false, code, reason, clickedAt })
+  ): PublishSubmitInjectionResult => ({
+    clicked: false,
+    code,
+    reason,
+    clickedAt,
+    timings: { totalMs: Math.max(0, Date.now() - startedAt) },
+  })
 
   try {
     const href =
@@ -811,11 +1231,18 @@ export const injectClickPublishSubmit = (): PublishSubmitInjectionResult => {
     const readText = (el: HTMLElement | null): string => {
       if (!el) return ''
       try {
-        if ('value' in el) {
+        // 仅表单输入控件（INPUT/TEXTAREA）读取 value；其余元素（含 BUTTON 与 contenteditable）
+        // 一律读取文本内容。真实 HTMLButtonElement 始终存在 value 属性（默认空串），
+        // 若用 `'value' in el` 判断会把 BUTTON 的空 value 误当成按钮文案，导致误拒绝提交。
+        const tag = String(el.tagName ?? '').toUpperCase()
+        if (tag === 'INPUT' || tag === 'TEXTAREA') {
           const v = (el as HTMLInputElement | HTMLTextAreaElement).value
           return typeof v === 'string' ? v : String(v ?? '')
         }
-        return String(el.textContent ?? '')
+        const text = el.textContent
+        if (typeof text === 'string' && text.length > 0) return text
+        const inner = el.innerText
+        return typeof inner === 'string' ? inner : String(text ?? '')
       } catch {
         return ''
       }
@@ -879,6 +1306,69 @@ export const injectClickPublishSubmit = (): PublishSubmitInjectionResult => {
     }
     if (uploadedCount === 0) {
       return notClicked('FORM_FIELD_CHANGED', '未检测到已上传图片，页面状态已失效，拒绝提交')
+    }
+
+    // ---- 配送（邮费）提交前确认：不满足禁止提交 ----
+    try {
+      const groups = Array.from(document.querySelectorAll('.ant-radio-group')) as HTMLElement[]
+      const shipGroup = groups.find((group) =>
+        /包邮|按距离计费|一口价|无需邮寄/.test(String(group.textContent ?? '')),
+      )
+      if (shipGroup) {
+        const checked = shipGroup.querySelector(
+          'input.ant-radio-input:checked, input[type="radio"]:checked',
+        ) as HTMLInputElement | null
+        const mode = checked ? String(checked.value ?? '') : ''
+        // value 2 = 一口价（按金额收费，必须已填邮费）；包邮(0)/无需邮寄(3) 无需金额。
+        if (mode === '2') {
+          const postLabel = document.querySelector(
+            'label[for="itemPostFeeDTO_postPriceInCent"]',
+          ) as HTMLElement | null
+          const postItem =
+            postLabel && typeof postLabel.closest === 'function'
+              ? (postLabel.closest('.ant-form-item') as HTMLElement | null)
+              : null
+          const postInput =
+            postItem && typeof postItem.querySelector === 'function'
+              ? (postItem.querySelector('input.ant-input, input') as HTMLInputElement | null)
+              : null
+          const feeVal = postInput ? String(postInput.value ?? '').trim() : ''
+          if (feeVal.length === 0) {
+            return notClicked(
+              'FORM_VALIDATION_FAILED',
+              '配送方式为“一口价”但邮费为空：请填写邮费或改为包邮后重试',
+            )
+          }
+        }
+      }
+    } catch {
+      // 忽略选择器异常，交由后续按钮定位兜底
+    }
+
+    // ---- 所在地提交前确认：为空禁止提交（不自动选择地区） ----
+    try {
+      const locLabel = document.querySelector('label[for="itemAddrDTO"]') as HTMLElement | null
+      if (locLabel) {
+        const locItem =
+          typeof locLabel.closest === 'function'
+            ? (locLabel.closest('.ant-form-item') as HTMLElement | null)
+            : null
+        const locContent =
+          locItem && typeof locItem.querySelector === 'function'
+            ? (locItem.querySelector('.ant-form-item-control-input-content') as HTMLElement | null)
+            : null
+        const locVal = locContent
+          ? String(locContent.textContent ?? '').replace(/\s+/g, ' ').trim()
+          : ''
+        if (locVal.length === 0) {
+          return notClicked(
+            'FORM_VALIDATION_FAILED',
+            '宝贝所在地为空：请先在发布页选择所在地后重试（不自动选择地区）',
+          )
+        }
+      }
+    } catch {
+      // 忽略选择器异常
     }
 
     // ---- 定位真实发布按钮（真实作用域选择器，绝不猜测、绝不命中包装器/其它按钮） ----
@@ -947,6 +1437,7 @@ export const injectClickPublishSubmit = (): PublishSubmitInjectionResult => {
         reason: '发布按钮当前不可点击（disabled）',
         buttonClass: className,
         clickedAt,
+        timings: { totalMs: Math.max(0, Date.now() - startedAt) },
       }
     }
     if (!isVisible(publishButton)) {
@@ -956,12 +1447,18 @@ export const injectClickPublishSubmit = (): PublishSubmitInjectionResult => {
         reason: '发布按钮当前不可见，视为不可点击，拒绝提交',
         buttonClass: className,
         clickedAt,
+        timings: { totalMs: Math.max(0, Date.now() - startedAt) },
       }
     }
 
-    // ---- 只点击一次，立即返回；结果由 host 侧根据标签页跳转判定 ----
+    // ---- 只点击一次，立即返回；是否成功由 host 侧依据官方「我的商品库」在售数严格 +1 判定 ----
     publishButton.click()
-    return { clicked: true, buttonClass: className, clickedAt: Date.now() }
+    return {
+      clicked: true,
+      buttonClass: className,
+      clickedAt: Date.now(),
+      timings: { totalMs: Math.max(0, Date.now() - startedAt) },
+    }
   } catch (err) {
     const message =
       err && typeof err === 'object' && 'message' in err

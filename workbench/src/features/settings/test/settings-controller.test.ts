@@ -109,6 +109,15 @@ function makeApi(): MockBridgeApi {
   return api
 }
 
+test('SettingsController: 每日采集配置无需旧商品表 ID', async () => {
+  const api = makeApi()
+  api.respond(CommandTypes.FEISHU_CONFIG_SET, () => ({ configured: true, hasAppId: true, hasAppSecret: true, hasSpreadsheetToken: true, hasProductTableId: false, hasSellerTableId: false }))
+  const controller = new SettingsController({ api })
+  assert.equal(await controller.saveFeishuConfig({ appId: 'app', appSecret: 'secret', spreadsheetToken: 'base' }), true)
+  assert.equal(controller.getState().feishu.hasProductTableId, false)
+  controller.dispose()
+})
+
 test('inferAiProvider：由 baseUrl 识别常见提供商', () => {
   assert.equal(inferAiProvider('https://api.deepseek.com/v1'), 'DeepSeek')
   assert.equal(inferAiProvider('https://dashscope.aliyuncs.com/compatible-mode/v1'), '通义千问 (DashScope)')

@@ -18,7 +18,7 @@ export interface FeishuConfig {
   appSecret: string
   /** 多维表格 App Token（即 spreadsheetToken）。 */
   spreadsheetToken: string
-  /** 商品表格 ID。 */
+  /** 旧商品表 ID；每日分表模式可为空，仅旧分析和手动导出使用。 */
   productTableId: string
   /** 商家表格 ID（可选）。 */
   sellerTableId?: string
@@ -54,6 +54,7 @@ export type FeishuErrorCategory =
   | 'NOT_FOUND'        // 表格/字段不存在
   | 'INVALID_PARAM'    // 参数校验失败
   | 'BATCH_TOO_LARGE'  // 单批次超过限制
+  | 'INVALID_RESPONSE' // 接口返回结构 / 分页语义与请求不符（如 page_size 未生效）
   | 'NETWORK_ERROR'    // 网络传输异常
   | 'API_ERROR'        // 飞书接口返回业务错误
 
@@ -74,6 +75,7 @@ export class FeishuError extends Error {
 export const FEISHU_PRODUCT_FIELD_CONFIGS: FeishuFieldConfig[] = [
   { name: '商品ID', type: 1 },
   { name: '商品标题', type: 1 },
+  { name: '商品描述', type: 1 },
   { name: '价格', type: 2 },
   { name: '原价', type: 2 },
   { name: '想要人数', type: 2 },

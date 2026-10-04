@@ -8,7 +8,7 @@
  * IndexedDB 实现位于 extension 侧（`extension/src/capture/indexed-db-repository.ts`），
  * 复用本文件的接口与快照构建逻辑。
  */
-import { buildProductSnapshot } from './normalizer'
+import { buildProductSnapshot, mergeProductImages } from './normalizer'
 import type {
   Product,
   ProductListQuery,
@@ -21,7 +21,7 @@ import type {
 /** 商品库仓储接口。 */
 export interface ProductRepository {
   /**
-   * 按 `itemId` 去重 upsert 商品，并为每条商品追加一条采集快照（按 `itemId@capturedAt` 去重）。
+   * 按 itemId 合并本地目录，并保存采集快照；搜索快照额外绑定关键字且保留当次完整内容。
    * @param products 归一后的商品列表（同一批次内允许重复 itemId，后者覆盖前者）。
    * @param capturedAt 本次采集时间戳（毫秒）。
    */
@@ -108,12 +108,39 @@ function finalizeOwnership(product: Product): Product {
 }
 
 /**
+ * upsert 合并时需要做「稀疏保护」的文本字段。
+ *
+ * 搜索 / 详情响应可能只返回部分字段（例如某次搜索缺 `userNickName` / `area`，或详情缺失）。
+ * 这类字段在归一化时会被写成空串；若直接 `{ ...prior, ...next }`，空串会清空已采到的非空值，
+ * 导致卖家 / 地区 / 标题等界面显示「未知」。因此新采集为空串时保留已有非空值。
+ */
+const SPARSE_PROTECTED_TEXT_FIELDS: readonly string[] = [
+  'title',
+  'price',
+  'originalPrice',
+  'publishTime',
+  'captureTime',
+  'sellerNick',
+  'sellerCity',
+  'freeShip',
+  'tags',
+  'coverUrl',
+  'detailUrl',
+  'sellerId',
+  'accountId',
+  'uniqueName',
+  'desc',
+  'category',
+]
+
+/**
  * 计算 upsert 时应实际写入的商品：在保留既有归属可信度的前提下合并最新采集字段。
  *
  * 归属安全规则：
  * - 高可信来源（已确认归属）绝不被低可信（未确认归属）覆盖，`my_published` 绝不被降级；
  * - 确定来源优先：已确认竞品不被未确认归属覆盖；
  * - 新采集可信度更高时以新采集为准（如后续采集确认了归属）；
+ * - 稀疏响应（新采集字段为空串）绝不清空已采到的非空文本，避免信息被冲空成「未知」；
  * - 无论哪一方胜出，最终都校正 sellerId / source / accountId 一致性。
  */
 export function mergeProductForUpsert(existing: Product | undefined, incoming: Product): Product {
@@ -123,6 +150,32 @@ export function mergeProductForUpsert(existing: Product | undefined, incoming: P
   const next = normalizeProductSource(incoming)
   const merged: Product = { ...prior, ...next }
 
+  // 稀疏保护：新采集为空串、已有非空时，保留已有值（newest-wins 仅作用于有值的字段）。
+  const mergedRecord = merged as unknown as Record<string, unknown>
+  const priorRecord = prior as unknown as Record<string, unknown>
+  const nextRecord = next as unknown as Record<string, unknown>
+  for (const field of SPARSE_PROTECTED_TEXT_FIELDS) {
+    const incomingValue = nextRecord[field]
+    const priorValue = priorRecord[field]
+    if (
+      incomingValue === '' &&
+      typeof priorValue === 'string' &&
+      priorValue.length > 0
+    ) {
+      mergedRecord[field] = priorValue
+    }
+  }
+
+  // 价格和时间的文本、数值必须同步保留，否则展示旧价格时分析却会读到缺省的 0。
+  // 明确返回的零价有非空价格原文，不会进入缺值保护。
+  if (!next.price && next.priceNumber === 0 && prior.price) merged.priceNumber = prior.priceNumber
+  if (!next.originalPrice && next.originalPriceNumber === 0 && prior.originalPrice) {
+    merged.originalPriceNumber = prior.originalPriceNumber
+  }
+  if (!next.publishTime && next.publishTimeMs === 0 && prior.publishTime) {
+    merged.publishTimeMs = prior.publishTimeMs
+  }
+
   // 归属未确认不得覆盖已确认归属：保留既有来源、状态、账号与卖家，保证 my_published 不被降级。
   if (ownershipRank(prior) > ownershipRank(next)) {
     merged.source = prior.source
@@ -130,6 +183,11 @@ export function mergeProductForUpsert(existing: Product | undefined, incoming: P
     merged.accountId = prior.accountId
     merged.sellerId = prior.sellerId
     merged.ownershipUnconfirmed = prior.ownershipUnconfirmed
+  }
+
+  // 图片集合：已有 + 新采集合并去重保序，绝不用不完整的新集合覆盖已有完整集合。
+  if (prior.images !== undefined || next.images !== undefined) {
+    merged.images = mergeProductImages(prior.images, next.images)
   }
 
   return finalizeOwnership(merged)
@@ -181,10 +239,11 @@ export class MemoryProductRepository implements ProductRepository {
       if (existing) updated += 1
       else added += 1
 
-      const snapshot = buildProductSnapshot(stored, capturedAt)
-      // 同一 (itemId, capturedAt) 视为同一观测：覆盖写入，仅在首次时计入新增快照。
+      // 同步快照保留当次输入，不能把本地目录合并后的旧字段带入另一轮采集。
+      const snapshot = buildProductSnapshot(product.captureKeyword === undefined ? stored : product, capturedAt)
+      // 完整搜索快照保留首次内容；旧分析快照仍允许同观测覆盖。
       const isNewSnapshot = !this.snapshots.has(snapshot.id)
-      this.snapshots.set(snapshot.id, snapshot)
+      if (isNewSnapshot || product.captureKeyword === undefined) this.snapshots.set(snapshot.id, snapshot)
       if (isNewSnapshot) snapshots += 1
     }
 
@@ -199,7 +258,7 @@ export class MemoryProductRepository implements ProductRepository {
     return [...this.snapshots.values()]
       .filter((snapshot) => snapshot.itemId === itemId)
       .sort((a, b) => a.capturedAt - b.capturedAt)
-      .map((snapshot) => ({ ...snapshot }))
+      .map((snapshot) => structuredClone(snapshot))
   }
 
   async count(): Promise<number> {

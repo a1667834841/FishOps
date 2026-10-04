@@ -8,6 +8,7 @@
  */
 import {
   createCommand,
+  traceCommandCall,
   type CommandEnvelope,
   type CommandPayloadMap,
   type CommandResultMap,
@@ -64,10 +65,18 @@ export function createBridgeApi(
   return {
     async call(type, payload) {
       const command = createCommand(type, payload)
-      const response = await withTimeout(client.transport.call(command), options.timeoutMs, type)
+      const response = await traceCommandCall('client', command, () =>
+        withTimeout(client.transport.call(command), options.timeoutMs, type),
+      )
       if (!response.ok) {
         const error = response.error
-        throw new CommandError(error?.code ?? 'INTERNAL', error?.message ?? '未知错误', error?.category, error?.retCode)
+        throw new CommandError(
+          error?.code ?? 'INTERNAL',
+          error?.message ?? '未知错误',
+          error?.category,
+          error?.retCode,
+          error?.businessCode,
+        )
       }
       return response.result as CommandResultMap[typeof type]
     },

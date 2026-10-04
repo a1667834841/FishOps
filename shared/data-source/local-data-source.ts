@@ -27,6 +27,7 @@ export const LOCAL_PRODUCT_DATASET_SCHEMA: DatasetSchema = {
   fields: [
     { name: 'itemId', label: '商品ID', type: 'string', required: true, description: '闲鱼商品全局唯一ID' },
     { name: 'title', label: '商品标题', type: 'string', required: true, description: '商品名称与标题' },
+    { name: 'desc', label: '商品描述', type: 'string', description: '从商品详情页采集的真实描述；未采集时为空' },
     { name: 'price', label: '价格原文', type: 'string', required: true, description: '带货币符号的价格字符串' },
     { name: 'priceNumber', label: '价格数值', type: 'number', required: true, description: '解析后的数值价格（单位：元）' },
     { name: 'originalPrice', label: '原价原文', type: 'string', description: '划线原价或购买原价字符串' },

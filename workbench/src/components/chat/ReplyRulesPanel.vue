@@ -21,14 +21,19 @@ import StatusTag from '../StatusTag.vue'
 import AppModal from '../AppModal.vue'
 
 /**
- * 回复规则与全局配置。
+ * 回复规则与全局配置面板。
+ *
+ * 默认（rulesOnly 未开启）同时渲染全局配置与规则列表，保持聊天中心旧入口的完整能力。
+ * 传入 rulesOnly 时只渲染规则列表（创建/编辑/启停/删除/模态框），隐藏全局配置卡
+ * 与「安全默认」等面向整个引擎的说明文案，供设置页「回复策略」分区复用；规则保存
+ * 始终走同一后台命令且只提交 rules 字段，不会覆盖全局策略。
  *
  * 安全设计：
  * - 全局默认 suggest + 引擎关闭，页面只展示后台返回的真实配置，读取失败时不显示任何「默认值」；
  * - 切到自动回复，或在自动模式下打开引擎，必须在醒目的确认面板里勾选并点击确认，否则不会发出命令；
  * - 这里没有任何 API Key / Secret 输入框，AI 凭据只能在扩展侧安全配置。
  */
-const props = defineProps<{ reply: ReplyState; controller: ReplyController }>()
+const props = defineProps<{ reply: ReplyState; controller: ReplyController; rulesOnly?: boolean }>()
 
 const config = computed(() => props.reply.config)
 const saving = computed(() => props.reply.save.phase === 'running')
@@ -166,7 +171,8 @@ const sortedRules = computed(() => [...config.value.rules].sort((a, b) => b.prio
 
 <template>
   <div class="rules">
-    <Callout tone="info">
+    <!-- 面向整个引擎的安全说明仅在完整面板展示；独立规则页隐藏，避免与设置页全局策略文案重复。 -->
+    <Callout v-if="!rulesOnly" tone="info">
       安全默认：回复引擎关闭、模式为「建议」，不会自动发送。AI 凭据（API Key）只能在扩展侧安全配置，工作台不提供输入入口，也不会读取或显示。
     </Callout>
 
@@ -178,10 +184,15 @@ const sortedRules = computed(() => [...config.value.rules].sort((a, b) => b.prio
       </template>
     </Callout>
 
-    <template v-else-if="globalDraft && config.global">
+    <!--
+      移除旧的 `globalDraft && config.global` gate：该 gate 会让只关心规则的
+      rulesOnly 模式在全局草稿尚未同步时整块不渲染。此处在读取成功后直接渲染，
+      全局卡再按 rulesOnly 独立控制。
+    -->
+    <template v-else>
       <Callout v-if="config.error" tone="warn" :view="config.error" />
 
-      <PanelCard title="全局配置" description="以下均为后台当前真实配置">
+      <PanelCard v-if="globalDraft && !rulesOnly" title="全局配置" description="以下均为后台当前真实配置">
         <template #actions>
           <StatusTag v-if="status" :tone="status.aiConfigured ? 'ok' : 'warn'">
             {{ status.aiConfigured ? 'AI 凭据已配置' : 'AI 凭据未配置' }}

@@ -87,6 +87,7 @@ export async function runCaptureSmoke(): Promise<boolean> {
   check('任务 completed 且 progress=100', task.status === 'completed' && task.progress === 100)
   check('跨页 itemId B 计为 duplicate', result.duplicates === 1)
   check('wantCnt<5 的 C 被过滤', result.filtered === 1 && result.valid === 2)
+  check('stored 记录成功入库有效去重数', result.stored === 2)
   const products = await s1.runtime.handleCommand(cmd(CommandTypes.PRODUCT_LIST, { source: 'all' }))
   check('商品库去重后 2 条', (products.result as { total: number }).total === 2)
   const hist1 = await s1.runtime.handleCommand(cmd(CommandTypes.TASK_LIST, { type: 'capture' }))
@@ -114,7 +115,18 @@ export async function runCaptureSmoke(): Promise<boolean> {
   release()
   await new Promise((resolve) => setTimeout(resolve, 10))
   const resumed = await s2.runtime.handleCommand(cmd(CommandTypes.CAPTURE_RESUME, { id: id2 }))
-  const resumedTask = (resumed.result as { task: Task }).task
+  // resume 只等待持久化（paused → pending 重新排队），整轮采集在后台异步续跑。
+  check('恢复后立即置 pending', (resumed.result as { task: Task }).task.status === 'pending')
+  await waitFor(() =>
+    s2.events.some(
+      (event) =>
+        event.type === EventTypes.TASK_CHANGED &&
+        (event.payload as TaskChangedPayload).task.id === id2 &&
+        (event.payload as TaskChangedPayload).task.status === 'completed',
+    ),
+  )
+  const getResumed = await s2.runtime.handleCommand(cmd(CommandTypes.CAPTURE_GET, { id: id2 }))
+  const resumedTask = (getResumed.result as { task: Task }).task
   check('恢复后 completed', resumedTask.status === 'completed')
   check('断点推进到第 3 页', (resumedTask.meta as { capture: CaptureCheckpoint }).capture.nextPage === 3)
 

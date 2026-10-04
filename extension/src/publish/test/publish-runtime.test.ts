@@ -24,6 +24,7 @@ import test from 'node:test'
 import {
   CommandTypes,
   EventTypes,
+  PublishError,
   type CommandEnvelope,
   type PublishConfirmStatusResult,
   type PublishCreateResult,
@@ -41,6 +42,8 @@ import { MemoryTaskStore, TaskManager } from '../../../../shared/task/index'
 import type { Product } from '../../../../shared/types/product'
 import {
   createPublishRuntime,
+  type PublishedItemRef,
+  type PublishedItemsReader,
   type PublishEventEnvelope,
 } from '../../background/publish-runtime'
 import type { TabLike, TabsApi } from '../../background/tab-manager'
@@ -72,6 +75,10 @@ class MockPublishFormFiller implements PublishFormFiller {
   public pageStatusError: Error | null = null
   /** 提交点击后的钩子（用于模拟页面跳转） */
   public onSubmitHook: (() => void | Promise<void>) | null = null
+  /** 可覆盖 fillSummary 字段（如 postFeeFilled / locationFilled 明确 false） */
+  public fillSummaryOverride: Partial<FormFillResult['fillSummary']> = {}
+  /** fill 抛错（模拟注入侧 root guard 结构化拒绝：分类不支持 / emoji 等） */
+  public fillError: Error | null = null
   /** 人为挂起提交调用（模拟 SW 在点击已派发、结果持久化前被销毁） */
   public submitHold: Promise<void> | null = null
 
@@ -84,6 +91,7 @@ class MockPublishFormFiller implements PublishFormFiller {
     this.fillCount++
     this.lastTabId = tabId
     this.lastItem = item
+    if (this.fillError) throw this.fillError
     return {
       ok: true,
       fillSummary: {
@@ -93,6 +101,7 @@ class MockPublishFormFiller implements PublishFormFiller {
         descFilled: true,
         priceFilled: true,
         origPriceFilled: true,
+        ...this.fillSummaryOverride,
       },
     }
   }
@@ -136,6 +145,24 @@ class MockTabsApi implements TabsApi {
 
   onRemoved = {
     addListener: () => {},
+  }
+}
+
+/**
+ * 官方「我的商品库」只读读取器 mock。
+ *
+ * - `items` 为「当前官方在售商品」：提交前快照得到基线，提交后设置新商品即可模拟“发布落地”；
+ * - `error` 非空时读取抛错（模拟无权限 / 未登录 / 网络失败）→ 必须判 unknown。
+ */
+class MockPublishedItemsReader implements PublishedItemsReader {
+  public items: PublishedItemRef[] = []
+  public error: Error | null = null
+  public readCount = 0
+
+  async readOnSaleItems(): Promise<PublishedItemRef[]> {
+    this.readCount++
+    if (this.error) throw this.error
+    return this.items.map((it) => ({ ...it }))
   }
 }
 
@@ -670,6 +697,44 @@ test('PublishRuntime: 即使 fill.ok 为 true，图片未完成回读仍拒绝�
   assert.notEqual(finalTask?.status, 'waiting_confirmation')
 })
 
+test('PublishRuntime: fill 阶段官方 root guard 抛 PUBLISH_CATEGORY_UNSUPPORTED → 保留业务码且不进入 waiting_confirmation', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  await repository.upsertProducts([makeProduct('prod_category')], Date.now())
+  const filler = new MockPublishFormFiller()
+  filler.fillError = new PublishError(
+    'PUBLISH_CATEGORY_UNSUPPORTED',
+    '官方发布页当前阻断：当前分类不支持网页端发布',
+    { retryable: false },
+  )
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    tabs: new MockTabsApi(),
+    formFiller: filler,
+    imageDownloader: new MockImageDownloader(),
+  })
+  await runtime.init()
+
+  const cRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_category' }),
+  )
+  const taskId = (cRes.result as PublishCreateResult).task.id
+
+  const fillRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskId }),
+  )
+  assert.equal(fillRes.ok, false)
+  // 业务码必须保留为分类不支持（绝不退化为 FORM_FIELD_CHANGED / INTERNAL）
+  assert.equal(fillRes.error?.businessCode, 'PUBLISH_CATEGORY_UNSUPPORTED')
+
+  const after = await tasks.getById(taskId)
+  assert.equal(after?.status, 'failed')
+  assert.notEqual(after?.status, 'waiting_confirmation')
+  assert.equal(after?.result?.submitToken, undefined)
+})
+
 test('PublishRuntime: 暂停在 fillForm inflight 时保持 paused，绝不被覆盖为 waiting_confirmation', async () => {
   const store = new MemoryTaskStore()
   const tasks = new TaskManager({ store })
@@ -772,14 +837,17 @@ async function setupSubmitRuntime(options: { observeTimeoutMs?: number } = {}) {
 
   const tabsMock = new MockTabsApi()
   const filler = new MockPublishFormFiller()
+  const reader = new MockPublishedItemsReader()
   const runtime = createPublishRuntime({
     tasks,
     repository,
     tabs: tabsMock,
     formFiller: filler,
     imageDownloader: new MockImageDownloader(),
+    publishedItems: reader,
     submitObserveTimeoutMs: options.observeTimeoutMs ?? 200,
     submitObserveIntervalMs: 5,
+    submitVerifyIntervalMs: 5,
   })
   await runtime.init()
 
@@ -791,7 +859,7 @@ async function setupSubmitRuntime(options: { observeTimeoutMs?: number } = {}) {
     makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskId }),
   )
   const filledTask = (fillRes.result as PublishFillFormResult).task
-  return { runtime, tasks, tabsMock, filler, taskId, filledTask, store, repository }
+  return { runtime, tasks, tabsMock, filler, reader, taskId, filledTask, store, repository }
 }
 
 /** 模拟发布成功后标签页离开发布页。 */
@@ -800,6 +868,25 @@ function navigateAway(tabsMock: MockTabsApi): () => void {
     for (const t of tabsMock.tabs) {
       t.url = 'https://www.goofish.com/sell/success'
     }
+  }
+}
+
+/**
+ * 构造“本次发布已在官方商品库落地”的点击钩子：
+ * 提交前基线的 `reader.items` 应为空（默认）；点击瞬间官方返回一个标题与
+ * 本次发布一致的新 itemId（可信确认），从而仅凭官方数据即可判 submitted。
+ */
+function makePublishLanding(
+  tabsMock: MockTabsApi,
+  reader: MockPublishedItemsReader,
+  filledTask: PublishTask,
+  newItemId = 'official_new_item_1',
+): () => void {
+  const title = filledTask.result?.item?.title ?? ''
+  reader.items = []
+  return () => {
+    navigateAway(tabsMock)()
+    reader.items = [{ itemId: newItemId, title }]
   }
 }
 
@@ -813,14 +900,15 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<vo
 }
 
 test('PublishRuntime: PUBLISH_SUBMIT 显式确认+一次性令牌提交成功', async () => {
-  const { runtime, tasks, tabsMock, filler, taskId, filledTask } = await setupSubmitRuntime()
+  const { runtime, tasks, tabsMock, filler, reader, taskId, filledTask } =
+    await setupSubmitRuntime()
 
   // 填表完成后下发一次性提交令牌，且填表路径绝不自动提交
   const token = filledTask.result?.submitToken
   assert.ok(token && token.length > 0)
   assert.equal(filler.submitCount, 0)
 
-  filler.onSubmitHook = navigateAway(tabsMock)
+  filler.onSubmitHook = makePublishLanding(tabsMock, reader, filledTask)
   const res = await runtime.handleCommand(
     makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
   )
@@ -828,8 +916,14 @@ test('PublishRuntime: PUBLISH_SUBMIT 显式确认+一次性令牌提交成功', 
   const result = res.result as PublishSubmitResult
   assert.equal(result.outcome, 'submitted')
   assert.equal(result.deterministic, true)
+  assert.equal(result.newItemId, 'official_new_item_1')
+  assert.equal(result.beforeCount, 0)
+  assert.equal(result.afterCount, 1)
   assert.equal(result.task.status, 'completed')
   assert.equal(result.task.result?.confirmationStatus, 'confirmed')
+  assert.equal(result.task.result?.submit?.publishedItemId, 'official_new_item_1')
+  assert.equal(result.task.result?.submit?.beforeCount, 0)
+  assert.equal(result.task.result?.submit?.afterCount, 1)
   assert.equal(filler.submitCount, 1)
 
   // 再次提交：任务已 completed，拒绝（绝不重复发布）
@@ -839,6 +933,326 @@ test('PublishRuntime: PUBLISH_SUBMIT 显式确认+一次性令牌提交成功', 
   assert.equal(dup.ok, false)
   assert.equal(dup.error?.businessCode, 'SUBMIT_NOT_ALLOWED')
   assert.equal((await tasks.getById(taskId))?.status, 'completed')
+})
+
+test('PublishRuntime: 仅 URL 离开发布页不足以判成功——官方商品库未增时判 unknown（红回归）', async () => {
+  const { runtime, tasks, tabsMock, filler, reader, taskId, filledTask } =
+    await setupSubmitRuntime({
+      observeTimeoutMs: 40,
+    })
+  const token = filledTask.result?.submitToken as string
+  // 页面确实离开发布页（旧实现会据此误判 submitted），但官方在售商品数并未增加。
+  reader.items = []
+  filler.onSubmitHook = navigateAway(tabsMock)
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  assert.equal(res.ok, true)
+  const result = res.result as PublishSubmitResult
+  assert.equal(result.outcome, 'unknown')
+  assert.notEqual(result.outcome, 'submitted')
+  assert.equal(result.deterministic, false)
+  assert.equal(result.newItemId, undefined)
+  assert.equal(filler.submitCount, 1)
+
+  // 任务保持锁定（绝不自动重试 / 二次点击）
+  const after = await tasks.getById(taskId)
+  const afterResult = after?.result as PublishTaskResult | undefined
+  assert.equal(after?.meta?.submitAttempted, true)
+  assert.equal(afterResult?.submit?.state, 'unknown')
+})
+
+test('PublishRuntime: 提交后误跳转登录页 / 首页 —— 官方商品库未增，绝不判成功', async () => {
+  for (const badUrl of [
+    'https://login.taobao.com/member/login.jhtml',
+    'https://www.goofish.com/',
+  ]) {
+    const { runtime, tabsMock, filler, reader, taskId, filledTask } = await setupSubmitRuntime({
+      observeTimeoutMs: 40,
+    })
+    const token = filledTask.result?.submitToken as string
+    reader.items = []
+    filler.onSubmitHook = () => {
+      for (const t of tabsMock.tabs) t.url = badUrl
+    }
+
+    const res = await runtime.handleCommand(
+      makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+    )
+    const result = res.result as PublishSubmitResult
+    assert.notEqual(result.outcome, 'submitted', `误跳转 ${badUrl} 绝不得判成功`)
+    assert.equal(result.outcome, 'unknown')
+  }
+})
+
+test('PublishRuntime: 官方平台校验失败未发布（停留在发布页且商品库未增）→ unknown', async () => {
+  const { runtime, filler, reader, taskId, filledTask } = await setupSubmitRuntime({
+    observeTimeoutMs: 40,
+  })
+  const token = filledTask.result?.submitToken as string
+  reader.items = []
+  // 不设置跳转钩子：页面停留在发布页（官方前端校验失败），官方商品库不变。
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  const result = res.result as PublishSubmitResult
+  assert.equal(result.outcome, 'unknown')
+  assert.notEqual(result.outcome, 'submitted')
+  assert.equal(filler.submitCount, 1)
+})
+
+test('PublishRuntime: 官方在售数量未增 → unknown（绝不靠本地 upsert +1 造验收）', async () => {
+  const { runtime, reader, taskId, filledTask } = await setupSubmitRuntime({
+    observeTimeoutMs: 40,
+  })
+  const token = filledTask.result?.submitToken as string
+  // 基线已有 2 件在售；提交后仍为同样 2 件（数量未增）
+  reader.items = [
+    { itemId: 'exist_1', title: '已有商品A' },
+    { itemId: 'exist_2', title: '已有商品B' },
+  ]
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  const result = res.result as PublishSubmitResult
+  assert.equal(result.outcome, 'unknown')
+  assert.equal(result.newItemId, undefined)
+})
+
+test('PublishRuntime: 官方商品库出现与本次标题一致的新 itemId → submitted（可信确认）', async () => {
+  const { runtime, tabsMock, filler, reader, taskId, filledTask } = await setupSubmitRuntime()
+  const token = filledTask.result?.submitToken as string
+  const title = filledTask.result?.item?.title ?? ''
+  reader.items = [{ itemId: 'base_1', title: '历史在售商品' }]
+  filler.onSubmitHook = () => {
+    navigateAway(tabsMock)()
+    reader.items = [
+      { itemId: 'base_1', title: '历史在售商品' },
+      { itemId: 'new_777', title },
+    ]
+  }
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  const result = res.result as PublishSubmitResult
+  assert.equal(result.outcome, 'submitted')
+  assert.equal(result.newItemId, 'new_777')
+  assert.equal(result.beforeCount, 1)
+  assert.equal(result.afterCount, 2)
+  assert.equal(result.task.result?.submit?.publishedItemId, 'new_777')
+})
+
+test('PublishRuntime: 官方在售数量 +2（非严格 +1）→ unknown（并发/它源新增不误判成功）', async () => {
+  const { runtime, tabsMock, filler, reader, taskId, filledTask } = await setupSubmitRuntime({
+    observeTimeoutMs: 40,
+  })
+  const token = filledTask.result?.submitToken as string
+  const title = filledTask.result?.item?.title ?? ''
+  reader.items = [{ itemId: 'base_1', title: '历史在售商品' }]
+  filler.onSubmitHook = () => {
+    navigateAway(tabsMock)()
+    reader.items = [
+      { itemId: 'base_1', title: '历史在售商品' },
+      { itemId: 'new_a', title },
+      { itemId: 'new_b', title: '另一个商品' },
+    ]
+  }
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  const result = res.result as PublishSubmitResult
+  assert.equal(result.outcome, 'unknown')
+  assert.equal(result.newItemId, undefined)
+  assert.equal(result.afterCount, undefined)
+})
+
+test('PublishRuntime: 官方出现新 itemId 但标题与本次不符 → 不可信确认（unknown，不用竞品/无关 id 充数）', async () => {
+  const { runtime, tabsMock, filler, reader, taskId, filledTask } = await setupSubmitRuntime({
+    observeTimeoutMs: 40,
+  })
+  const token = filledTask.result?.submitToken as string
+  reader.items = [{ itemId: 'base_1', title: '历史在售商品' }]
+  filler.onSubmitHook = () => {
+    navigateAway(tabsMock)()
+    reader.items = [
+      { itemId: 'base_1', title: '历史在售商品' },
+      { itemId: 'unrelated_9', title: '完全不同的其它商品' },
+    ]
+  }
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  const result = res.result as PublishSubmitResult
+  assert.notEqual(result.outcome, 'submitted')
+  assert.equal(result.outcome, 'unknown')
+  assert.equal(result.newItemId, undefined)
+})
+
+test('PublishRuntime: 缺少官方商品库读取能力 → 在派发点击前直接拒绝（绝不先发后 unknown）', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  await repository.upsertProducts([makeProduct('prod_noreader')], Date.now())
+  const tabsMock = new MockTabsApi()
+  const filler = new MockPublishFormFiller()
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    tabs: tabsMock,
+    formFiller: filler,
+    imageDownloader: new MockImageDownloader(),
+    submitObserveTimeoutMs: 40,
+    submitObserveIntervalMs: 5,
+    // 不接线 publishedItems：必须在派发点击前拒绝（绝不“先发后 unknown”）
+  })
+  await runtime.init()
+
+  const createRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_noreader' }),
+  )
+  const taskId = (createRes.result as PublishCreateResult).task.id
+  const fillRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskId }),
+  )
+  const token = (fillRes.result as PublishFillFormResult).task.result?.submitToken as string
+  filler.onSubmitHook = navigateAway(tabsMock)
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  assert.equal(res.ok, false)
+  assert.equal(res.error?.businessCode, 'SUBMIT_VERIFY_UNAVAILABLE')
+  assert.equal(filler.submitCount, 0) // 绝不派发点击
+  const after = await tasks.getById(taskId)
+  assert.equal(after?.status, 'waiting_confirmation')
+  assert.notEqual(after?.meta?.submitAttempted, true)
+})
+
+test('PublishRuntime: 官方商品库读取失败（无权限/未登录）→ 派发点击前拒绝，不点击', async () => {
+  const { runtime, tasks, tabsMock, filler, reader, taskId, filledTask } =
+    await setupSubmitRuntime()
+  const token = filledTask.result?.submitToken as string
+  reader.error = new Error('缺少官方商品库查询 token（未登录）')
+  filler.onSubmitHook = navigateAway(tabsMock)
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  assert.equal(res.ok, false)
+  assert.equal(res.error?.businessCode, 'SUBMIT_VERIFY_UNAVAILABLE')
+  assert.equal(filler.submitCount, 0)
+  const after = await tasks.getById(taskId)
+  assert.equal(after?.status, 'waiting_confirmation')
+  assert.notEqual(after?.meta?.submitAttempted, true)
+})
+
+test('PublishRuntime: 填充 summary 明确 postFeeFilled=false → FORM_VALIDATION_FAILED 且不进入 waiting_confirmation', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  await repository.upsertProducts([makeProduct('prod_postfee')], Date.now())
+  const filler = new MockPublishFormFiller()
+  filler.fillSummaryOverride = { postFeeFilled: false }
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    tabs: new MockTabsApi(),
+    formFiller: filler,
+    imageDownloader: new MockImageDownloader(),
+  })
+  await runtime.init()
+
+  const cRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_postfee' }),
+  )
+  const taskId = (cRes.result as PublishCreateResult).task.id
+  const fill = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskId }),
+  )
+  assert.equal(fill.ok, false)
+  assert.equal(fill.error?.businessCode, 'FORM_VALIDATION_FAILED')
+  const after = await tasks.getById(taskId)
+  assert.equal(after?.status, 'failed')
+  assert.equal((after?.result as PublishTaskResult | undefined)?.submitToken, undefined)
+})
+
+test('PublishRuntime: 填充 summary 明确 locationFilled=false → FORM_VALIDATION_FAILED 且不进入 waiting_confirmation', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  await repository.upsertProducts([makeProduct('prod_loc')], Date.now())
+  const filler = new MockPublishFormFiller()
+  filler.fillSummaryOverride = { locationFilled: false }
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    tabs: new MockTabsApi(),
+    formFiller: filler,
+    imageDownloader: new MockImageDownloader(),
+  })
+  await runtime.init()
+
+  const cRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_loc' }),
+  )
+  const taskId = (cRes.result as PublishCreateResult).task.id
+  const fill = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskId }),
+  )
+  assert.equal(fill.ok, false)
+  assert.equal(fill.error?.businessCode, 'FORM_VALIDATION_FAILED')
+  const after = await tasks.getById(taskId)
+  assert.equal(after?.status, 'failed')
+})
+
+test('PublishRuntime: 填充 summary 缺省 postFeeFilled/locationFilled（旧 mock undefined）保持兼容', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  await repository.upsertProducts([makeProduct('prod_compat')], Date.now())
+  const filler = new MockPublishFormFiller() // fillSummaryOverride 为空 → 两字段 undefined
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    tabs: new MockTabsApi(),
+    formFiller: filler,
+    imageDownloader: new MockImageDownloader(),
+  })
+  await runtime.init()
+
+  const cRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_compat' }),
+  )
+  const taskId = (cRes.result as PublishCreateResult).task.id
+  const fill = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskId }),
+  )
+  assert.equal(fill.ok, true)
+  assert.equal((fill.result as PublishFillFormResult).task.status, 'waiting_confirmation')
+})
+
+test('PublishRuntime: 提交时注入侧返回 FORM_VALIDATION_FAILED → 保留该码（未派发点击、可重试）', async () => {
+  const { runtime, tasks, filler, taskId, filledTask } = await setupSubmitRuntime()
+  const token = filledTask.result?.submitToken as string
+  filler.submitResult = { clicked: false, code: 'FORM_VALIDATION_FAILED', reason: '邮费为空' }
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  assert.equal(res.ok, false)
+  assert.equal(res.error?.businessCode, 'FORM_VALIDATION_FAILED')
+  // 未派发点击 → 不锁定、令牌保留、可修正后重试
+  const after = await tasks.getById(taskId)
+  const afterResult = after?.result as PublishTaskResult | undefined
+  assert.equal(after?.status, 'waiting_confirmation')
+  assert.notEqual(after?.meta?.submitAttempted, true)
+  assert.equal(afterResult?.submitToken, token)
 })
 
 test('PublishRuntime: PUBLISH_SUBMIT 缺 confirm 或令牌非法时拒绝且不点击', async () => {
@@ -888,7 +1302,8 @@ test('PublishRuntime: PUBLISH_SUBMIT 仅允许 waiting_confirmation 任务', asy
 })
 
 test('PublishRuntime: PUBLISH_SUBMIT 未找到按钮时确定性失败且不锁定（令牌仍可重试）', async () => {
-  const { runtime, tasks, tabsMock, filler, taskId, filledTask } = await setupSubmitRuntime()
+  const { runtime, tasks, tabsMock, filler, reader, taskId, filledTask } =
+    await setupSubmitRuntime()
   const token = filledTask.result?.submitToken as string
   filler.submitResult = { clicked: false, code: 'SUBMIT_BUTTON_NOT_FOUND', reason: '未找到发布按钮' }
 
@@ -907,7 +1322,7 @@ test('PublishRuntime: PUBLISH_SUBMIT 未找到按钮时确定性失败且不锁�
 
   // 修正后可用同一令牌重试成功
   filler.submitResult = { clicked: true, clickedAt: 1 }
-  filler.onSubmitHook = navigateAway(tabsMock)
+  filler.onSubmitHook = makePublishLanding(tabsMock, reader, filledTask)
   const ok = await runtime.handleCommand(
     makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
   )
@@ -1075,7 +1490,8 @@ test('PublishRuntime: 点击已派发但结果持久化前 SW 重启 → dispatc
 })
 
 test('PublishRuntime: waiting_confirmation 任务再次 PUBLISH_FILL_FORM 结构化拒绝，任务/令牌/状态不变且不 fail', async () => {
-  const { runtime, tasks, tabsMock, filler, taskId, filledTask } = await setupSubmitRuntime()
+  const { runtime, tasks, tabsMock, filler, reader, taskId, filledTask } =
+    await setupSubmitRuntime()
   const tokenBefore = filledTask.result?.submitToken
   assert.ok(tokenBefore && tokenBefore.length > 0)
   assert.equal(filler.fillCount, 1)
@@ -1097,7 +1513,7 @@ test('PublishRuntime: waiting_confirmation 任务再次 PUBLISH_FILL_FORM 结构
   assert.equal(filler.fillCount, 1)
 
   // 令牌未被破坏：仍可正常完成一次提交
-  filler.onSubmitHook = navigateAway(tabsMock)
+  filler.onSubmitHook = makePublishLanding(tabsMock, reader, filledTask)
   const submit = await runtime.handleCommand(
     makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: tokenBefore, confirm: true }),
   )
@@ -1174,6 +1590,9 @@ test('PublishRuntime: PUBLISH_RESUME 仅对 paused publish 任务安全恢复（
   assert.equal(resumed.status, 'waiting_confirmation')
   assert.ok(resumed.result?.submitToken)
   assert.equal(filler.fillCount, 1)
+  // paused retry 必须是 fresh tab（active:false），绝不复用旧页
+  assert.equal(tabsMock.createCalls.length, 1)
+  assert.equal(tabsMock.createCalls[0]?.active, false)
 
   // 对已 waiting_confirmation 的任务再发 PUBLISH_RESUME：结构化拒绝，绝不把状态改成 running
   const again = await runtime.handleCommand(
@@ -1182,4 +1601,304 @@ test('PublishRuntime: PUBLISH_RESUME 仅对 paused publish 任务安全恢复（
   assert.equal(again.ok, false)
   assert.equal(again.error?.code, 'INVALID_PAYLOAD')
   assert.equal((await tasks.getById(taskId))?.status, 'waiting_confirmation')
+})
+
+// ---------------------------------------------------------------------------
+// 干净发布页 + 可复用发布诊断时间线（安全、有界、脱敏）
+// ---------------------------------------------------------------------------
+
+test('PublishRuntime: 每个新 fill task 专属 fresh tab，绝不复用其它任务/页面', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  await repository.upsertProducts(
+    [makeProduct('prod_fresh_a'), makeProduct('prod_fresh_b')],
+    Date.now(),
+  )
+
+  const tabsMock = new MockTabsApi()
+  // 预置一个“别的任务 / 用户”的发布页 tab：绝不能复用它
+  tabsMock.tabs.push({
+    id: 7,
+    url: 'https://www.goofish.com/publish',
+    active: true,
+    status: 'complete',
+  })
+  const filler = new MockPublishFormFiller()
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    tabs: tabsMock,
+    formFiller: filler,
+    imageDownloader: new MockImageDownloader(),
+  })
+  await runtime.init()
+
+  const c1 = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_fresh_a' }),
+  )
+  const taskA = (c1.result as PublishCreateResult).task.id
+  const c2 = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_fresh_b' }),
+  )
+  const taskB = (c2.result as PublishCreateResult).task.id
+
+  const f1 = await runtime.handleCommand(makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskA }))
+  const f2 = await runtime.handleCommand(makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskB }))
+  const filledA = (f1.result as PublishFillFormResult).task
+  const filledB = (f2.result as PublishFillFormResult).task
+
+  // 1) 两次 fill 各新建 1 个 tab（共 2），均为 active:false，绝不复用预置 tab id=7
+  assert.equal(tabsMock.createCalls.length, 2)
+  assert.ok(tabsMock.createCalls.every((call) => call.active === false))
+  assert.ok(tabsMock.createCalls.every((call) => call.url.includes('goofish.com/publish')))
+  assert.notEqual(filledA.result?.tabId, filledB.result?.tabId)
+  assert.notEqual(filledA.result?.tabId, 7)
+  assert.notEqual(filledB.result?.tabId, 7)
+  // 2) 用户其它页面绝不被清理（预置 tab 仍在）
+  assert.ok(tabsMock.tabs.some((t) => t.id === 7))
+  // 3) 时间线各自记录 fresh_tab 阶段
+  assert.equal(filledA.meta?.diagnostics?.timeline[0]?.stage, 'fresh_tab')
+  assert.equal(filledB.meta?.diagnostics?.timeline[0]?.stage, 'fresh_tab')
+})
+
+test('PublishRuntime: fill 成功写入安全诊断时间线（阶段齐全、脱敏、PUBLISH_GET 可读）', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  await repository.upsertProducts([makeProduct('prod_diag_ok')], Date.now())
+
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    tabs: new MockTabsApi(),
+    formFiller: new MockPublishFormFiller(),
+    imageDownloader: new MockImageDownloader(),
+  })
+  await runtime.init()
+
+  const cRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_diag_ok' }),
+  )
+  const taskId = (cRes.result as PublishCreateResult).task.id
+  const fillRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskId }),
+  )
+  const task = (fillRes.result as PublishFillFormResult).task
+
+  const diag = task.meta?.diagnostics
+  assert.ok(diag, '时间线必须已持久化在 task.meta.diagnostics')
+  assert.equal(diag.schema, 1)
+  const stages = diag.timeline.map((e) => e.stage)
+  for (const stage of ['fresh_tab', 'load', 'page_check', 'fields', 'images', 'form_validation', 'result']) {
+    assert.ok(stages.includes(stage as (typeof stages)[number]), `缺少阶段 ${stage}`)
+  }
+  // 每个记录都必须是安全结构（状态合法、时间戳为数字）
+  for (const entry of diag.timeline) {
+    assert.ok(['started', 'ok', 'failed', 'unknown'].includes(entry.status))
+    assert.equal(typeof entry.startedAt, 'number')
+  }
+
+  // 脱敏：时间线绝不含标题 / 图片原始链接 / 提交令牌
+  const json = JSON.stringify(diag)
+  assert.ok(!json.includes('MacBook'), '时间线不得包含商品标题原文')
+  assert.ok(!json.includes('img.alicdn.com'), '时间线不得包含图片原始链接')
+  assert.ok(task.result?.submitToken, 'fill 成功应下发提交令牌')
+  assert.ok(!json.includes(task.result!.submitToken!), '时间线不得包含提交令牌')
+
+  // 无需新路由：PUBLISH_GET 直接返回 diag
+  const getRes = await runtime.handleCommand(makeCommand(CommandTypes.PUBLISH_GET, { id: taskId }))
+  assert.equal(getRes.ok, true)
+  const getResult = getRes.result as PublishGetResult
+  assert.ok(getResult.diag, 'PUBLISH_GET 应返回诊断时间线')
+  assert.equal(getResult.diag?.schema, 1)
+})
+
+test('PublishRuntime: fill 失败阶段保留在时间线且脱敏（images failed，绝不写图片原文）', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  await repository.upsertProducts([makeProduct('prod_diag_fail')], Date.now())
+
+  const failingFiller: PublishFormFiller = {
+    async checkPageStatus() {
+      return { isPublishPage: true, isLoggedIn: true, hasCaptcha: false }
+    },
+    async fill() {
+      return {
+        ok: false,
+        fillSummary: {
+          titleFilled: true,
+          mainImageUploaded: false,
+          detailImagesCount: 0,
+          descFilled: true,
+          priceFilled: true,
+          origPriceFilled: true,
+        },
+        errors: ['存在图片处理失败'],
+        imagesFailed: [{ index: 2, url: 'https://img.example.com/2.jpg', error: 'HTTP 404' }],
+      }
+    },
+  }
+
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    tabs: new MockTabsApi(),
+    formFiller: failingFiller,
+    imageDownloader: new MockImageDownloader(),
+  })
+  await runtime.init()
+
+  const cRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_diag_fail' }),
+  )
+  const taskId = (cRes.result as PublishCreateResult).task.id
+  const fillRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskId }),
+  )
+  assert.equal(fillRes.ok, false)
+
+  const finalTask = await tasks.getById(taskId)
+  assert.equal(finalTask?.status, 'failed')
+  const diag = finalTask?.meta?.diagnostics as
+    | { timeline: Array<{ stage: string; status: string; counters?: Record<string, number> }> }
+    | undefined
+  assert.ok(diag, '失败后时间线仍必须保留')
+  const imagesEntry = diag!.timeline.find((e) => e.stage === 'images')
+  assert.equal(imagesEntry?.status, 'failed')
+  assert.equal(imagesEntry?.counters?.failed, 1)
+  assert.equal(diag!.timeline.find((e) => e.stage === 'form_validation')?.status, 'failed')
+  assert.equal(diag!.timeline.find((e) => e.stage === 'result')?.status, 'failed')
+
+  const json = JSON.stringify(diag)
+  assert.ok(!json.includes('img.example.com'), '时间线不得包含图片原始链接')
+})
+
+test('PublishRuntime: submit 成功时间线记录 official_verify 严格 +1 与最终 result ok', async () => {
+  const { runtime, tasks, filler, reader, taskId, filledTask } = await setupSubmitRuntime()
+  const token = filledTask.result?.submitToken as string
+  const title = filledTask.result?.item?.title ?? ''
+  // 点击瞬间官方在售商品数严格 +1（新 itemId 且标题可信匹配）
+  filler.onSubmitHook = () => {
+    reader.items = [{ itemId: 'official_new_diag_1', title }]
+  }
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  assert.equal(res.ok, true)
+  assert.equal((res.result as PublishSubmitResult).outcome, 'submitted')
+
+  const completed = await tasks.getById(taskId)
+  assert.equal(completed?.status, 'completed')
+  const diag = completed?.meta?.diagnostics as
+    | {
+        timeline: Array<{
+          stage: string
+          status: string
+          counters?: Record<string, number>
+          flags?: Record<string, boolean>
+        }>
+      }
+    | undefined
+  assert.ok(diag, '提交成功后时间线必须可读')
+  const verify = diag!.timeline.find((e) => e.stage === 'official_verify')
+  assert.equal(verify?.status, 'ok')
+  assert.equal(verify?.counters?.before, 0)
+  assert.equal(verify?.counters?.after, 1)
+  assert.equal(verify?.flags?.strictPlusOne, true)
+  assert.equal(diag!.timeline.filter((e) => e.stage === 'result').length, 1)
+  assert.equal(diag!.timeline.find((e) => e.stage === 'result')?.status, 'ok')
+  assert.equal(diag!.timeline.find((e) => e.stage === 'submit_dispatch')?.status, 'ok')
+  assert.equal(diag!.timeline.find((e) => e.stage === 'baseline')?.status, 'ok')
+})
+
+test('PublishRuntime: submit 结果未知时锁定且时间线 result unknown，绝不第二 click/retry', async () => {
+  const { runtime, tasks, filler, taskId, filledTask } = await setupSubmitRuntime({
+    observeTimeoutMs: 40,
+  })
+  const token = filledTask.result?.submitToken as string
+  // 一次真实点击但不产生官方 +1（保持 reader 不变）
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  assert.equal(res.ok, true)
+  assert.equal((res.result as PublishSubmitResult).outcome, 'unknown')
+  assert.equal(filler.submitCount, 1)
+
+  const after = await tasks.getById(taskId)
+  assert.equal(after?.status, 'waiting_confirmation')
+  assert.equal(after?.meta?.submitAttempted, true)
+  const diag = after?.meta?.diagnostics as
+    | { timeline: Array<{ stage: string; status: string; counters?: Record<string, number> }> }
+    | undefined
+  assert.equal(diag?.timeline.find((e) => e.stage === 'official_verify')?.status, 'unknown')
+  assert.equal(diag?.timeline.find((e) => e.stage === 'result')?.status, 'unknown')
+
+  // 再次提交被拒绝且不产生第二次点击，且不把已锁定的 unknown 结论改写成 failed
+  const dup = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_SUBMIT, { id: taskId, submitToken: token, confirm: true }),
+  )
+  assert.equal(dup.ok, false)
+  assert.equal(filler.submitCount, 1)
+  const afterDup = await tasks.getById(taskId)
+  const diag2 = afterDup?.meta?.diagnostics as
+    | { timeline: Array<{ stage: string; status: string }> }
+    | undefined
+  assert.equal(diag2?.timeline.find((e) => e.stage === 'result')?.status, 'unknown')
+})
+
+test('PublishRuntime: 官方阻断只记录 officialBlock code，绝不写页面原文', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  await repository.upsertProducts([makeProduct('prod_block')], Date.now())
+
+  const rawPageText = '当前分类不支持网页端发布，请更换分类（这是页面 toast 原文）'
+  const filler = new MockPublishFormFiller()
+  filler.fillError = new PublishError('PUBLISH_CATEGORY_UNSUPPORTED', rawPageText, {
+    retryable: false,
+    details: {
+      source: 'toast',
+      officialBlock: {
+        code: 'PUBLISH_CATEGORY_UNSUPPORTED',
+        message: rawPageText,
+        source: 'toast',
+      },
+    },
+  })
+
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    tabs: new MockTabsApi(),
+    formFiller: filler,
+    imageDownloader: new MockImageDownloader(),
+  })
+  await runtime.init()
+
+  const cRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'prod_block' }),
+  )
+  const taskId = (cRes.result as PublishCreateResult).task.id
+  const fillRes = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_FILL_FORM, { id: taskId }),
+  )
+  assert.equal(fillRes.ok, false)
+  assert.equal(fillRes.error?.businessCode, 'PUBLISH_CATEGORY_UNSUPPORTED')
+
+  const after = await tasks.getById(taskId)
+  const diag = after?.meta?.diagnostics as
+    | { timeline: Array<{ stage: string; status: string; code?: string }> }
+    | undefined
+  const formValidation = diag?.timeline.find((e) => e.stage === 'form_validation')
+  assert.equal(formValidation?.status, 'failed')
+  assert.equal(formValidation?.code, 'PUBLISH_CATEGORY_UNSUPPORTED')
+
+  // 时间线只记录结构化 code，绝不包含页面 toast 原文
+  const json = JSON.stringify(diag)
+  assert.ok(!json.includes('页面 toast 原文'))
+  assert.ok(!json.includes('请更换分类'))
 })

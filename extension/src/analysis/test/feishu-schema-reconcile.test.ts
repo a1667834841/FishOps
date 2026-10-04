@@ -28,8 +28,10 @@ test('本地投影覆盖既有写入字段配置（名称与类型一致）', ()
 
 test('投影字段名唯一且与本地字段一一对应', () => {
   const names = LOCAL_PRODUCT_FEISHU_FIELD_PROJECTION.map((f) => f.name)
+  const projectionByName = new Map(LOCAL_PRODUCT_FEISHU_FIELD_PROJECTION.map((f) => [f.name, f.type]))
   assert.equal(new Set(names).size, names.length)
   assert.equal(LOCAL_PRODUCT_FEISHU_FIELD_PROJECTION.length, LOCAL_PRODUCT_DATASET_SCHEMA.fields.length)
+  assert.equal(projectionByName.get('商品描述'), 1)
 })
 
 test('数据集类型到飞书类型映射', () => {

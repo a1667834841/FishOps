@@ -37,6 +37,24 @@ export interface ParseContext {
   myUserId?: string
 }
 
+/**
+ * 归一用户 ID：去掉 `@goofish` 等会话后缀，仅保留 ID 本体（与 `splitCid` 同口径）。
+ *
+ * 平台在 `senderUserId` / `sender.uid` 等字段有时携带 `@goofish` 后缀，而当前用户 ID
+ * （`platform.currentUserId`）是纯 ID。两者直接比较会失配，导致本人消息被误判为 `in`
+ * （左侧）。本函数统一两侧形态，保证方向判定可靠。
+ *
+ * 非字符串 / 空串 / 仅后缀时返回空串；**不猜测、不编造**。
+ */
+export function normalizeUserId(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) return ''
+  const at = trimmed.indexOf('@')
+  const body = at >= 0 ? trimmed.slice(0, at) : trimmed
+  return body.trim()
+}
+
 // ==================== MessagePack 解码 ====================
 
 /**
@@ -292,10 +310,32 @@ function kindFromContentType(contentType: number, hasImage: boolean, hasContent:
   return hasContent ? 'text' : 'unknown'
 }
 
-/** 根据发送者与当前用户判断方向。 */
+/** 根据发送者与当前用户判断方向（两侧均归一后比较，容忍 @goofish 后缀）。 */
 export function directionFor(senderId: string, myUserId?: string): ChatDirection {
-  if (myUserId && senderId && senderId === myUserId) return 'out'
+  const sender = normalizeUserId(senderId)
+  const me = normalizeUserId(myUserId)
+  if (me && sender && sender === me) return 'out'
   return 'in'
+}
+
+/**
+ * 按当前用户 ID 纠正单条消息方向（仅 `in → out`，绝不降级）。
+ *
+ * - 仅当发送者明确匹配当前用户时升级为 `out`（不猜测）；
+ * - 已确认的 `out` 一律保留，避免破坏本地发送回显 / 平台回声；
+ * - history 来源的 `out` 消息回填 `receiverId` 为会话对方；实时来源保留原有接收者。
+ *
+ * 返回 `null` 表示无需变更（调用方可据此避免无效写入）。
+ */
+export function correctMessageDirection(message: ChatMessage, myUserId?: string): ChatMessage | null {
+  if (!myUserId) return null
+  if (message.direction === 'out') return null
+  if (directionFor(message.senderId, myUserId) !== 'out') return null
+  return {
+    ...message,
+    direction: 'out',
+    receiverId: message.source === 'history' ? message.sessionId : message.receiverId,
+  }
 }
 
 interface BuildMessageInput {
@@ -305,6 +345,7 @@ interface BuildMessageInput {
   sessionId?: string
   senderId?: string
   senderName?: string
+  senderAvatarUrl?: string
   receiverId?: string
   direction?: ChatDirection
   contentType?: number
@@ -326,7 +367,7 @@ function makeMessage(input: BuildMessageInput): ChatMessage {
   const content = input.content ?? ''
   const imageUrl = input.imageUrl && input.imageUrl.length > 0 ? input.imageUrl : undefined
   const contentType = typeof input.contentType === 'number' ? input.contentType : 0
-  const senderId = input.senderId ?? ''
+  const senderId = normalizeUserId(input.senderId)
   const messageId = input.messageId ?? ''
   return {
     id: buildMessageKey({ messageId, sessionId, senderId, createAt: input.createAt, content }),
@@ -335,7 +376,8 @@ function makeMessage(input: BuildMessageInput): ChatMessage {
     cid,
     senderId,
     senderName: input.senderName ?? '',
-    receiverId: input.receiverId ?? '',
+    senderAvatarUrl: input.senderAvatarUrl && input.senderAvatarUrl.length > 0 ? input.senderAvatarUrl : undefined,
+    receiverId: normalizeUserId(input.receiverId),
     direction: input.direction ?? directionFor(senderId, input.myUserId),
     kind: kindFromContentType(contentType, Boolean(imageUrl), content.length > 0),
     contentType,
@@ -347,6 +389,51 @@ function makeMessage(input: BuildMessageInput): ChatMessage {
     readStatus: input.readStatus,
     source: input.source,
   }
+}
+
+/**
+ * 头像字段候选键名。
+ *
+ * 真实平台头像字段是 `logo`：出现在 mtop `taobao.idlemessage.pc.user.query` 的
+ * `data.userInfo.logo`，以及 `taobao.idlemessage.pc.session.sync` 的
+ * `ownerInfo.logo` / `userInfo.logo`。调用方需把承载它的 `userInfo` / `ownerInfo`
+ * 对象作为来源传入。
+ *
+ * 故意**不包含** `picUrl`：它是商品封面（`picInfo.picUrl`，旧采集 / 发布链路使用），
+ * 混入候选会把商品图渲染成用户头像。
+ */
+const AVATAR_URL_KEYS = ['avatarUrl', 'avatar', 'logo', 'headUrl', 'headImg', 'portrait', 'iconUrl'] as const
+
+/** 校验并规范化 https 图片 URL；带账号密码、非 https 或非法地址一律返回 undefined。 */
+export function toSafeHttpsUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  if (!text) return undefined
+  let url: URL
+  try {
+    url = new URL(text)
+  } catch {
+    return undefined
+  }
+  if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return undefined
+  return url.href
+}
+
+/**
+ * 从若干原始对象中尽力提取头像 URL。
+ *
+ * 仅返回通过 https 白名单校验的地址，绝不用昵称等其它字段拼造；
+ * 所有候选来源都拿不到时返回 undefined，由界面回退字母头像。
+ */
+export function extractAvatarUrl(sources: readonly unknown[]): string | undefined {
+  for (const source of sources) {
+    if (!isRecord(source)) continue
+    for (const key of AVATAR_URL_KEYS) {
+      const url = toSafeHttpsUrl(source[key])
+      if (url) return url
+    }
+  }
+  return undefined
 }
 
 /** 从自定义内容 JSON 中提取图片 URL（兼容多种旧格式）。 */
@@ -438,8 +525,9 @@ function handleObjectData(data: Record<string, unknown>, ctx: ParseContext): { m
     cid: receiverRaw || String(chatInfo['reminderUrl'] ?? ''),
     // 会话 ID 优先取自 reminderUrl.sid（与页面会话列表一致），回退到接收人
     sessionId: extractUrlParam(reminderUrl, 'sid') ?? receiverSession,
-    senderId: typeof chatInfo['senderUserId'] === 'string' ? chatInfo['senderUserId'] : '',
+    senderId: normalizeUserId(chatInfo['senderUserId']),
     senderName: typeof chatInfo['reminderTitle'] === 'string' ? chatInfo['reminderTitle'] : '',
+    senderAvatarUrl: extractAvatarUrl([chatInfo]),
     receiverId: receiverSession,
     contentType: 101,
     content: typeof chatInfo['reminderContent'] === 'string' ? chatInfo['reminderContent'] : '',
@@ -503,9 +591,9 @@ function handleStringData(base64Data: string, ctx: ParseContext): { message?: Ch
 
   const reminderUrl = contentData['reminderUrl']
   const peerUserId = extractUrlParam(reminderUrl, 'peerUserId') ?? ''
-  const senderFromChat = typeof chatData['1'] === 'string' ? splitCid(chatData['1'] as string).sessionId : ''
+  const senderFromChat = normalizeUserId(chatData['1'])
   const senderId =
-    (typeof contentData['senderUserId'] === 'string' ? contentData['senderUserId'] : '') || senderFromChat || peerUserId
+    normalizeUserId(contentData['senderUserId']) || senderFromChat || normalizeUserId(peerUserId)
   const receiverRaw = typeof chatData['2'] === 'string' ? (chatData['2'] as string) : ''
 
   const message = makeMessage({
@@ -515,6 +603,7 @@ function handleStringData(base64Data: string, ctx: ParseContext): { message?: Ch
     sessionId: extractUrlParam(reminderUrl, 'sid') ?? splitCid(receiverRaw).sessionId,
     senderId,
     senderName: typeof contentData['reminderTitle'] === 'string' ? contentData['reminderTitle'] : '',
+    senderAvatarUrl: extractAvatarUrl([contentData]),
     receiverId: splitCid(receiverRaw).sessionId,
     contentType,
     content,
@@ -569,9 +658,10 @@ function parseRealtimeBody(body: Record<string, unknown>, ctx: ParseContext): Pa
     messageId: typeof body['messageId'] === 'string' ? body['messageId'] : '',
     cid: (extractUrlParam(reminderUrl, 'sid') ?? '') || (typeof extension['sessionId'] === 'string' ? extension['sessionId'] : ''),
     sessionId: extractUrlParam(reminderUrl, 'sid') ?? undefined,
-    senderId: typeof extension['senderUserId'] === 'string' ? extension['senderUserId'] : '',
+    senderId: normalizeUserId(extension['senderUserId']),
     senderName: typeof extension['reminderTitle'] === 'string' ? extension['reminderTitle'] : '',
-    receiverId: extractUrlParam(reminderUrl, 'peerUserId') ?? ctx.myUserId ?? '',
+    senderAvatarUrl: extractAvatarUrl([extension]),
+    receiverId: normalizeUserId(extractUrlParam(reminderUrl, 'peerUserId') ?? ctx.myUserId),
     contentType: decoded.contentType,
     content: content_,
     imageUrl: decoded.imageUrl,
@@ -673,13 +763,10 @@ export function parseHistoryMessageModel(model: unknown, ctx: ParseContext = {})
   const { sessionId } = splitCid(cidRaw)
   const extension = isRecord(msg['extension']) ? (msg['extension'] as Record<string, unknown>) : {}
 
-  // 发送者
-  let senderId = ''
-  if (typeof extension['senderUserId'] === 'string') {
-    senderId = extension['senderUserId']
-  } else if (isRecord(msg['sender']) && typeof msg['sender']['uid'] === 'string') {
-    senderId = splitCid(msg['sender']['uid'] as string).sessionId
-  }
+  // 发送者：`senderUserId` / `sender.uid` 可能带 `@goofish` 后缀，统一归一为本体。
+  const sender = isRecord(msg['sender']) ? (msg['sender'] as Record<string, unknown>) : {}
+  let senderId = normalizeUserId(extension['senderUserId'])
+  if (!senderId) senderId = normalizeUserId(sender['uid'])
   const senderName = typeof extension['reminderTitle'] === 'string' ? extension['reminderTitle'] : '未知用户'
 
   // 内容
@@ -707,13 +794,14 @@ export function parseHistoryMessageModel(model: unknown, ctx: ParseContext = {})
   if (!content && !imageUrl) return null
 
   const direction = directionFor(senderId, ctx.myUserId)
-  const receiverId = direction === 'out' ? sessionId : ctx.myUserId ?? ''
+  const receiverId = direction === 'out' ? sessionId : normalizeUserId(ctx.myUserId)
 
   return makeMessage({
     messageId: typeof msg['messageId'] === 'string' ? msg['messageId'] : '',
     cid: cidRaw,
     senderId,
     senderName,
+    senderAvatarUrl: extractAvatarUrl([extension, sender]),
     receiverId,
     direction,
     contentType,

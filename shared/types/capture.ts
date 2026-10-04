@@ -5,6 +5,15 @@
  * 与旧 `FishOps`（main 分支）`background.js` 的 `filterConfig` / `statistics` 语义对齐。
  */
 
+/**
+ * 采集搜索请求默认基础间隔（毫秒）。
+ * 搜索不再强制固定 1500ms，而是「基础间隔 + 随机增量」，见 {@link CapturePayload.minIntervalMs}。
+ */
+export const DEFAULT_CAPTURE_INTERVAL_MS = 500
+
+/** 采集搜索请求默认随机增量上限（毫秒），见 {@link CapturePayload.intervalJitterMs}。 */
+export const DEFAULT_CAPTURE_JITTER_MS = 500
+
 /** 采集过滤条件（与旧 `filterConfig` 一致，值为 0 / false 表示不限制）。 */
 export interface CaptureFilter {
   /** 最小想要人数。 */
@@ -27,8 +36,16 @@ export interface CapturePayload {
   pages?: number
   /** 每页数量，默认由平台层决定（30）。 */
   rowsPerPage?: number
-  /** 期望最小请求间隔（毫秒）；实际会被强制不低于 1500。 */
+  /**
+   * 搜索请求基础间隔（毫秒）。实际等待 = 基础间隔 + `intervalJitterMs` 内的均匀随机增量；
+   * 首页立即不等待。缺省 {@link DEFAULT_CAPTURE_INTERVAL_MS}（500ms）。须为非负有限数。
+   */
   minIntervalMs?: number
+  /**
+   * 搜索请求随机增量上限（毫秒）：每次等待额外叠加 `[0, intervalJitterMs]` 的均匀随机量，
+   * 避免固定节奏被风控识别。缺省 {@link DEFAULT_CAPTURE_JITTER_MS}（500ms）。须为非负有限数。
+   */
+  intervalJitterMs?: number
   /** 过滤条件。 */
   filter?: CaptureFilter
   /** 是否顺带采集详情（浏览量 / 想要数 / 卖家），默认 false。 */
@@ -47,6 +64,12 @@ export interface CaptureStats {
   duplicates: number
   /** 失败次数（页面请求失败 + 详情请求失败）。 */
   failed: number
+  /** 页面请求失败次数（`failed` 子集，跨轮次累加）。 */
+  pageFailed?: number
+  /** 详情请求失败次数（`failed` 的子集，单独计数便于排查详情问题；跨轮次累加）。 */
+  detailFailed?: number
+  /** 成功入库（有效去重）的商品数量。 */
+  stored?: number
   /**
    * 归属未确认条数。
    *
@@ -73,20 +96,50 @@ export interface CaptureCheckpoint {
   pagesCompleted: number
   /** 累计统计。 */
   stats: CaptureStats
+  /**
+   * 已成功入库的商品 itemId 列表（跨轮次持久化）。
+   * 恢复续采时据此重建去重集合，避免已入库条目被重复计入 `stored`。
+   * 旧存量断点可能缺失，按空集合兼容。
+   */
+  storedIds?: string[]
+  /** 当次采集快照引用；完整商品内容存于 IndexedDB，避免任务事件与 session 存储膨胀。 */
+  capturedRecords?: Array<{ itemId: string; snapshotId: string }>
+}
+
+/** 采集商品同步到飞书的结果；已存在的组合键跳过写入。 */
+export interface CaptureFeishuSyncResult {
+  createdCount: number
+  skippedCount: number
 }
 
 /** 采集任务完成的输出。 */
 export interface CaptureResult extends CaptureStats {
+  /** 同步成功后才上报，旧任务可能没有此字段。 */
+  feishuSync?: CaptureFeishuSyncResult
   keyword: string
   /** 已完成页数。 */
   pagesCompleted: number
   /** 下一个待采集页（正常完成时为 endPage + 1）。 */
   nextPage: number
+  /** 本轮实际开始时间戳（毫秒，即任务首次进入 running 的时间）。 */
+  startedAt?: number
+  /** 本轮结束时间戳（毫秒），供前端展示耗时。 */
+  endedAt?: number
 }
 
 /** 空统计。 */
 export function emptyCaptureStats(): CaptureStats {
-  return { fetched: 0, valid: 0, filtered: 0, duplicates: 0, failed: 0, ownershipUnconfirmed: 0 }
+  return {
+    fetched: 0,
+    valid: 0,
+    filtered: 0,
+    duplicates: 0,
+    failed: 0,
+    pageFailed: 0,
+    detailFailed: 0,
+    stored: 0,
+    ownershipUnconfirmed: 0,
+  }
 }
 
 // ---------------- 任务中心历史列表（TASK_LIST） ----------------

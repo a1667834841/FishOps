@@ -1,0 +1,4062 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FishOps Workbench - Harvest 风格设计稿</title>
+  <style>
+    /* 基础重置 */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* 变量设计：Harvest 风格（默认温暖浅色，支持深色切换） */
+    :root[data-theme="light"] {
+      /* 暖奶油画布与纯白浮动卡片 */
+      --bg-canvas: #FFF8F1;
+      --bg-surface: #FFFFFF;
+      --bg-subtle: #FBF4EC;
+      --bg-muted: #F2E8DC;
+      --bg-hover: #F8EEE2;
+
+      /* 弱化边框，强化柔和暖阴影 */
+      --border-subtle: rgba(180, 130, 90, 0.12);
+      --border-strong: rgba(180, 130, 90, 0.22);
+      --border-focus: #D97706;
+
+      /* 暖中性文字色彩 */
+      --text-primary: #292524;
+      --text-secondary: #57534E;
+      --text-muted: #A8A29E;
+      --text-tertiary: #78716C;
+
+      /* FishOps 经典琥珀金主强调色 */
+      --brand-primary: #D97706;
+      --brand-hover: #B45309;
+      --brand-active: #92400E;
+      --brand-subtle: #FEF3C7;
+      --brand-light: #FFFDF9;
+      --brand-border: rgba(217, 119, 6, 0.24);
+      --brand-text: #92400E;
+
+      /* 状态色（红与绿仅用于表达状态） */
+      --status-success: #15803D;
+      --status-success-bg: #E8F7EC;
+      --status-success-border: #A7F3D0;
+      --status-danger: #B91C1C;
+      --status-danger-bg: #FEEBEB;
+      --status-danger-border: #FECACA;
+      --status-warning: #D97706;
+      --status-warning-bg: #FEF3C7;
+
+      /* 柔和暖色阴影 */
+      --shadow-sm: 0 2px 6px -1px rgba(120, 80, 40, 0.04), 0 1px 3px rgba(120, 80, 40, 0.02);
+      --shadow-card: 0 8px 24px -4px rgba(120, 80, 40, 0.06), 0 2px 8px -2px rgba(120, 80, 40, 0.03);
+      --shadow-card-hover: 0 14px 32px -4px rgba(120, 80, 40, 0.09), 0 4px 12px -2px rgba(120, 80, 40, 0.04);
+      --shadow-pop: 0 24px 48px -8px rgba(80, 50, 20, 0.12), 0 8px 18px -4px rgba(80, 50, 20, 0.06);
+
+      /* 图表颜色系统 */
+      --chart-grid: rgba(180, 130, 90, 0.10);
+      --chart-axis: #A8A29E;
+      --chart-line: #D97706;
+      --chart-area-top: rgba(217, 119, 6, 0.18);
+      --chart-area-bottom: rgba(217, 119, 6, 0.01);
+      --chart-bar-bg: #F2E8DC;
+      --chart-bar-active: #D97706;
+    }
+
+    :root[data-theme="dark"] {
+      /* 暖夜深色背景与浮层 */
+      --bg-canvas: #171513;
+      --bg-surface: #221E1B;
+      --bg-subtle: #2C2723;
+      --bg-muted: #38322C;
+      --bg-hover: #342E28;
+
+      --border-subtle: rgba(255, 235, 215, 0.08);
+      --border-strong: rgba(255, 235, 215, 0.16);
+      --border-focus: #F59E0B;
+
+      --text-primary: #FAF5EE;
+      --text-secondary: #D4CBBD;
+      --text-muted: #968D80;
+      --text-tertiary: #B4AA9B;
+
+      --brand-primary: #F59E0B;
+      --brand-hover: #FBBF24;
+      --brand-active: #D97706;
+      --brand-subtle: rgba(245, 158, 11, 0.16);
+      --brand-light: #2A241C;
+      --brand-border: rgba(245, 158, 11, 0.28);
+      --brand-text: #FDE68A;
+
+      --status-success: #22C55E;
+      --status-success-bg: rgba(34, 197, 94, 0.16);
+      --status-success-border: rgba(34, 197, 94, 0.35);
+      --status-danger: #EF4444;
+      --status-danger-bg: rgba(239, 68, 68, 0.16);
+      --status-danger-border: rgba(239, 68, 68, 0.35);
+      --status-warning: #F59E0B;
+      --status-warning-bg: rgba(245, 158, 11, 0.16);
+
+      --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.35);
+      --shadow-card: 0 8px 24px -4px rgba(0, 0, 0, 0.5);
+      --shadow-card-hover: 0 14px 32px -4px rgba(0, 0, 0, 0.6);
+      --shadow-pop: 0 24px 48px -8px rgba(0, 0, 0, 0.75);
+
+      --chart-grid: rgba(255, 235, 215, 0.07);
+      --chart-axis: #756D60;
+      --chart-line: #F59E0B;
+      --chart-area-top: rgba(245, 158, 11, 0.24);
+      --chart-area-bottom: rgba(245, 158, 11, 0.02);
+      --chart-bar-bg: #2C2723;
+      --chart-bar-active: #F59E0B;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      background-color: var(--bg-canvas);
+      min-height: 100vh;
+      display: flex;
+      font-variant-numeric: tabular-nums;
+      -webkit-font-smoothing: antialiased;
+      transition: background-color 0.25s ease, color 0.25s ease;
+    }
+
+    /* 整体布局 */
+    .app-shell {
+      display: flex;
+      width: 100%;
+      min-height: 100vh;
+    }
+
+    /* 左侧导航栏：轻盈透气，微边框与浮起感 */
+    .sidebar {
+      width: 236px;
+      min-width: 236px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      user-select: none;
+      z-index: 20;
+      padding: 16px 12px;
+    }
+
+    .brand-header {
+      padding: 10px 12px 18px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 700;
+      box-shadow: 0 4px 10px rgba(217, 119, 6, 0.28);
+    }
+
+    .brand-title {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brand-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.3px;
+      line-height: 1.2;
+    }
+
+    .brand-tag {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 1px;
+    }
+
+    .nav-group {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      overflow-y: auto;
+      margin-top: 6px;
+    }
+
+    .nav-label {
+      padding: 10px 12px 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 14px;
+      border-radius: 14px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+      outline: none;
+      border: 1px solid transparent;
+    }
+
+    .nav-item:hover {
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+    }
+
+    .nav-item:focus-visible {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 2px var(--brand-subtle);
+    }
+
+    .nav-item.active {
+      background: var(--brand-subtle);
+      color: var(--brand-text);
+      font-weight: 600;
+    }
+
+    .nav-icon {
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: inherit;
+      opacity: 0.85;
+    }
+
+    .nav-item.active .nav-icon {
+      color: var(--brand-primary);
+      opacity: 1;
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: var(--bg-muted);
+      color: var(--text-secondary);
+    }
+
+    .nav-badge.danger {
+      background: var(--status-danger-bg);
+      color: var(--status-danger);
+    }
+
+    .nav-badge.warning {
+      background: var(--status-warning-bg);
+      color: var(--status-warning);
+    }
+
+    .sidebar-footer {
+      padding: 14px 12px 6px;
+      border-top: 1px solid var(--border-subtle);
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .runtime-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11.5px;
+      color: var(--text-secondary);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--status-success);
+      display: inline-block;
+      position: relative;
+    }
+
+    .status-dot::after {
+      content: "";
+      position: absolute;
+      top: -2px;
+      left: -2px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      border: 1px solid var(--status-success);
+      opacity: 0.55;
+      animation: warmPulse 2.6s infinite ease-out;
+    }
+
+    @keyframes warmPulse {
+      0% { transform: scale(0.8); opacity: 0.8; }
+      70% { transform: scale(1.6); opacity: 0; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+
+    /* 主工作台区域：宽裕呼吸空间 */
+    .main-workspace {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow-y: auto;
+    }
+
+    /* 顶部导航控制条：无沉重线条，柔和通透 */
+    .topbar {
+      height: 64px;
+      background: var(--bg-canvas);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .page-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: var(--text-primary);
+    }
+
+    .connection-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 12px;
+      border-radius: 16px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* 按钮与输入控件：16px 圆角规范，柔和精致 */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 8px 16px;
+      border-radius: 16px;
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      outline: none;
+      transition: all 0.18s ease;
+      white-space: nowrap;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .btn:hover {
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
+    }
+
+    .btn:focus-visible {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 3px var(--brand-subtle);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn-primary {
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      border-color: var(--brand-primary);
+      font-weight: 600;
+      box-shadow: 0 3px 10px rgba(217, 119, 6, 0.22);
+    }
+
+    .btn-primary:hover {
+      background: var(--brand-hover);
+      border-color: var(--brand-hover);
+      color: #FFFFFF;
+      box-shadow: 0 5px 14px rgba(217, 119, 6, 0.28);
+    }
+
+    .btn-primary:active {
+      background: var(--brand-active);
+    }
+
+    .btn-icon {
+      padding: 8px 12px;
+    }
+
+    .select-control {
+      appearance: none;
+      -webkit-appearance: none;
+      padding: 8px 32px 8px 14px;
+      border-radius: 16px;
+      font-size: 12.5px;
+      border: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      color: var(--text-primary);
+      outline: none;
+      cursor: pointer;
+      background-image: url("data:image/svg+xml;utf8,<svg fill='%2378716C' height='12' viewBox='0 0 24 24' width='12' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      box-shadow: var(--shadow-sm);
+      transition: all 0.18s ease;
+    }
+
+    .select-control:hover {
+      border-color: var(--border-strong);
+    }
+
+    .select-control:focus-visible {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 3px var(--brand-subtle);
+    }
+
+    /* 视图内容容器：留白充裕、舒适的 24-32px 呼吸空间 */
+    .view-content {
+      padding: 10px 32px 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .view-panel {
+      display: none;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .view-panel.active {
+      display: flex;
+    }
+
+    /* Harvest 风格核心卡片：纯白浮动、18px 圆角、温润暖调阴影、轻弱边框 */
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+      transition: box-shadow 0.22s ease, transform 0.22s ease;
+    }
+
+    .card:hover {
+      box-shadow: var(--shadow-card-hover);
+    }
+
+    .card-header {
+      padding: 20px 24px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .card-title {
+      font-size: 14.5px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: normal;
+      margin-left: 4px;
+    }
+
+    .card-body {
+      padding: 0 24px 22px;
+    }
+
+    /* 核心指标 4 宫格 */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+    }
+
+    .stat-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: var(--shadow-card);
+      transition: all 0.2s ease;
+    }
+
+    .stat-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-card-hover);
+    }
+
+    .stat-label-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .stat-label {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .stat-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+
+    .stat-badge.amber {
+      background: var(--brand-subtle);
+      color: var(--brand-text);
+    }
+
+    .stat-badge.red {
+      background: var(--status-danger-bg);
+      color: var(--status-danger);
+    }
+
+    .stat-badge.green {
+      background: var(--status-success-bg);
+      color: var(--status-success);
+    }
+
+    .stat-val-wrap {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-top: 2px;
+    }
+
+    .stat-val {
+      font-size: 27px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.6px;
+      line-height: 1;
+    }
+
+    .stat-trend {
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+
+    .stat-trend.up {
+      color: var(--status-success);
+    }
+
+    .stat-trend.warn {
+      color: var(--status-danger);
+    }
+
+    .stat-foot {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 10px;
+      display: flex;
+      justify-content: space-between;
+      margin-top: 2px;
+    }
+
+    /* 左右分栏布局 */
+    .dashboard-split {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+    }
+
+    /* 趋势图表区 */
+    .chart-container {
+      width: 100%;
+      height: 220px;
+      position: relative;
+    }
+
+    .chart-svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    .chart-legend {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-indicator {
+      width: 12px;
+      height: 3px;
+      border-radius: 2px;
+      display: inline-block;
+    }
+
+    /* 运行环境状态（复用 health-list 布局） */
+    .health-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding-top: 4px;
+    }
+
+    .health-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .health-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .health-row-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .health-name {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .health-score {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background: var(--bg-muted);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      background: var(--brand-primary);
+      transition: width 0.3s ease;
+    }
+
+    .progress-bar-fill.success {
+      background: var(--status-success);
+    }
+
+    .progress-bar-fill.warning {
+      background: var(--status-warning);
+    }
+
+    .health-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+
+    /* Harvest 风格数据表格：轻量表头、高雅舒适行高、低沉重感 */
+    .data-table-container {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 12.5px;
+    }
+
+    .data-table th {
+      background: transparent;
+      color: var(--text-muted);
+      font-weight: 600;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      white-space: nowrap;
+      user-select: none;
+      font-size: 12px;
+      letter-spacing: 0.3px;
+    }
+
+    .data-table th.sortable {
+      cursor: pointer;
+      transition: color 0.15s;
+    }
+
+    .data-table th.sortable:hover {
+      color: var(--text-primary);
+    }
+
+    /* 默认密度行高约 72px */
+    .data-table td {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      vertical-align: middle;
+      transition: padding 0.18s ease, background-color 0.15s ease;
+    }
+
+    .data-table tr:hover td {
+      background-color: var(--bg-subtle);
+    }
+
+    /* 紧凑密度行高约 56px */
+    .data-table.density-compact td {
+      padding: 11px 20px;
+      font-size: 12px;
+    }
+    .data-table.density-compact th {
+      padding: 10px 20px;
+      font-size: 11.5px;
+    }
+    .data-table.density-compact .prod-thumb {
+      width: 38px;
+      height: 38px;
+      min-width: 38px;
+      border-radius: 10px;
+    }
+
+    /* 状态徽章 */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .badge-success {
+      background: var(--status-success-bg);
+      color: var(--status-success);
+    }
+
+    .badge-danger {
+      background: var(--status-danger-bg);
+      color: var(--status-danger);
+    }
+
+    .badge-warning {
+      background: var(--status-warning-bg);
+      color: var(--status-warning);
+    }
+
+    .badge-neutral {
+      background: var(--bg-muted);
+      color: var(--text-secondary);
+    }
+
+    .badge-amber {
+      background: var(--brand-subtle);
+      color: var(--brand-text);
+      border: 1px solid var(--brand-border);
+    }
+
+    .action-link {
+      color: var(--brand-primary);
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 10px;
+      transition: all 0.15s ease;
+      display: inline-block;
+    }
+
+    .action-link:hover {
+      background: var(--brand-subtle);
+      color: var(--brand-hover);
+    }
+
+    /* 商品库工具栏 */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-wrap: wrap;
+    }
+
+    .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .search-input-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-input {
+      padding: 8px 16px 8px 36px;
+      border-radius: 16px;
+      font-size: 12.5px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      width: 240px;
+      outline: none;
+      box-shadow: var(--shadow-sm);
+      transition: all 0.18s ease;
+    }
+
+    .search-input:focus {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 3px var(--brand-subtle);
+      width: 280px;
+    }
+
+    .search-icon-symbol {
+      position: absolute;
+      left: 12px;
+      color: var(--text-muted);
+      width: 14px;
+      height: 14px;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 密度切换胶囊 */
+    .density-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      background: var(--bg-subtle);
+      padding: 3px;
+    }
+
+    .density-btn {
+      padding: 4px 12px;
+      font-size: 11.5px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      border-radius: 14px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+
+    .density-btn.active {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-weight: 600;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* 商品元数据与 48px 缩略图 */
+    .prod-cell {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .prod-thumb {
+      width: 48px;
+      height: 48px;
+      min-width: 48px;
+      border-radius: 14px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      transition: all 0.18s ease;
+    }
+
+    .prod-thumb-svg {
+      width: 60%;
+      height: 60%;
+      opacity: 0.85;
+    }
+
+    .prod-title-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      max-width: 320px;
+    }
+
+    .prod-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      text-decoration: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      transition: color 0.15s;
+    }
+
+    .prod-title:hover {
+      color: var(--brand-primary);
+    }
+
+    .prod-sku {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: inherit;
+    }
+
+    .prod-price {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--brand-primary);
+    }
+
+    /* 分页控件 */
+    .pagination-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-top: 1px solid var(--border-subtle);
+      font-size: 12.5px;
+      color: var(--text-secondary);
+    }
+
+    .pagination-pages {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .page-btn {
+      min-width: 32px;
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+
+    .page-btn:hover:not(:disabled) {
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+    }
+
+    .page-btn.active {
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      border-color: var(--brand-primary);
+      font-weight: 700;
+    }
+
+    .page-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* 数据分析页：Harvest Editorial 风格 */
+    .analytics-summary-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--brand-border);
+      border-radius: 18px;
+      padding: 24px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      box-shadow: var(--shadow-card);
+      position: relative;
+    }
+
+    .analytics-summary-box::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 28px;
+      right: 28px;
+      height: 3px;
+      background: linear-gradient(90deg, var(--brand-primary), rgba(217, 119, 6, 0.1));
+      border-radius: 3px 3px 0 0;
+    }
+
+    .summary-text-block {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .summary-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--brand-text);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .summary-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.4;
+    }
+
+    .summary-desc {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      max-width: 780px;
+      line-height: 1.6;
+    }
+
+    /* 直方图容器 */
+    .hist-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-top: 14px;
+    }
+
+    .hist-bars {
+      display: flex;
+      align-items: flex-end;
+      height: 180px;
+      gap: 18px;
+      padding-bottom: 28px;
+      border-bottom: 1px solid var(--border-subtle);
+      position: relative;
+    }
+
+    .hist-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+      justify-content: flex-end;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .hist-col:hover .hist-bar {
+      filter: brightness(1.12);
+      background: var(--brand-hover);
+    }
+
+    .hist-col:hover .hist-tooltip {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(-4px);
+    }
+
+    .hist-bar {
+      width: 100%;
+      max-width: 44px;
+      border-radius: 8px 8px 3px 3px;
+      background: var(--brand-primary);
+      transition: height 0.3s ease, background 0.15s ease;
+      position: relative;
+    }
+
+    .hist-bar.dimmed {
+      background: var(--chart-bar-bg);
+    }
+
+    .hist-col-label {
+      position: absolute;
+      bottom: -24px;
+      font-size: 11.5px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .hist-tooltip {
+      position: absolute;
+      top: -34px;
+      background: var(--text-primary);
+      color: var(--bg-surface);
+      font-size: 11px;
+      padding: 4px 9px;
+      border-radius: 8px;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.15s ease;
+      font-weight: 600;
+      z-index: 5;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* 定价策略区间三栏网格 */
+    .pricing-tier-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+    }
+
+    .pricing-card {
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      padding: 20px 22px;
+      background: var(--bg-surface);
+      box-shadow: var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: all 0.2s ease;
+    }
+
+    .pricing-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-card-hover);
+    }
+
+    .pricing-card.featured {
+      background: var(--bg-surface);
+      border-color: var(--brand-border);
+      box-shadow: 0 10px 28px -4px rgba(217, 119, 6, 0.12), 0 2px 8px -2px rgba(217, 119, 6, 0.04);
+      position: relative;
+    }
+
+    .pricing-tier-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .pricing-range {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--brand-primary);
+      letter-spacing: -0.4px;
+    }
+
+    .pricing-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* 商机/风险双栏洞察 */
+    .insight-two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .insight-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      margin-bottom: 10px;
+    }
+
+    .insight-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .insight-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-top: 5px;
+      flex-shrink: 0;
+    }
+
+    .insight-dot.green {
+      background: var(--status-success);
+    }
+
+    .insight-dot.red {
+      background: var(--status-danger);
+    }
+
+    .insight-content {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .insight-headline {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .insight-body {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* 占位页面 */
+    .placeholder-wrap {
+      padding: 72px 24px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: var(--bg-surface);
+      border: 1px dashed var(--border-strong);
+      border-radius: 20px;
+      box-shadow: var(--shadow-card);
+      margin: 10px 0;
+    }
+
+    .placeholder-badge {
+      display: inline-block;
+      padding: 4px 14px;
+      border-radius: 16px;
+      background: var(--brand-subtle);
+      color: var(--brand-text);
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .placeholder-title {
+      font-size: 19px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .placeholder-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      max-width: 520px;
+      line-height: 1.6;
+    }
+
+    /* 原生模态对话框 */
+    dialog.analysis-modal {
+      border: 1px solid var(--border-subtle);
+      border-radius: 20px;
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      width: 680px;
+      max-width: calc(100vw - 48px);
+      padding: 0;
+      margin: auto;
+      box-shadow: var(--shadow-pop);
+      outline: none;
+    }
+
+    dialog::backdrop {
+      background: rgba(30, 20, 10, 0.4);
+      backdrop-filter: blur(4px);
+    }
+
+    .modal-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .modal-title {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      padding: 6px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .modal-close-btn:hover {
+      color: var(--text-primary);
+      background: var(--bg-subtle);
+    }
+
+    .modal-body {
+      padding: 24px;
+      max-height: 70vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .modal-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      background: var(--bg-subtle);
+      border-radius: 0 0 20px 20px;
+    }
+
+    /* 自定义复选框 */
+    input[type="checkbox"] {
+      accent-color: var(--brand-primary);
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    /* 响应式断点 */
+    @media (max-width: 1120px) {
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .dashboard-split {
+        grid-template-columns: 1fr;
+      }
+      .pricing-tier-grid {
+        grid-template-columns: 1fr;
+      }
+      .insight-two-col {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        width: 68px;
+        min-width: 68px;
+        padding: 12px 6px;
+      }
+      .brand-title, .nav-item span:not(.nav-icon), .nav-badge, .nav-label, .sidebar-footer {
+        display: none;
+      }
+      .nav-item {
+        justify-content: center;
+        padding: 10px;
+      }
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+      .topbar {
+        padding: 0 16px;
+      }
+      .view-content {
+        padding: 10px 16px 32px;
+      }
+      .search-input {
+        width: 160px;
+      }
+      .search-input:focus {
+        width: 200px;
+      }
+    }
+    /* ============================================================
+       设计稿新增组件（采集任务 / 聊天中心 / 发布中心 / 设置 / 商品库改造）
+       说明：全部复用 Harvest 暖色令牌，未引入新色系，主强调色仍为 FishOps 琥珀金。
+       ============================================================ */
+
+    /* 设计稿 / 示例数据 提示条 */
+    .demo-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 16px;
+      border-radius: 14px;
+      background: var(--brand-subtle);
+      border: 1px dashed var(--brand-border);
+      color: var(--brand-text);
+      font-size: 12.5px;
+      font-weight: 500;
+      line-height: 1.55;
+    }
+
+    .demo-tag {
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+      padding: 2px 9px;
+      border-radius: 10px;
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+    }
+
+    .demo-inline {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      border-radius: 8px;
+      background: var(--brand-subtle);
+      border: 1px solid var(--brand-border);
+      color: var(--brand-text);
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+
+    /* 表单控件 */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px 18px;
+    }
+
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .form-field.span-2 { grid-column: span 2; }
+    .form-field.span-full { grid-column: 1 / -1; }
+
+    .form-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .form-input,
+    .form-select,
+    .form-textarea {
+      width: 100%;
+      padding: 9px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-size: 12.5px;
+      font-family: inherit;
+      outline: none;
+      box-shadow: var(--shadow-sm);
+      transition: all 0.18s ease;
+    }
+
+    .form-select {
+      appearance: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+      padding-right: 30px;
+      background-image: url("data:image/svg+xml;utf8,<svg fill='%2378716C' height='12' viewBox='0 0 24 24' width='12' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+    }
+
+    .form-input:focus,
+    .form-select:focus,
+    .form-textarea:focus {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 3px var(--brand-subtle);
+    }
+
+    .form-textarea {
+      min-height: 78px;
+      resize: vertical;
+      line-height: 1.55;
+    }
+
+    .form-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 8px 0;
+    }
+
+    .form-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .muted-note {
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+
+    .empty-hint {
+      padding: 30px 16px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 12.5px;
+    }
+
+    /* 状态 Tab */
+    .tabs {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: 14px;
+      flex-wrap: wrap;
+    }
+
+    .tab-btn {
+      padding: 6px 14px;
+      border-radius: 10px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+
+    .tab-btn:hover { color: var(--text-primary); }
+
+    .tab-btn.active {
+      background: var(--bg-surface);
+      color: var(--brand-text);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* 折叠面板 */
+    .collapse-panel {
+      overflow: hidden;
+      max-height: 0;
+      opacity: 0;
+      transition: max-height 0.32s ease, opacity 0.24s ease;
+    }
+
+    .collapse-panel.open {
+      max-height: 1400px;
+      opacity: 1;
+    }
+
+    /* 行内进度条 */
+    .progress-inline {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 150px;
+    }
+
+    .progress-inline .progress-bar-wrap { flex: 1; }
+
+    .progress-inline .progress-label {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    /* 状态圆点变体 */
+    .status-dot.idle { background: var(--text-muted); }
+    .status-dot.idle::after { display: none; }
+    .status-dot.warning { background: var(--status-warning); }
+    .status-dot.warning::after { border-color: var(--status-warning); }
+    .status-dot.danger { background: var(--status-danger); }
+    .status-dot.danger::after { border-color: var(--status-danger); }
+
+    /* 聊天中心 */
+    .chat-layout {
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .conversation-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px;
+      max-height: 660px;
+      overflow-y: auto;
+    }
+
+    .conversation-item {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .conversation-item:hover { background: var(--bg-subtle); }
+
+    .conversation-item.active {
+      background: var(--brand-subtle);
+      border-color: var(--brand-border);
+    }
+
+    .conv-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .conv-name {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .conv-time { font-size: 10.5px; color: var(--text-muted); }
+
+    .conv-last {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conv-unread {
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      background: var(--status-danger);
+      color: #FFFFFF;
+      font-size: 10.5px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .message-stream {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 20px 22px;
+      min-height: 320px;
+      max-height: 520px;
+      overflow-y: auto;
+      background: var(--bg-subtle);
+      border-radius: 16px;
+    }
+
+    .msg-row {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      max-width: 78%;
+    }
+
+    .msg-row.out { align-self: flex-end; align-items: flex-end; }
+
+    .msg-meta {
+      font-size: 10.5px;
+      color: var(--text-muted);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .msg-bubble {
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 12.5px;
+      line-height: 1.55;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--shadow-sm);
+      word-break: break-word;
+    }
+
+    .msg-row.out .msg-bubble {
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      border-color: var(--brand-primary);
+    }
+
+    .msg-row.out .msg-bubble .msg-card-sub { color: rgba(255, 255, 255, 0.85); }
+
+    .msg-bubble.sys {
+      background: var(--bg-muted);
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      border-style: dashed;
+      box-shadow: none;
+    }
+
+    .msg-type-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 8px;
+      background: var(--bg-muted);
+      color: var(--text-tertiary);
+    }
+
+    .msg-card {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .msg-thumb {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: var(--bg-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+      flex-shrink: 0;
+    }
+
+    .msg-card-title { font-weight: 700; font-size: 12.5px; }
+    .msg-card-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    .reply-box {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px 22px 20px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .reply-textarea {
+      width: 100%;
+      min-height: 84px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-size: 12.5px;
+      line-height: 1.55;
+      outline: none;
+      resize: vertical;
+      font-family: inherit;
+      box-shadow: var(--shadow-sm);
+      transition: all 0.18s ease;
+    }
+
+    .reply-textarea:focus {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 3px var(--brand-subtle);
+    }
+
+    .reply-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .reply-count { font-size: 11px; color: var(--text-muted); }
+
+    .suggestion-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .suggestion-chip {
+      padding: 7px 12px;
+      border-radius: 12px;
+      border: 1px dashed var(--brand-border);
+      background: var(--brand-subtle);
+      color: var(--brand-text);
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+
+    .suggestion-chip:hover { background: var(--bg-hover); }
+
+    .rule-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* 设置页 */
+    .settings-layout {
+      display: grid;
+      grid-template-columns: 208px minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    .settings-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px;
+    }
+
+    .settings-section { display: none; }
+    .settings-section.active { display: block; }
+
+    .key-value {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 10px 16px;
+      font-size: 12.5px;
+      align-items: center;
+    }
+
+    .kv-key { color: var(--text-muted); }
+    .kv-val { color: var(--text-primary); font-weight: 600; }
+
+    .mask {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 1px;
+      color: var(--text-secondary);
+    }
+
+    .input-with-action {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .input-with-action .form-input { flex: 1; }
+
+    .cap-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .cap-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 12px;
+      border-radius: 12px;
+      font-size: 11.5px;
+      font-weight: 600;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+    }
+
+    .cap-chip .cap-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .cap-chip.ok .cap-dot { background: var(--status-success); }
+    .cap-chip.off .cap-dot { background: var(--status-danger); }
+    .cap-chip.unknown .cap-dot { background: var(--text-muted); }
+
+    /* 发布中心 */
+    .stepper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .step-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .step-item.active {
+      border-color: var(--brand-primary);
+      background: var(--brand-subtle);
+    }
+
+    .step-num {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--bg-muted);
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .step-item.active .step-num,
+    .step-item.done .step-num {
+      background: var(--brand-primary);
+      color: #FFFFFF;
+    }
+
+    .step-label {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .step-arrow { color: var(--text-muted); }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .check-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      font-size: 12px;
+    }
+
+    .check-mark {
+      width: 18px;
+      height: 18px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .check-item.ok .check-mark {
+      background: var(--status-success-bg);
+      color: var(--status-success);
+    }
+
+    .check-item.miss .check-mark {
+      background: var(--status-danger-bg);
+      color: var(--status-danger);
+    }
+
+    .check-title { font-weight: 600; color: var(--text-primary); }
+    .check-desc { color: var(--text-muted); font-size: 11px; margin-top: 2px; line-height: 1.5; }
+
+    .gate-list {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .gate-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .gate-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--text-muted);
+    }
+
+    .gate-item.ok .gate-dot { background: var(--status-success); }
+    .gate-item.miss .gate-dot { background: var(--status-danger); }
+
+    /* 轻提示 */
+    .toast-wrap {
+      position: fixed;
+      left: 50%;
+      bottom: 26px;
+      transform: translateX(-50%) translateY(18px);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 200;
+      transition: all 0.26s ease;
+    }
+
+    .toast-wrap.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .toast {
+      background: var(--text-primary);
+      color: var(--bg-surface);
+      padding: 11px 18px;
+      border-radius: 14px;
+      font-size: 12.5px;
+      font-weight: 600;
+      box-shadow: var(--shadow-pop);
+      max-width: 560px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 1120px) {
+      .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .chat-layout { grid-template-columns: 1fr; }
+      .settings-layout { grid-template-columns: 1fr; }
+      .settings-nav { flex-direction: row; flex-wrap: wrap; }
+    }
+
+    @media (max-width: 768px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .form-field.span-2, .form-field.span-full { grid-column: auto; }
+      .checklist { grid-template-columns: 1fr; }
+      .key-value { grid-template-columns: 1fr; gap: 2px 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="app-shell">
+    <!-- 左侧极简导航栏 -->
+    <aside class="sidebar">
+      <div class="brand-header">
+        <div class="brand-mark">F</div>
+        <div class="brand-title">
+          <span class="brand-name">FishOps</span>
+          <span class="brand-tag">Workbench UI 第二版</span>
+        </div>
+      </div>
+
+      <nav class="nav-group">
+        <div class="nav-label">核心工作台</div>
+        <a class="nav-item active" data-view="overview" tabindex="0">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          </span>
+          <span>运营总览</span>
+        </a>
+        <a class="nav-item" data-view="tasks" tabindex="0">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+          </span>
+          <span>采集任务</span>
+          <span class="nav-badge">示例</span>
+        </a>
+        <a class="nav-item" data-view="inventory" tabindex="0">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>
+          </span>
+          <span>商品库</span>
+          <span class="nav-badge">示例</span>
+        </a>
+        <a class="nav-item" data-view="chat" tabindex="0">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          </span>
+          <span>聊天中心</span>
+          <span class="nav-badge danger">示例 18</span>
+        </a>
+        <a class="nav-item" data-view="publish" tabindex="0">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg>
+          </span>
+          <span>发布中心</span>
+        </a>
+        <a class="nav-item" data-view="analytics" tabindex="0">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+          </span>
+          <span>数据分析</span>
+          <span class="nav-badge">示例</span>
+        </a>
+
+        <div class="nav-label" style="margin-top: 14px;">配置与支持</div>
+        <a class="nav-item" data-view="settings" tabindex="0">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          </span>
+          <span>设置</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="runtime-chip">
+          <span class="status-dot idle"></span>
+          <span>Bridge 状态：未检测</span>
+        </div>
+        <div>设计稿 · 全部为示例数据</div>
+      </div>
+    </aside>
+
+    <!-- 主工作区 -->
+    <main class="main-workspace">
+      <!-- 顶部轻盈控制条 -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title" id="page-title-display">运营总览</h1>
+          <div class="connection-pill">
+            <span class="status-dot idle"></span>
+            <span>Bridge 状态：未检测</span>
+          </div>
+          <div class="connection-pill" style="font-weight: 600; color: var(--brand-text);">
+            <span>设计稿 · 示例数据</span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <!-- 刷新按钮 -->
+          <button class="btn" id="refresh-btn" title="刷新看板数据">
+            <svg id="refresh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            <span id="refresh-text">刷新</span>
+          </button>
+
+          <!-- 主题切换 -->
+          <button class="btn btn-icon" id="theme-toggle-btn" title="切换明暗模式" aria-label="切换明暗模式">
+            <svg id="theme-icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- 视图容器 -->
+      <div class="view-content">
+
+        <!-- 1. 运营总览看板 (默认激活) -->
+        <section class="view-panel active" id="view-overview">
+          <!-- 4 宫格核心指标：仅保留真实口径（商品总数 / 未读会话 / 运行中任务 / 失败任务），数字均为示例 -->
+          <div class="demo-banner">
+            <span class="demo-tag">设计稿</span>
+            <span>本页所有数字均为<strong>示例数据</strong>，用于展示界面结构，不代表线上真实统计。真实数值需接入 Runtime / Bridge 后读取。</span>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">商品总数</span>
+                <span class="stat-badge amber">示例</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">12,480</span>
+              </div>
+              <div class="stat-foot">
+                <span>示例数据，非线上真实值</span>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">未读会话</span>
+                <span class="stat-badge red">需关注</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">18</span>
+              </div>
+              <div class="stat-foot">
+                <span>示例数据，非线上真实值</span>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">运行中任务</span>
+                <span class="stat-badge green">示例</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">4</span>
+              </div>
+              <div class="stat-foot">
+                <span>示例数据，非线上真实值</span>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">失败任务</span>
+                <span class="stat-badge red">待排查</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">1</span>
+              </div>
+              <div class="stat-foot">
+                <span>示例数据，非线上真实值</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 近期任务 + 运行环境状态 -->
+          <div class="dashboard-split">
+            <!-- 近期任务列表：仅使用真实概念（任务 / 类型 / 状态 / 更新时间 / 操作） -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <span>近期任务</span>
+                  <span class="card-subtitle">采集 / 发布 / 分析（示例数据）</span>
+                </div>
+                <button class="btn" onclick="switchNav('tasks')">查看全部任务</button>
+              </div>
+              <div class="data-table-container">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>任务</th>
+                      <th>类型</th>
+                      <th>状态</th>
+                      <th>更新时间</th>
+                      <th style="text-align: right;">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Sony A7M4 关键词采集</strong></td>
+                      <td><span class="badge badge-amber">采集</span></td>
+                      <td><span class="badge badge-success">已完成</span></td>
+                      <td>10-05 14:28</td>
+                      <td style="text-align: right;"><a class="action-link" onclick="switchNav('tasks')">查看任务</a></td>
+                    </tr>
+                    <tr>
+                      <td><strong>富士 X-T5 关键词采集</strong></td>
+                      <td><span class="badge badge-amber">采集</span></td>
+                      <td><span class="badge badge-warning">运行中</span></td>
+                      <td>10-05 14:32</td>
+                      <td style="text-align: right;"><a class="action-link" onclick="switchNav('tasks')">查看任务</a></td>
+                    </tr>
+                    <tr>
+                      <td><strong>摄影器材价格分析</strong></td>
+                      <td><span class="badge badge-neutral">分析</span></td>
+                      <td><span class="badge badge-success">已完成</span></td>
+                      <td>10-05 13:50</td>
+                      <td style="text-align: right;"><a class="action-link" onclick="switchNav('analytics')">查看分析</a></td>
+                    </tr>
+                    <tr>
+                      <td><strong>Sony A7M4 发布准备</strong></td>
+                      <td><span class="badge badge-neutral">发布</span></td>
+                      <td><span class="badge badge-neutral">等待开始</span></td>
+                      <td>10-05 12:20</td>
+                      <td style="text-align: right;"><a class="action-link" onclick="switchNav('publish')">查看发布</a></td>
+                    </tr>
+                    <tr>
+                      <td><strong>验机报告批量采集</strong></td>
+                      <td><span class="badge badge-amber">采集</span></td>
+                      <td><span class="badge badge-danger">失败</span></td>
+                      <td>10-05 11:20</td>
+                      <td style="text-align: right;"><a class="action-link" onclick="switchNav('tasks')">查看任务</a></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- 运行环境状态：仅单次诊断，不做平均值 / 分位数 -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <span>运行环境状态</span>
+                  <span class="card-subtitle">仅单次诊断</span>
+                </div>
+                <span class="badge badge-neutral" id="runtime-badge">未检测</span>
+              </div>
+              <div class="card-body">
+                <div class="health-list">
+                  <div class="health-row">
+                    <div class="health-row-header">
+                      <span class="health-name">Bridge 状态</span>
+                      <span class="health-score" id="bridge-state">未检测</span>
+                    </div>
+                    <div class="health-meta">
+                      <span>可能取值：未检测 / 检查中 / 可用 / 异常</span>
+                    </div>
+                  </div>
+                  <div class="health-row">
+                    <div class="health-row-header">
+                      <span class="health-name">单次 PING RTT</span>
+                      <span class="health-score" id="rtt-value">暂无</span>
+                    </div>
+                    <div class="health-meta">
+                      <span>单次诊断的往返耗时，非平均值或分位数</span>
+                    </div>
+                  </div>
+                  <div class="health-row">
+                    <div class="health-row-header">
+                      <span class="health-name">错误信息</span>
+                      <span class="health-score" id="runtime-error" style="font-weight: 600; color: var(--text-muted); font-size: 12px;">无</span>
+                    </div>
+                    <div class="health-meta">
+                      <span>诊断失败时展示原始错误内容</span>
+                    </div>
+                  </div>
+                </div>
+                <div style="margin-top: 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                  <button class="btn btn-primary" id="ping-diagnose-btn">发起单次 PING 诊断</button>
+                  <span class="muted-note">设计稿：不会真正连接 Bridge</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- 2. 数据分析看板 -->
+        <section class="view-panel" id="view-analytics">
+          <!-- 示例报告提示：整页为非真实算法输出 -->
+          <div class="demo-banner">
+            <span class="demo-tag">示例报告</span>
+            <span>本页为<strong>非真实算法输出</strong>的示例。分析结果由 <strong>Prompt 规则和数据源返回内容</strong>决定；实际字段与数值以运行时返回为准，示例数值不代表任何平台的真实规则或结论。</span>
+          </div>
+
+          <!-- 摘要 summary：真实输出结构 -->
+          <div class="analytics-summary-box">
+            <div class="summary-text-block">
+              <div class="summary-badge">
+                <span>输出结构 · 摘要 summary</span>
+              </div>
+              <h2 class="summary-title">示例摘要：分析结果由 Prompt 规则与数据源返回内容生成</h2>
+              <p class="summary-desc">
+                一次分析运行可能返回以下结构：摘要（summary）、关键发现（keyFindings）、价格分析（priceRange / competition / recommendation）、商机（opportunities）、风险（risks）。以下文本与数值均为示例，仅用于说明版式。
+              </p>
+            </div>
+            <button class="btn btn-primary" id="open-analysis-modal-btn">查看完整报告</button>
+          </div>
+
+          <!-- 关键发现 keyFindings -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>关键发现</span>
+                <span class="card-subtitle">keyFindings · 示例</span>
+              </div>
+              <span class="badge badge-neutral">示例</span>
+            </div>
+            <div class="card-body">
+              <div class="insight-item">
+                <div class="insight-dot green"></div>
+                <div class="insight-content">
+                  <div class="insight-headline">示例发现条目一：标签名由 Prompt 规则决定</div>
+                  <div class="insight-body">条目内容来自数据源返回，示例文本不代表平台真实结论。</div>
+                </div>
+              </div>
+              <div class="insight-item">
+                <div class="insight-dot green"></div>
+                <div class="insight-content">
+                  <div class="insight-headline">示例发现条目二：数值需来自真实数据源</div>
+                  <div class="insight-body">接入真实历史数据后，此处展示由分析任务实际计算的发现。</div>
+                </div>
+              </div>
+              <div class="insight-item">
+                <div class="insight-dot green"></div>
+                <div class="insight-content">
+                  <div class="insight-headline">示例发现条目三：结构固定、内容可变</div>
+                  <div class="insight-body">字段结构固定为 headline + body，具体内容随输入变化。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 价格分析 priceRange / competition / recommendation -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>价格分析</span>
+                <span class="card-subtitle">priceRange / competition / recommendation · 示例</span>
+              </div>
+              <span class="badge badge-neutral">示例</span>
+            </div>
+            <div class="card-body">
+              <div class="key-value">
+                <div class="kv-key">priceRange</div>
+                <div class="kv-val">示例：¥7,000 - ¥9,500（由数据源返回的样本区间决定）</div>
+                <div class="kv-key">competition</div>
+                <div class="kv-val">示例：中等（competition 字段取值由模型判断给出）</div>
+                <div class="kv-key">recommendation</div>
+                <div class="kv-val">示例：聚焦配件齐全货源（recommendation 为文本建议，非平台规则）</div>
+              </div>
+              <p class="muted-note" style="margin-top: 16px;">以上数值为示例占位，真实输出取决于数据源返回内容与 Prompt 规则。</p>
+            </div>
+          </div>
+
+
+
+          <!-- 商机与风险双栏看板（结构固定，内容为示例） -->
+          <div class="insight-two-col">
+            <!-- 商机 opportunities -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <span style="color: var(--status-success); font-size: 12px;">●</span>
+                  <span>商机 opportunities</span>
+                </div>
+                <span class="badge badge-neutral">示例</span>
+              </div>
+              <div class="card-body">
+                <div class="insight-item">
+                  <div class="insight-dot green"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">示例商机条目一</div>
+                    <div class="insight-body">内容由分析任务根据数据源实际返回，示例文本不代表真实市场结论。</div>
+                  </div>
+                </div>
+
+                <div class="insight-item">
+                  <div class="insight-dot green"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">示例商机条目二</div>
+                    <div class="insight-body">商机字段为建议性文本，供人工判断，不作为自动执行依据。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 风险 risks -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <span style="color: var(--status-danger); font-size: 12px;">●</span>
+                  <span>风险 risks</span>
+                </div>
+                <span class="badge badge-neutral">示例</span>
+              </div>
+              <div class="card-body">
+                <div class="insight-item">
+                  <div class="insight-dot red"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">示例风险条目一</div>
+                    <div class="insight-body">风险提示由 Prompt 规则生成，不代表平台的真实风控规则或巡检策略。</div>
+                  </div>
+                </div>
+
+                <div class="insight-item">
+                  <div class="insight-dot red"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">示例风险条目二</div>
+                    <div class="insight-body">需人工复核后再采取措施；系统不自动执行限流、降价等操作。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. 商品库 -->
+        <section class="view-panel" id="view-inventory">
+          <div class="demo-banner">
+            <span class="demo-tag">设计稿</span>
+            <span>商品列表为<strong>示例数据</strong>（共 6 条），用于展示真实字段与分页 / 筛选交互；数量非线上真实值。</span>
+          </div>
+
+          <div class="card">
+            <!-- 工具栏与筛选区 -->
+            <div class="toolbar">
+              <div class="toolbar-left">
+                <!-- 搜索框 -->
+                <div class="search-input-wrap">
+                  <span class="search-icon-symbol">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  </span>
+                  <input type="text" class="search-input" id="table-search-input" placeholder="搜索标题、卖家、地区..." aria-label="搜索商品">
+                </div>
+
+                <!-- 品类筛选：项目无真实品类算法来源，明确标注为设计稿筛选示例 -->
+                <span class="muted-note">品类筛选示例：</span>
+                <select class="select-control" id="category-filter" aria-label="设计稿品类筛选示例">
+                  <option value="all" selected>全部（示例）</option>
+                  <option value="camera">相机机身（示例）</option>
+                  <option value="lens">镜头（示例）</option>
+                  <option value="accessory">三脚架/稳定器（示例）</option>
+                  <option value="drone">无人机（示例）</option>
+                </select>
+
+                <!-- 包邮过滤：仅全部 / 包邮 / 不包邮 -->
+                <select class="select-control" id="shipping-filter" aria-label="包邮筛选">
+                  <option value="all">包邮状态：全部</option>
+                  <option value="free">包邮</option>
+                  <option value="paid">不包邮</option>
+                </select>
+
+                <button class="btn" id="reset-filter-btn">重置筛选</button>
+              </div>
+
+              <div class="toolbar-right">
+                <!-- 密度切换控件 -->
+                <span style="font-size: 11.5px; color: var(--text-muted);">行距密度:</span>
+                <div class="density-toggle" role="group" aria-label="表格行距密度">
+                  <button type="button" class="density-btn active" id="density-default">默认</button>
+                  <button type="button" class="density-btn" id="density-compact">紧凑</button>
+                </div>
+                <button class="btn btn-primary" id="push-feishu-btn">预检并写入飞书</button>
+              </div>
+            </div>
+
+            <!-- 数据表格 -->
+            <div class="data-table-container">
+              <table class="data-table" id="inventory-table">
+                <thead>
+                  <tr>
+                    <th style="width: 44px; text-align: center;"><input type="checkbox" id="select-all-check" aria-label="全选"></th>
+                    <th style="width: 68px;">缩略图</th>
+                    <th>商品标题 / itemId</th>
+                    <th class="sortable" id="sort-price" title="点击按价格排序">价格 <span style="font-size: 11px;">↕</span></th>
+                    <th class="sortable" id="sort-wants" title="点击按想要数排序">想要数 <span style="font-size: 11px;">↕</span></th>
+                    <th>卖家</th>
+                    <th>地区</th>
+                    <th>包邮状态</th>
+                    <th>采集时间</th>
+                    <th style="text-align: right;">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="inventory-tbody">
+                  <!-- 行 1 -->
+                  <tr data-cat="camera" data-shipping="free">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="3" y="8" width="26" height="18" rx="4" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <circle cx="16" cy="17" r="5" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <rect x="8" y="5" width="6" height="3" rx="1.5" fill="var(--brand-primary)"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <span class="prod-title" title="Sony A7M4 国行单机 极少用 快门3200 箱说全">Sony A7M4 国行单机 极少用 快门3200 箱说全</span>
+                        <span class="prod-sku">itemId: 884029</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥8,850.00</span></td>
+                    <td><strong>182</strong> 人想要</td>
+                    <td>摄影小陈_自用</td>
+                    <td>上海 · 浦东</td>
+                    <td><span class="badge badge-amber">包邮</span></td>
+                    <td>10-05 14:12</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-design-toast="设计稿：不会真正查看商品详情">详情</a>
+                      <a class="action-link" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 2 -->
+                  <tr data-cat="camera" data-shipping="free">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="3" y="8" width="26" height="18" rx="4" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <circle cx="16" cy="17" r="5" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <rect x="8" y="5" width="6" height="3" rx="1.5" fill="var(--brand-primary)"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <span class="prod-title" title="富士 X-T5 碳晶灰机身 官方延保中 诚心出">富士 X-T5 碳晶灰机身 官方延保中 诚心出</span>
+                        <span class="prod-sku">itemId: 884030</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥9,200.00</span></td>
+                    <td><strong>245</strong> 人想要</td>
+                    <td>日落街角Lens</td>
+                    <td>浙江 · 杭州</td>
+                    <td><span class="badge badge-amber">包邮</span></td>
+                    <td>10-05 13:58</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-design-toast="设计稿：不会真正查看商品详情">详情</a>
+                      <a class="action-link" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 3 -->
+                  <tr data-cat="lens" data-shipping="paid">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="8" y="6" width="16" height="20" rx="4" stroke="var(--text-secondary)" stroke-width="2"/>
+                          <circle cx="16" cy="16" r="4" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <line x1="8" y1="11" x2="24" y2="11" stroke="var(--border-strong)" stroke-width="1.5"/>
+                          <line x1="8" y1="21" x2="24" y2="21" stroke="var(--border-strong)" stroke-width="1.5"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <span class="prod-title" title="适马 24-70mm F2.8 DG DN 二代 E口 镜片通透">适马 24-70mm F2.8 DG DN 二代 E口 镜片通透</span>
+                        <span class="prod-sku">itemId: 884031</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥6,350.00</span></td>
+                    <td><strong>89</strong> 人想要</td>
+                    <td>器材党退烧小李</td>
+                    <td>北京 · 朝阳</td>
+                    <td><span class="badge badge-neutral">不包邮</span></td>
+                    <td>10-05 13:20</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-design-toast="设计稿：不会真正查看商品详情">详情</a>
+                      <a class="action-link" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 4 -->
+                  <tr data-cat="camera" data-shipping="free">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="3" y="8" width="26" height="18" rx="4" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <circle cx="16" cy="17" r="5" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <rect x="8" y="5" width="6" height="3" rx="1.5" fill="var(--brand-primary)"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <span class="prod-title" title="佳能 EOS R6 Mark II 单机身 个人自用退坑">佳能 EOS R6 Mark II 单机身 个人自用退坑</span>
+                        <span class="prod-sku">itemId: 884032</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥11,800.00</span></td>
+                    <td><strong>312</strong> 人想要</td>
+                    <td>光影实验室</td>
+                    <td>广东 · 深圳</td>
+                    <td><span class="badge badge-amber">包邮</span></td>
+                    <td>10-05 12:44</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-design-toast="设计稿：不会真正查看商品详情">详情</a>
+                      <a class="action-link" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 5 -->
+                  <tr data-cat="accessory" data-shipping="free">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <circle cx="16" cy="7" r="3" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <line x1="16" y1="10" x2="8" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                          <line x1="16" y1="10" x2="24" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                          <line x1="16" y1="10" x2="16" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <span class="prod-title" title="马小路 ET-1541T 碳纤维便携三脚架 云台完好">马小路 ET-1541T 碳纤维便携三脚架 云台完好</span>
+                        <span class="prod-sku">itemId: 884033</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥680.00</span></td>
+                    <td><strong>54</strong> 人想要</td>
+                    <td>远行户外徒步</td>
+                    <td>四川 · 成都</td>
+                    <td><span class="badge badge-amber">包邮</span></td>
+                    <td>10-05 11:30</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-design-toast="设计稿：不会真正查看商品详情">详情</a>
+                      <a class="action-link" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 6 -->
+                  <tr data-cat="drone" data-shipping="paid">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="12" y="12" width="8" height="8" rx="2.5" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <line x1="8" y1="8" x2="24" y2="24" stroke="var(--text-secondary)" stroke-width="1.8"/>
+                          <line x1="8" y1="24" x2="24" y2="8" stroke="var(--text-secondary)" stroke-width="1.8"/>
+                          <circle cx="8" cy="8" r="2.5" fill="var(--brand-primary)"/>
+                          <circle cx="24" cy="8" r="2.5" fill="var(--brand-primary)"/>
+                          <circle cx="8" cy="24" r="2.5" fill="var(--brand-primary)"/>
+                          <circle cx="24" cy="24" r="2.5" fill="var(--brand-primary)"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <span class="prod-title" title="大疆 DJI Mini 4 Pro 畅飞套装 带屏遥控器 无炸机">大疆 DJI Mini 4 Pro 畅飞套装 带屏遥控器 无炸机</span>
+                        <span class="prod-sku">itemId: 884034</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥4,500.00</span></td>
+                    <td><strong>198</strong> 人想要</td>
+                    <td>飞行员老张</td>
+                    <td>湖北 · 武汉</td>
+                    <td><span class="badge badge-neutral">不包邮</span></td>
+                    <td>10-05 10:15</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-design-toast="设计稿：不会真正查看商品详情">详情</a>
+                      <a class="action-link" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</a>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 分页条：由脚本按示例数据真实分页渲染 -->
+            <div class="pagination-bar">
+              <div id="pagination-summary">示例数据</div>
+              <div class="pagination-pages" id="pagination-pages"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. 采集任务：真实字段与状态 -->
+        <section class="view-panel" id="view-tasks">
+          <div class="demo-banner">
+            <span class="demo-tag">设计稿</span>
+            <span>本页表单与任务列表均为<strong>示例数据</strong>，用于展示真实的采集字段与状态；点击不会真正创建或调度任务。</span>
+          </div>
+
+          <!-- 创建采集任务（可展开 / 收起） -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>创建采集任务</span>
+                <span class="card-subtitle">真实采集参数</span>
+              </div>
+              <button class="btn" id="toggle-task-form">展开表单</button>
+            </div>
+            <div class="collapse-panel" id="task-form-panel">
+              <div class="card-body" style="padding-top: 4px;">
+                <div class="form-grid">
+                  <div class="form-field span-full">
+                    <label class="form-label" for="task-keyword">关键词</label>
+                    <input class="form-input" id="task-keyword" placeholder="例如：Sony A7M4">
+                  </div>
+                  <div class="form-field">
+                    <label class="form-label" for="task-start-page">起始页</label>
+                    <input class="form-input" id="task-start-page" type="number" min="1" value="1">
+                  </div>
+                  <div class="form-field">
+                    <label class="form-label" for="task-pages">采集页数</label>
+                    <input class="form-input" id="task-pages" type="number" min="1" value="5">
+                  </div>
+                  <div class="form-field">
+                    <label class="form-label" for="task-page-size">每页条数</label>
+                    <input class="form-input" id="task-page-size" type="number" min="1" value="30">
+                  </div>
+                  <div class="form-field">
+                    <label class="form-label" for="task-min-wants">最低想要数</label>
+                    <input class="form-input" id="task-min-wants" type="number" min="0" value="0">
+                  </div>
+                  <div class="form-field">
+                    <label class="form-label" for="task-price-min">最低价格</label>
+                    <input class="form-input" id="task-price-min" type="number" min="0" placeholder="¥">
+                  </div>
+                  <div class="form-field">
+                    <label class="form-label" for="task-price-max">最高价格</label>
+                    <input class="form-input" id="task-price-max" type="number" min="0" placeholder="¥">
+                  </div>
+                  <div class="form-field">
+                    <label class="form-label" for="task-base-interval">基础间隔（秒）</label>
+                    <input class="form-input" id="task-base-interval" type="number" min="1" value="3">
+                  </div>
+                  <div class="form-field">
+                    <label class="form-label" for="task-random-interval">随机间隔（秒）</label>
+                    <input class="form-input" id="task-random-interval" type="number" min="0" value="2">
+                  </div>
+                  <div class="form-field">
+                    <span class="form-label">仅包邮</span>
+                    <label class="form-check"><input type="checkbox" id="task-free-shipping"> 仅采集包邮商品</label>
+                  </div>
+                  <div class="form-field span-full">
+                    <label class="form-label" for="task-detail">采集详情</label>
+                    <textarea class="form-textarea" id="task-detail" placeholder="描述采集目标、筛选条件或注意事项"></textarea>
+                  </div>
+                </div>
+                <div class="form-actions" style="margin-top: 18px;">
+                  <button class="btn btn-primary" id="create-task-btn" type="button">创建任务</button>
+                  <button class="btn" id="reset-task-form-btn" type="button">重置</button>
+                  <span class="muted-note">设计稿：点击不会真正创建任务</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 任务列表 -->
+          <div class="card">
+            <div class="card-header" style="flex-wrap: wrap;">
+              <div class="card-title">
+                <span>采集任务列表</span>
+                <span class="card-subtitle">示例数据</span>
+              </div>
+              <div class="tabs" id="task-status-tabs">
+                <button class="tab-btn active" data-status="all" type="button">全部</button>
+                <button class="tab-btn" data-status="waiting" type="button">等待开始</button>
+                <button class="tab-btn" data-status="running" type="button">采集中</button>
+                <button class="tab-btn" data-status="paused" type="button">已暂停</button>
+                <button class="tab-btn" data-status="done" type="button">已完成</button>
+                <button class="tab-btn" data-status="failed" type="button">失败</button>
+                <button class="tab-btn" data-status="canceled" type="button">已取消</button>
+              </div>
+            </div>
+            <div class="data-table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>关键词</th>
+                    <th>状态</th>
+                    <th>进度</th>
+                    <th>页码</th>
+                    <th>已入库</th>
+                    <th>失败数</th>
+                    <th>更新时间</th>
+                    <th style="text-align: right;">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="task-tbody">
+                  <tr data-status="running" data-keyword="Sony A7M4" data-progress="42" data-page="3 / 5" data-stored="86" data-failed="2" data-updated="10-05 14:32" data-fetched="120" data-valid="86" data-filtered="22" data-duplicate="10" data-breakpoint="第 4 页第 7 条" data-issue="第 3 页偶发 429，建议人工调整并发">
+                    <td><strong>Sony A7M4</strong></td>
+                    <td><span class="badge badge-warning">采集中</span></td>
+                    <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width: 42%;"></div></div><span class="progress-label">42%</span></div></td>
+                    <td>3 / 5</td>
+                    <td>86</td>
+                    <td>2</td>
+                    <td>10-05 14:32</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-action="pause">暂停</a>
+                      <a class="action-link" data-action="cancel">取消</a>
+                      <a class="action-link" data-action="detail">查看详情</a>
+                    </td>
+                  </tr>
+                  <tr data-status="paused" data-keyword="富士 X-T5" data-progress="30" data-page="2 / 5" data-stored="54" data-failed="0" data-updated="10-05 13:10" data-fetched="72" data-valid="54" data-filtered="12" data-duplicate="6" data-breakpoint="第 2 页第 21 条" data-issue="无">
+                    <td><strong>富士 X-T5</strong></td>
+                    <td><span class="badge badge-neutral">已暂停</span></td>
+                    <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill warning" style="width: 30%;"></div></div><span class="progress-label">30%</span></div></td>
+                    <td>2 / 5</td>
+                    <td>54</td>
+                    <td>0</td>
+                    <td>10-05 13:10</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-action="resume">恢复</a>
+                      <a class="action-link" data-action="cancel">取消</a>
+                      <a class="action-link" data-action="detail">查看详情</a>
+                    </td>
+                  </tr>
+                  <tr data-status="waiting" data-keyword="佳能 EOS R6" data-progress="0" data-page="暂无" data-stored="0" data-failed="0" data-updated="10-05 12:40" data-fetched="0" data-valid="0" data-filtered="0" data-duplicate="0" data-breakpoint="未开始" data-issue="无">
+                    <td><strong>佳能 EOS R6</strong></td>
+                    <td><span class="badge badge-neutral">等待开始</span></td>
+                    <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width: 0%;"></div></div><span class="progress-label">0%</span></div></td>
+                    <td>暂无</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>10-05 12:40</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-action="cancel">取消</a>
+                      <a class="action-link" data-action="detail">查看详情</a>
+                    </td>
+                  </tr>
+                  <tr data-status="done" data-keyword="尼康 Z6 III" data-progress="100" data-page="5 / 5" data-stored="132" data-failed="1" data-updated="10-05 11:05" data-fetched="145" data-valid="132" data-filtered="8" data-duplicate="4" data-breakpoint="已完成" data-issue="第 2 页 1 条解析失败">
+                    <td><strong>尼康 Z6 III</strong></td>
+                    <td><span class="badge badge-success">已完成</span></td>
+                    <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill success" style="width: 100%;"></div></div><span class="progress-label">100%</span></div></td>
+                    <td>5 / 5</td>
+                    <td>132</td>
+                    <td>1</td>
+                    <td>10-05 11:05</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-action="retry">重试失败项</a>
+                      <a class="action-link" data-action="detail">查看详情</a>
+                    </td>
+                  </tr>
+                  <tr data-status="failed" data-keyword="验机报告批量" data-progress="15" data-page="1 / 5" data-stored="9" data-failed="16" data-updated="10-05 10:20" data-fetched="25" data-valid="9" data-filtered="0" data-duplicate="0" data-breakpoint="第 1 页第 26 条" data-issue="多次请求超时，建议人工重试">
+                    <td><strong>验机报告批量</strong></td>
+                    <td><span class="badge badge-danger">失败</span></td>
+                    <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill warning" style="width: 15%;"></div></div><span class="progress-label">15%</span></div></td>
+                    <td>1 / 5</td>
+                    <td>9</td>
+                    <td>16</td>
+                    <td>10-05 10:20</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-action="retry">重试失败项</a>
+                      <a class="action-link" data-action="detail">查看详情</a>
+                      <a class="action-link" data-action="cancel">取消</a>
+                    </td>
+                  </tr>
+                  <tr data-status="canceled" data-keyword="索尼 A7C II" data-progress="8" data-page="1 / 3" data-stored="12" data-failed="0" data-updated="10-05 09:15" data-fetched="12" data-valid="12" data-filtered="0" data-duplicate="0" data-breakpoint="已取消" data-issue="手动取消">
+                    <td><strong>索尼 A7C II</strong></td>
+                    <td><span class="badge badge-neutral">已取消</span></td>
+                    <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width: 8%;"></div></div><span class="progress-label">8%</span></div></td>
+                    <td>1 / 3</td>
+                    <td>12</td>
+                    <td>0</td>
+                    <td>10-05 09:15</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" data-action="detail">查看详情</a>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. 聊天中心：真实字段与能力 -->
+        <section class="view-panel" id="view-chat">
+          <div class="demo-banner">
+            <span class="demo-tag">设计稿</span>
+            <span>会话与消息均为<strong>示例数据</strong>；Socket / 同步状态为界面态展示，不连接真实服务。</span>
+          </div>
+
+          <!-- Socket 与同步状态 -->
+          <div class="card">
+            <div class="card-header" style="flex-wrap: wrap;">
+              <div class="card-title">
+                <span>Socket 状态</span>
+                <span class="connection-pill"><span class="status-dot idle" id="socket-dot"></span><span id="socket-state">未连接</span></span>
+              </div>
+              <div class="toolbar-right">
+                <span class="muted-note">同步状态：<strong id="sync-state">空闲</strong></span>
+                <button class="btn" id="sync-conversations-btn" type="button">同步会话</button>
+                <button class="btn" id="sync-history-btn" type="button">同步当前历史</button>
+                <button class="btn" id="toggle-rule-view-btn" type="button">规则视图</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 回复规则（默认隐藏） -->
+          <div class="card" id="chat-rule-view" style="display: none;">
+            <div class="card-header">
+              <div class="card-title"><span>回复规则</span><span class="card-subtitle">人工 / 建议 / 自动</span></div>
+              <span class="badge badge-neutral">示例</span>
+            </div>
+            <div class="card-body">
+              <div class="rule-panel">
+                <div class="form-field">
+                  <span class="form-label">模式</span>
+                  <div class="tabs" id="reply-mode-tabs">
+                    <button class="tab-btn" data-mode="manual" type="button">人工</button>
+                    <button class="tab-btn active" data-mode="suggest" type="button">建议</button>
+                    <button class="tab-btn" data-mode="auto" type="button">自动</button>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <div class="form-field span-2">
+                    <span class="form-label">开关</span>
+                    <label class="form-check"><input type="checkbox" checked> 启用回复规则</label>
+                    <label class="form-check"><input type="checkbox"> AI 暂停</label>
+                  </div>
+                  <div class="form-field"><label class="form-label" for="rule-cooldown">冷却（秒）</label><input class="form-input" id="rule-cooldown" value="30"></div>
+                  <div class="form-field"><label class="form-label" for="rule-delay">延迟（秒）</label><input class="form-input" id="rule-delay" value="5"></div>
+                  <div class="form-field"><label class="form-label" for="rule-limit">每会话上限</label><input class="form-input" id="rule-limit" value="10"></div>
+                  <div class="form-field"><label class="form-label" for="rule-window">自动回复窗口</label><input class="form-input" id="rule-window" value="09:00 - 22:00"></div>
+                  <div class="form-field span-2"><label class="form-label" for="rule-handoff">转人工关键词</label><input class="form-input" id="rule-handoff" value="投诉, 退款, 举报"></div>
+                  <div class="form-field span-2"><label class="form-label" for="rule-blacklist">黑名单关键词</label><input class="form-input" id="rule-blacklist" value="加微信, 站外交易"></div>
+                  <div class="form-field"><label class="form-label" for="rule-maxlen">最大内容长度</label><input class="form-input" id="rule-maxlen" value="200"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 会话列表 + 消息流 + 回复区 -->
+          <div class="chat-layout">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title"><span>会话列表</span></div>
+                <span class="badge badge-neutral">示例</span>
+              </div>
+              <div class="conversation-list" id="conversation-list"></div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <span id="chat-peer-name">会话</span>
+                  <span class="card-subtitle" id="chat-peer-meta"></span>
+                </div>
+              </div>
+              <div class="card-body" style="padding: 0;">
+                <div class="message-stream" id="message-stream"></div>
+              </div>
+              <div class="reply-box">
+                <div class="suggestion-row" id="suggestion-row"></div>
+                <textarea class="reply-textarea" id="reply-input" placeholder="输入回复内容…"></textarea>
+                <div class="reply-toolbar">
+                  <span class="reply-count"><span id="reply-count">0</span> / 200 字</span>
+                  <div class="toolbar-right">
+                    <button class="btn" id="adopt-suggestion-btn" type="button">采用建议并发送</button>
+                    <button class="btn btn-primary" id="send-reply-btn" type="button">发送</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 6. 发布中心：两阶段直接发布 -->
+        <section class="view-panel" id="view-publish">
+          <div class="demo-banner">
+            <span class="demo-tag">设计稿</span>
+            <span>发布流程与状态均为<strong>示例</strong>；"提交发布"不会真正提交，仅展示门禁与提示。</span>
+          </div>
+
+          <!-- 发布状态说明 -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title"><span>发布状态</span><span class="card-subtitle">两阶段直接发布</span></div>
+              <span class="badge badge-neutral">示例</span>
+            </div>
+            <div class="card-body">
+              <div class="cap-grid">
+                <span class="badge badge-neutral">准备中</span>
+                <span class="badge badge-warning">待核对</span>
+                <span class="badge badge-warning">提交中</span>
+                <span class="badge badge-success">已发布</span>
+                <span class="badge badge-warning">需要操作</span>
+                <span class="badge badge-danger">准备失败</span>
+                <span class="badge badge-danger">提交被拒绝</span>
+                <span class="badge badge-neutral">结果未知</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 步骤：准备 / 人工核对 / 提交 -->
+          <div class="card">
+            <div class="card-header" style="flex-wrap: wrap;">
+              <div class="stepper" id="publish-stepper">
+                <div class="step-item active" data-step="prepare"><span class="step-num">1</span><span class="step-label">准备</span></div>
+                <span class="step-arrow">→</span>
+                <div class="step-item" data-step="review"><span class="step-num">2</span><span class="step-label">人工核对</span></div>
+                <span class="step-arrow">→</span>
+                <div class="step-item" data-step="submit"><span class="step-num">3</span><span class="step-label">提交</span></div>
+              </div>
+              <span class="badge badge-amber" id="publish-step-state">准备中</span>
+            </div>
+            <div class="card-body">
+              <!-- 准备 -->
+              <div class="publish-step-content" data-step-content="prepare">
+                <p class="muted-note" style="margin-bottom: 14px;">准备阶段：系统读取商品与配置，生成发布草稿并执行字段预检。</p>
+                <div class="key-value">
+                  <div class="kv-key">商品</div>
+                  <div class="kv-val">Sony A7M4 国行单机（示例）</div>
+                  <div class="kv-key">prepare token</div>
+                  <div class="kv-val"><span class="mask">prep_5f3c...a91d</span></div>
+                  <div class="kv-key">准备状态</div>
+                  <div class="kv-val">准备中（示例）</div>
+                </div>
+              </div>
+              <!-- 人工核对 -->
+              <div class="publish-step-content" data-step-content="review" hidden>
+                <p class="muted-note" style="margin-bottom: 14px;">人工核对：逐项确认将提交给平台的真实字段。</p>
+                <div class="checklist">
+                  <div class="check-item ok"><span class="check-mark">✓</span><div><div class="check-title">描述</div><div class="check-desc">已填写（示例）</div></div></div>
+                  <div class="check-item ok"><span class="check-mark">✓</span><div><div class="check-title">价格</div><div class="check-desc">¥8,850.00（示例）</div></div></div>
+                  <div class="check-item ok"><span class="check-mark">✓</span><div><div class="check-title">规格</div><div class="check-desc">机身 + 原装电池（示例）</div></div></div>
+                  <div class="check-item ok"><span class="check-mark">✓</span><div><div class="check-title">类目</div><div class="check-desc">数码 / 相机（示例）</div></div></div>
+                  <div class="check-item miss"><span class="check-mark">!</span><div><div class="check-title">属性</div><div class="check-desc">缺少“快门次数”，需补充</div></div></div>
+                  <div class="check-item ok"><span class="check-mark">✓</span><div><div class="check-title">地址</div><div class="check-desc">已配置（示例）</div></div></div>
+                  <div class="check-item ok"><span class="check-mark">✓</span><div><div class="check-title">图片</div><div class="check-desc">3 张（示例）</div></div></div>
+                  <div class="check-item ok"><span class="check-mark">✓</span><div><div class="check-title">服务卡</div><div class="check-desc">已选择（示例）</div></div></div>
+                </div>
+              </div>
+              <!-- 提交 -->
+              <div class="publish-step-content" data-step-content="submit" hidden>
+                <p class="muted-note" style="margin-bottom: 14px;">提交门禁：全部满足后才能提交。</p>
+                <div class="gate-list">
+                  <div class="gate-item ok"><span class="gate-dot"></span>描述已填写</div>
+                  <div class="gate-item ok"><span class="gate-dot"></span>价格有效</div>
+                  <div class="gate-item ok"><span class="gate-dot"></span>规格已填写</div>
+                  <div class="gate-item ok"><span class="gate-dot"></span>至少一张图片</div>
+                  <div class="gate-item ok"><span class="gate-dot"></span>有效类目</div>
+                  <div class="gate-item ok"><span class="gate-dot"></span>完整有效地址</div>
+                  <div class="gate-item miss"><span class="gate-dot"></span>prepare token 有效（示例：待重新准备）</div>
+                </div>
+                <div class="form-actions" style="margin-top: 18px;">
+                  <button class="btn btn-primary" id="submit-publish-btn" type="button">提交发布</button>
+                  <span class="muted-note">设计稿：不会真正提交</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 发布任务历史 -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title"><span>发布任务历史</span><span class="card-subtitle">示例数据</span></div>
+              <span class="badge badge-neutral">示例</span>
+            </div>
+            <div class="data-table-container">
+              <table class="data-table">
+                <thead>
+                  <tr><th>时间</th><th>摘要</th><th>任务状态</th><th>确认状态</th><th style="text-align: right;">操作</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>10-05 14:20</td><td>Sony A7M4 发布准备</td><td><span class="badge badge-warning">待核对</span></td><td>未确认</td><td style="text-align: right;"><a class="action-link" data-design-toast="设计稿：查看发布任务详情">查看</a></td></tr>
+                  <tr><td>10-05 13:40</td><td>富士 X-T5 发布准备</td><td><span class="badge badge-danger">准备失败</span></td><td>暂无</td><td style="text-align: right;"><a class="action-link" data-design-toast="设计稿：查看发布任务详情">查看</a></td></tr>
+                  <tr><td>10-05 12:10</td><td>适马 24-70mm 提交</td><td><span class="badge badge-danger">提交被拒绝</span></td><td>已确认</td><td style="text-align: right;"><a class="action-link" data-design-toast="设计稿：查看发布任务详情">查看</a></td></tr>
+                  <tr><td>10-05 11:05</td><td>佳能 R6 II 提交</td><td><span class="badge badge-success">已发布</span></td><td>已确认</td><td style="text-align: right;"><a class="action-link" data-design-toast="设计稿：查看发布任务详情">查看</a></td></tr>
+                  <tr><td>10-05 10:30</td><td>大疆 Mini 4 Pro 提交</td><td><span class="badge badge-neutral">结果未知</span></td><td>已确认</td><td style="text-align: right;"><a class="action-link" data-design-toast="设计稿：查看发布任务详情">查看</a></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 7. 设置：真实分区 -->
+        <section class="view-panel" id="view-settings">
+          <div class="demo-banner">
+            <span class="demo-tag">设计稿</span>
+            <span>设置项为<strong>示例</strong>，保存 / 测试连通不会真正写入或发起请求。</span>
+          </div>
+
+          <div class="settings-layout">
+            <div class="card">
+              <div class="settings-nav" id="settings-nav">
+                <a class="nav-item active" data-settings="appearance" tabindex="0"><span>外观</span></a>
+                <a class="nav-item" data-settings="ai" tabindex="0"><span>AI 配置</span></a>
+                <a class="nav-item" data-settings="feishu" tabindex="0"><span>飞书配置</span></a>
+                <a class="nav-item" data-settings="reply" tabindex="0"><span>回复策略</span></a>
+                <a class="nav-item" data-settings="runtime" tabindex="0"><span>运行环境</span></a>
+                <a class="nav-item" data-settings="account" tabindex="0"><span>账号与授权</span></a>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 20px;">
+              <!-- 外观 -->
+              <div class="card settings-section active" data-settings-section="appearance">
+                <div class="card-header"><div class="card-title"><span>外观</span><span class="card-subtitle">主题</span></div></div>
+                <div class="card-body">
+                  <span class="form-label" style="margin-bottom: 10px;">主题</span>
+                  <div class="tabs" id="theme-tabs">
+                    <button class="tab-btn active" data-theme-option="light" type="button">浅色</button>
+                    <button class="tab-btn" data-theme-option="dark" type="button">深色</button>
+                  </div>
+                  <p class="muted-note" style="margin-top: 12px;">与顶部主题切换按钮联动，选择会保存在本地。</p>
+                </div>
+              </div>
+
+              <!-- AI 配置 -->
+              <div class="card settings-section" data-settings-section="ai">
+                <div class="card-header"><div class="card-title"><span>AI 配置</span></div><span class="badge badge-neutral">示例</span></div>
+                <div class="card-body">
+                  <div class="form-grid">
+                    <div class="form-field span-2"><label class="form-label" for="ai-base-url">Base URL</label><input class="form-input" id="ai-base-url" value="https://api.example.com/v1"></div>
+                    <div class="form-field span-2">
+                      <label class="form-label" for="ai-api-key">API Key（掩码）</label>
+                      <div class="input-with-action">
+                        <input class="form-input mask" id="ai-api-key" type="password" value="sk-demo-1234567890abcdef">
+                        <button class="btn" data-toggle-mask="ai-api-key" type="button">显示</button>
+                      </div>
+                    </div>
+                    <div class="form-field"><label class="form-label" for="ai-model">模型</label><input class="form-input" id="ai-model" value="gpt-4o-mini"></div>
+                    <div class="form-field"><label class="form-label" for="ai-timeout">超时（秒）</label><input class="form-input" id="ai-timeout" value="60"></div>
+                    <div class="form-field span-full"><label class="form-label" for="ai-domains">域名授权</label><input class="form-input" id="ai-domains" value="api.example.com, openapi.example.com"></div>
+                  </div>
+                  <div class="form-actions" style="margin-top: 18px;">
+                    <button class="btn btn-primary" data-design-toast="设计稿：AI 配置仅展示，不会保存" type="button">保存</button>
+                    <button class="btn" data-design-toast="设计稿：不会真正测试 AI 连通" type="button">测试连通</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 飞书配置 -->
+              <div class="card settings-section" data-settings-section="feishu">
+                <div class="card-header"><div class="card-title"><span>飞书配置</span></div><span class="badge badge-neutral">示例</span></div>
+                <div class="card-body">
+                  <div class="form-grid">
+                    <div class="form-field span-2"><label class="form-label" for="fs-app-id">App ID</label><input class="form-input" id="fs-app-id" value="cli_demo1234567890"></div>
+                    <div class="form-field span-2">
+                      <label class="form-label" for="fs-app-secret">App Secret（掩码）</label>
+                      <div class="input-with-action">
+                        <input class="form-input mask" id="fs-app-secret" type="password" value="demo-secret-abcdef123456">
+                        <button class="btn" data-toggle-mask="fs-app-secret" type="button">显示</button>
+                      </div>
+                    </div>
+                    <div class="form-field span-2">
+                      <label class="form-label" for="fs-sheet-token">Spreadsheet Token（掩码）</label>
+                      <div class="input-with-action">
+                        <input class="form-input mask" id="fs-sheet-token" type="password" value="demo-sheet-token-abcdef">
+                        <button class="btn" data-toggle-mask="fs-sheet-token" type="button">显示</button>
+                      </div>
+                    </div>
+                    <div class="form-field"><label class="form-label" for="fs-product-table">Product Table ID</label><input class="form-input" id="fs-product-table" value="tbl_product_demo"></div>
+                    <div class="form-field"><label class="form-label" for="fs-seller-table">Seller Table ID</label><input class="form-input" id="fs-seller-table" value="tbl_seller_demo"></div>
+                  </div>
+                  <div class="form-actions" style="margin-top: 18px;">
+                    <button class="btn btn-primary" data-design-toast="设计稿：飞书配置仅展示，不会保存" type="button">保存</button>
+                    <button class="btn" data-design-toast="设计稿：不会真正测试飞书连通" type="button">测试连通</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 回复策略 -->
+              <div class="card settings-section" data-settings-section="reply">
+                <div class="card-header"><div class="card-title"><span>回复策略</span></div><span class="badge badge-neutral">示例</span></div>
+                <div class="card-body">
+                  <div class="rule-panel">
+                    <div class="form-field">
+                      <span class="form-label">模式</span>
+                      <div class="tabs" id="settings-reply-mode-tabs">
+                        <button class="tab-btn" data-mode="manual" type="button">人工</button>
+                        <button class="tab-btn active" data-mode="suggest" type="button">建议</button>
+                        <button class="tab-btn" data-mode="auto" type="button">自动</button>
+                      </div>
+                    </div>
+                    <div class="form-grid">
+                      <div class="form-field span-2">
+                        <span class="form-label">开关</span>
+                        <label class="form-check"><input type="checkbox" checked> 启用回复规则</label>
+                        <label class="form-check"><input type="checkbox"> AI 暂停</label>
+                      </div>
+                      <div class="form-field"><label class="form-label" for="set-cooldown">冷却（秒）</label><input class="form-input" id="set-cooldown" value="30"></div>
+                      <div class="form-field"><label class="form-label" for="set-delay">延迟（秒）</label><input class="form-input" id="set-delay" value="5"></div>
+                      <div class="form-field"><label class="form-label" for="set-limit">每会话上限</label><input class="form-input" id="set-limit" value="10"></div>
+                      <div class="form-field"><label class="form-label" for="set-window">自动回复窗口</label><input class="form-input" id="set-window" value="09:00 - 22:00"></div>
+                      <div class="form-field span-2"><label class="form-label" for="set-handoff">转人工关键词</label><input class="form-input" id="set-handoff" value="投诉, 退款, 举报"></div>
+                      <div class="form-field span-2"><label class="form-label" for="set-blacklist">黑名单关键词</label><input class="form-input" id="set-blacklist" value="加微信, 站外交易"></div>
+                      <div class="form-field"><label class="form-label" for="set-maxlen">最大内容长度</label><input class="form-input" id="set-maxlen" value="200"></div>
+                    </div>
+                  </div>
+                  <div class="form-actions" style="margin-top: 18px;">
+                    <button class="btn btn-primary" data-design-toast="设计稿：回复策略仅展示，不会保存" type="button">保存</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 运行环境 -->
+              <div class="card settings-section" data-settings-section="runtime">
+                <div class="card-header"><div class="card-title"><span>运行环境</span></div><span class="badge badge-neutral" id="settings-runtime-badge">未检测</span></div>
+                <div class="card-body">
+                  <div class="key-value">
+                    <div class="kv-key">扩展环境</div><div class="kv-val">Chrome Extension（示例）</div>
+                    <div class="kv-key">Bridge 状态</div><div class="kv-val" id="settings-bridge-state">未检测</div>
+                    <div class="kv-key">RTT（单次 PING）</div><div class="kv-val" id="settings-rtt">暂无</div>
+                    <div class="kv-key">错误信息</div><div class="kv-val" id="settings-error">无</div>
+                  </div>
+                  <span class="form-label" style="margin: 20px 0 10px;">能力检查</span>
+                  <div class="cap-grid">
+                    <span class="cap-chip unknown"><span class="cap-dot"></span>bridge</span>
+                    <span class="cap-chip unknown"><span class="cap-dot"></span>platform</span>
+                    <span class="cap-chip unknown"><span class="cap-dot"></span>chat</span>
+                    <span class="cap-chip unknown"><span class="cap-dot"></span>reply</span>
+                    <span class="cap-chip unknown"><span class="cap-dot"></span>capture</span>
+                    <span class="cap-chip unknown"><span class="cap-dot"></span>analysis</span>
+                  </div>
+                  <div class="form-actions" style="margin-top: 18px;">
+                    <button class="btn" id="settings-check-btn" type="button">重新检查能力</button>
+                    <span class="muted-note">设计稿：不会真正连接 Bridge</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 账号与授权 -->
+              <div class="card settings-section" data-settings-section="account">
+                <div class="card-header"><div class="card-title"><span>账号与授权</span></div></div>
+                <div class="card-body">
+                  <div class="placeholder-wrap" style="padding: 40px 16px; margin: 0;">
+                    <span class="placeholder-badge">暂未实现</span>
+                    <h2 class="placeholder-title" style="font-size: 16px;">账号与授权功能暂未实现</h2>
+                    <p class="placeholder-desc">当前版本不包含账号体系、登录、会员、套餐与余额。此处不展示任何虚构的账号或授权信息。</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- 分析报告弹窗：示例结构，非真实算法输出 -->
+  <dialog class="analysis-modal" id="analysis-dialog">
+    <div class="modal-header">
+      <div class="modal-title">示例报告 · 非真实算法输出</div>
+      <button class="modal-close-btn" id="close-modal-btn" aria-label="关闭">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="demo-banner" style="border-style: solid;">
+        <span class="demo-tag">示例</span>
+        <span>以下结构与文本为示例，分析结果由 Prompt 规则和数据源返回内容决定。</span>
+      </div>
+      <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.65;">
+        <p style="margin-bottom: 12px;">
+          <strong>输出结构：</strong>摘要 summary · 关键发现 keyFindings · 价格分析 priceRange / competition / recommendation · 商机 opportunities · 风险 risks。
+        </p>
+        <div style="background: var(--bg-subtle); padding: 16px; border-radius: 14px; border: 1px solid var(--border-subtle); margin-bottom: 14px;">
+          <div style="font-weight: 700; color: var(--text-primary); margin-bottom: 6px;">关键发现（示例）：</div>
+          <ul style="padding-left: 20px; display: flex; flex-direction: column; gap: 6px;">
+            <li>示例条目：由数据源返回内容生成，不代表平台真实结论。</li>
+            <li>示例条目：数值需接入真实数据源后计算。</li>
+          </ul>
+        </div>
+        <p style="margin-bottom: 8px;">
+          <strong>价格分析（示例）：</strong> priceRange / competition / recommendation 三个字段由分析任务输出，此处均为示例占位。
+        </p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="close-modal-footer-btn">关闭</button>
+      <button class="btn btn-primary" data-design-toast="设计稿：不会真正导出报告">导出报告</button>
+    </div>
+  </dialog>
+
+  <!-- 采集任务详情弹窗 -->
+  <dialog class="analysis-modal" id="task-detail-dialog">
+    <div class="modal-header">
+      <div class="modal-title">采集任务详情 · <span id="td-keyword">暂无</span></div>
+      <button class="modal-close-btn" id="close-task-detail-btn" aria-label="关闭">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="demo-banner" style="border-style: solid;">
+        <span class="demo-tag">示例</span>
+        <span>详情为示例数据，字段结构与真实任务一致。</span>
+      </div>
+      <div class="key-value">
+        <div class="kv-key">已获取</div><div class="kv-val" id="td-fetched">暂无</div>
+        <div class="kv-key">有效</div><div class="kv-val" id="td-valid">暂无</div>
+        <div class="kv-key">被过滤</div><div class="kv-val" id="td-filtered">暂无</div>
+        <div class="kv-key">重复</div><div class="kv-val" id="td-duplicate">暂无</div>
+        <div class="kv-key">失败</div><div class="kv-val" id="td-failed">暂无</div>
+        <div class="kv-key">下一页断点</div><div class="kv-val" id="td-breakpoint">暂无</div>
+        <div class="kv-key">问题说明</div><div class="kv-val" id="td-issue">暂无</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="close-task-detail-footer-btn">关闭</button>
+    </div>
+  </dialog>
+
+  <!-- 原生 JavaScript 交互逻辑 -->
+  <script>
+    // ============================================================
+    // FishOps Workbench 设计稿交互脚本
+    // 说明：本脚本只驱动静态设计稿的界面表现，所有数据为示例，
+    //       不连接真实 Bridge / 闲鱼 / 飞书 服务。
+    // ============================================================
+
+    // ---------- 通用工具 ----------
+    function escapeHtml(str) {
+      return String(str == null ? '' : str).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function nowTime() {
+      const d = new Date();
+      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    }
+
+    function modeLabel(mode) {
+      return { manual: '人工', suggest: '建议', auto: '自动' }[mode] || mode;
+    }
+
+    // 设计稿轻提示
+    const toastWrap = document.createElement('div');
+    toastWrap.className = 'toast-wrap';
+    const toastEl = document.createElement('div');
+    toastEl.className = 'toast';
+    toastWrap.appendChild(toastEl);
+    document.body.appendChild(toastWrap);
+    let toastTimer = null;
+    function showToast(message) {
+      toastEl.textContent = message;
+      toastWrap.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { toastWrap.classList.remove('show'); }, 2600);
+    }
+
+    // ---------- 1. 导航切换 ----------
+    const navItems = document.querySelectorAll('.nav-item[data-view]');
+    const viewPanels = document.querySelectorAll('.view-panel');
+    const pageTitleDisplay = document.getElementById('page-title-display');
+
+    const viewTitleMap = {
+      'overview': '运营总览',
+      'tasks': '采集任务',
+      'inventory': '商品库',
+      'chat': '聊天中心',
+      'publish': '发布中心',
+      'analytics': '数据分析',
+      'settings': '设置'
+    };
+
+    function switchNav(viewId) {
+      navItems.forEach(function (item) {
+        item.classList.toggle('active', item.getAttribute('data-view') === viewId);
+      });
+      viewPanels.forEach(function (panel) {
+        panel.classList.toggle('active', panel.id === 'view-' + viewId);
+      });
+      if (viewTitleMap[viewId]) {
+        pageTitleDisplay.textContent = viewTitleMap[viewId];
+      }
+    }
+
+    navItems.forEach(function (item) {
+      item.addEventListener('click', function (e) {
+        e.preventDefault();
+        switchNav(item.getAttribute('data-view'));
+      });
+      item.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          switchNav(item.getAttribute('data-view'));
+        }
+      });
+    });
+
+    // ---------- 2. 明暗主题（与设置页主题联动） ----------
+    const themeToggleBtn = document.getElementById('theme-toggle-btn');
+    const rootHtml = document.documentElement;
+    const SUN_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>';
+    const MOON_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
+
+    function setTheme(theme) {
+      rootHtml.setAttribute('data-theme', theme);
+      if (theme === 'dark') {
+        themeToggleBtn.title = '当前深色模式，点击切换为浅色';
+        themeToggleBtn.innerHTML = MOON_ICON;
+      } else {
+        themeToggleBtn.title = '当前浅色模式，点击切换为深色';
+        themeToggleBtn.innerHTML = SUN_ICON;
+      }
+      document.querySelectorAll('#theme-tabs .tab-btn').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-theme-option') === theme);
+      });
+      try { localStorage.setItem('fishops_harvest_theme', theme); } catch (e) {}
+    }
+
+    try {
+      setTheme(localStorage.getItem('fishops_harvest_theme') || 'light');
+    } catch (e) {
+      setTheme('light');
+    }
+
+    themeToggleBtn.addEventListener('click', function () {
+      setTheme(rootHtml.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    });
+
+    const themeTabs = document.getElementById('theme-tabs');
+    if (themeTabs) {
+      themeTabs.addEventListener('click', function (e) {
+        const btn = e.target.closest('.tab-btn');
+        if (btn) setTheme(btn.getAttribute('data-theme-option'));
+      });
+    }
+
+    // ---------- 3. 刷新按钮（设计稿） ----------
+    const refreshBtn = document.getElementById('refresh-btn');
+    const refreshIcon = document.getElementById('refresh-icon');
+    const refreshText = document.getElementById('refresh-text');
+    refreshBtn.addEventListener('click', function () {
+      refreshIcon.style.transition = 'transform 0.6s ease';
+      refreshIcon.style.transform = 'rotate(360deg)';
+      refreshText.textContent = '刷新中...';
+      refreshBtn.disabled = true;
+      setTimeout(function () {
+        refreshIcon.style.transform = 'none';
+        refreshText.textContent = '刷新';
+        refreshBtn.disabled = false;
+        showToast('设计稿：页面为静态示例数据，刷新不会拉取真实数据');
+      }, 600);
+    });
+
+    // ---------- 4. 运行环境：单次 PING 诊断 ----------
+    const pingBtn = document.getElementById('ping-diagnose-btn');
+    function setBridgeUI(stateText, rtt, error) {
+      const bridgeState = document.getElementById('bridge-state');
+      const rttValue = document.getElementById('rtt-value');
+      const runtimeError = document.getElementById('runtime-error');
+      const runtimeBadge = document.getElementById('runtime-badge');
+      if (bridgeState) bridgeState.textContent = stateText;
+      if (rttValue) rttValue.textContent = rtt;
+      if (runtimeError) runtimeError.textContent = error;
+      if (runtimeBadge) runtimeBadge.textContent = stateText;
+      const sState = document.getElementById('settings-bridge-state');
+      const sRtt = document.getElementById('settings-rtt');
+      const sErr = document.getElementById('settings-error');
+      const sBadge = document.getElementById('settings-runtime-badge');
+      if (sState) sState.textContent = stateText;
+      if (sRtt) sRtt.textContent = rtt;
+      if (sErr) sErr.textContent = error;
+      if (sBadge) sBadge.textContent = stateText;
+    }
+    if (pingBtn) {
+      pingBtn.addEventListener('click', function () {
+        setBridgeUI('检查中', '暂无', '无');
+        showToast('设计稿：正在发起单次 PING 诊断…');
+        setTimeout(function () {
+          setBridgeUI('可用', '示例 42 ms', '无');
+          showToast('设计稿：示例单次 RTT 42 ms，非平均值 / 分位数，非真实值');
+        }, 900);
+      });
+    }
+
+    // ---------- 5. 商品库：搜索 / 筛选 / 排序 / 分页 / 密度 ----------
+    const PAGE_SIZE = 3;
+    const searchInput = document.getElementById('table-search-input');
+    const categoryFilter = document.getElementById('category-filter');
+    const shippingFilter = document.getElementById('shipping-filter');
+    const resetFilterBtn = document.getElementById('reset-filter-btn');
+    const inventoryTable = document.getElementById('inventory-table');
+    const inventoryTbody = document.getElementById('inventory-tbody');
+    const paginationSummary = document.getElementById('pagination-summary');
+    const paginationPages = document.getElementById('pagination-pages');
+    let invRows = Array.from(inventoryTbody.querySelectorAll('tr'));
+    let currentPage = 1;
+    let priceSortDir = 0;
+    let wantsSortDir = 0;
+
+    function makePageBtn(label, disabled, onClick, ariaLabel) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'page-btn';
+      b.textContent = label;
+      b.disabled = disabled;
+      if (ariaLabel) b.setAttribute('aria-label', ariaLabel);
+      if (!disabled) b.addEventListener('click', onClick);
+      return b;
+    }
+
+    function renderPagination(total, totalPages) {
+      const start = total === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+      const end = Math.min(currentPage * PAGE_SIZE, total);
+      paginationSummary.textContent = '示例数据：显示第 ' + start + ' 至 ' + end + ' 条 / 共 ' + total + ' 条（每页 ' + PAGE_SIZE + ' 条）';
+      paginationPages.innerHTML = '';
+      paginationPages.appendChild(makePageBtn('‹', currentPage === 1, function () { currentPage--; applyInventory(); }, '上一页'));
+      for (let p = 1; p <= totalPages; p++) {
+        (function (page) {
+          const btn = makePageBtn(String(page), false, function () { currentPage = page; applyInventory(); });
+          if (page === currentPage) btn.classList.add('active');
+          paginationPages.appendChild(btn);
+        })(p);
+      }
+      paginationPages.appendChild(makePageBtn('›', currentPage === totalPages, function () { currentPage++; applyInventory(); }, '下一页'));
+    }
+
+    function applyInventory() {
+      const query = (searchInput.value || '').trim().toLowerCase();
+      const cat = categoryFilter.value;
+      const shipping = shippingFilter.value;
+      const visible = invRows.filter(function (row) {
+        const text = row.textContent.toLowerCase();
+        const rowCat = row.getAttribute('data-cat');
+        const rowShipping = row.getAttribute('data-shipping');
+        const matchQuery = !query || text.indexOf(query) !== -1;
+        const matchCat = cat === 'all' || rowCat === cat;
+        const matchShipping = shipping === 'all' || rowShipping === shipping;
+        return matchQuery && matchCat && matchShipping;
+      });
+      const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+      invRows.forEach(function (r) { r.style.display = 'none'; });
+      visible.forEach(function (r, i) {
+        const page = Math.floor(i / PAGE_SIZE) + 1;
+        if (page === currentPage) r.style.display = '';
+      });
+      renderPagination(visible.length, totalPages);
+    }
+
+    function sortInventory(by) {
+      if (by === 'price') { priceSortDir = priceSortDir === 1 ? -1 : 1; wantsSortDir = 0; }
+      else { wantsSortDir = wantsSortDir === 1 ? -1 : 1; priceSortDir = 0; }
+      invRows.sort(function (a, b) {
+        if (by === 'price') {
+          const pa = parseFloat(a.querySelector('.prod-price').textContent.replace(/[^0-9.]/g, '')) || 0;
+          const pb = parseFloat(b.querySelector('.prod-price').textContent.replace(/[^0-9.]/g, '')) || 0;
+          return (pa - pb) * priceSortDir;
+        }
+        const wa = parseInt(a.querySelector('td:nth-child(5) strong').textContent, 10) || 0;
+        const wb = parseInt(b.querySelector('td:nth-child(5) strong').textContent, 10) || 0;
+        return (wa - wb) * wantsSortDir;
+      });
+      invRows.forEach(function (r) { inventoryTbody.appendChild(r); });
+      currentPage = 1;
+      applyInventory();
+    }
+
+    searchInput.addEventListener('input', function () { currentPage = 1; applyInventory(); });
+    categoryFilter.addEventListener('change', function () { currentPage = 1; applyInventory(); });
+    shippingFilter.addEventListener('change', function () { currentPage = 1; applyInventory(); });
+    resetFilterBtn.addEventListener('click', function () {
+      searchInput.value = '';
+      categoryFilter.value = 'all';
+      shippingFilter.value = 'all';
+      currentPage = 1;
+      applyInventory();
+    });
+    document.getElementById('sort-price').addEventListener('click', function () { sortInventory('price'); });
+    document.getElementById('sort-wants').addEventListener('click', function () { sortInventory('wants'); });
+
+    const densityCompactBtn = document.getElementById('density-compact');
+    const densityDefaultBtn = document.getElementById('density-default');
+    densityCompactBtn.addEventListener('click', function () {
+      densityCompactBtn.classList.add('active');
+      densityDefaultBtn.classList.remove('active');
+      inventoryTable.classList.add('density-compact');
+    });
+    densityDefaultBtn.addEventListener('click', function () {
+      densityDefaultBtn.classList.add('active');
+      densityCompactBtn.classList.remove('active');
+      inventoryTable.classList.remove('density-compact');
+    });
+
+    const selectAllCheck = document.getElementById('select-all-check');
+    selectAllCheck.addEventListener('change', function () {
+      inventoryTbody.querySelectorAll('.row-checkbox').forEach(function (cb) { cb.checked = selectAllCheck.checked; });
+    });
+
+    document.getElementById('push-feishu-btn').addEventListener('click', function () {
+      const ok = window.confirm('预检并写入飞书（设计稿）\n\n将执行：\n1) 字段预检：校验必填字段与类型\n2) 防重复：按 itemId 去重\n3) 显式确认后写入\n\n点击「确定」仅展示设计稿提示，不会真正写入。');
+      showToast(ok ? '设计稿：已完成字段预检与去重模拟，未真正写入飞书' : '设计稿：已取消写入');
+    });
+
+    applyInventory();
+
+    // ---------- 6. 采集任务：表单 / 筛选 / 详情 ----------
+    const taskFormPanel = document.getElementById('task-form-panel');
+    const toggleTaskFormBtn = document.getElementById('toggle-task-form');
+    toggleTaskFormBtn.addEventListener('click', function () {
+      const open = taskFormPanel.classList.toggle('open');
+      toggleTaskFormBtn.textContent = open ? '收起表单' : '展开表单';
+    });
+    document.getElementById('create-task-btn').addEventListener('click', function () {
+      const kw = document.getElementById('task-keyword').value.trim();
+      if (!kw) { showToast('设计稿：请先填写关键词'); return; }
+      showToast('设计稿：已模拟创建采集任务「' + kw + '」，不会真正创建');
+    });
+    document.getElementById('reset-task-form-btn').addEventListener('click', function () {
+      document.getElementById('task-keyword').value = '';
+      document.getElementById('task-detail').value = '';
+      showToast('设计稿：表单已重置');
+    });
+
+    const taskStatusTabs = document.getElementById('task-status-tabs');
+    const taskRows = Array.from(document.querySelectorAll('#task-tbody tr'));
+    taskStatusTabs.addEventListener('click', function (e) {
+      const btn = e.target.closest('.tab-btn');
+      if (!btn) return;
+      taskStatusTabs.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      const status = btn.getAttribute('data-status');
+      taskRows.forEach(function (row) {
+        row.style.display = (status === 'all' || row.getAttribute('data-status') === status) ? '' : 'none';
+      });
+    });
+
+    const taskDetailDialog = document.getElementById('task-detail-dialog');
+    function openTaskDetail(row) {
+      const d = row.dataset;
+      document.getElementById('td-keyword').textContent = d.keyword || '暂无';
+      document.getElementById('td-fetched').textContent = d.fetched || '暂无';
+      document.getElementById('td-valid').textContent = d.valid || '暂无';
+      document.getElementById('td-filtered').textContent = d.filtered || '暂无';
+      document.getElementById('td-duplicate').textContent = d.duplicate || '暂无';
+      document.getElementById('td-failed').textContent = d.failed || '暂无';
+      document.getElementById('td-breakpoint').textContent = d.breakpoint || '暂无';
+      document.getElementById('td-issue').textContent = d.issue || '暂无';
+      taskDetailDialog.showModal();
+    }
+    document.getElementById('close-task-detail-btn').addEventListener('click', function () { taskDetailDialog.close(); });
+    document.getElementById('close-task-detail-footer-btn').addEventListener('click', function () { taskDetailDialog.close(); });
+
+    document.getElementById('task-tbody').addEventListener('click', function (e) {
+      const link = e.target.closest('.action-link');
+      if (!link) return;
+      const action = link.getAttribute('data-action');
+      const row = link.closest('tr');
+      const kw = row.dataset.keyword || '';
+      if (action === 'detail') { openTaskDetail(row); return; }
+      const labels = { pause: '暂停', resume: '恢复', cancel: '取消', retry: '重试失败项' };
+      showToast('设计稿：已请求「' + (labels[action] || action) + '」任务「' + kw + '」，不会真正执行');
+    });
+
+    // ---------- 7. 聊天中心 ----------
+    const conversations = [
+      {
+        id: 'c1', name: '摄影小陈_自用', time: '14:32', unread: 2, socket: 'connected',
+        last: '快门次数有记录吗？',
+        suggestions: ['快门 3200 次，可发截图给你', '箱说齐全，支持验货', '价格可以小刀一点'],
+        messages: [
+          { dir: 'in', type: 'text', text: '你好，这台 A7M4 还在吗？', time: '14:28' },
+          { dir: 'out', type: 'text', text: '在的，国行单机，箱说全。', time: '14:30' },
+          { dir: 'in', type: 'text', text: '快门次数有记录吗？', time: '14:32' },
+          { dir: 'in', type: 'product', title: 'Sony A7M4 国行单机', sub: '¥8,850.00', time: '14:32' },
+          { dir: 'sys', type: 'system', text: '会话已同步（示例）', time: '14:33' }
+        ]
+      },
+      {
+        id: 'c2', name: '日落街角Lens', time: '13:58', unread: 0, socket: 'connected',
+        last: '镜头有霉吗？',
+        suggestions: ['镜片通透无霉，可拍给你看', '支持当面验机'],
+        messages: [
+          { dir: 'in', type: 'text', text: '镜头有霉吗？', time: '13:58' },
+          { dir: 'out', type: 'image', text: '', time: '13:59' },
+          { dir: 'in', type: 'voice', text: '0:06', time: '14:00' }
+        ]
+      },
+      {
+        id: 'c3', name: '器材党退烧小李', time: '13:20', unread: 5, socket: 'connecting',
+        last: '能便宜点吗',
+        suggestions: ['可以小刀，走平台交易更放心', '这个价格已经是底价了'],
+        messages: [
+          { dir: 'in', type: 'text', text: '能便宜点吗', time: '13:20' },
+          { dir: 'in', type: 'order', title: '订单 #示例2026', sub: '待付款', time: '13:21' }
+        ]
+      },
+      {
+        id: 'c4', name: '飞行员老张', time: '10:15', unread: 0, socket: 'error',
+        last: '已拍，明天发货',
+        suggestions: ['好的，明天安排发货', '已收到，感谢支持'],
+        messages: [
+          { dir: 'in', type: 'text', text: '已拍，明天发货', time: '10:15' },
+          { dir: 'out', type: 'text', text: '好的，明天安排发货。', time: '10:16' }
+        ]
+      }
+    ];
+    const TYPE_LABELS = { text: '文字', image: '图片', voice: '语音', product: '商品', order: '订单', system: '系统' };
+    let activeConvId = conversations[0].id;
+    const conversationList = document.getElementById('conversation-list');
+    const messageStream = document.getElementById('message-stream');
+    const suggestionRow = document.getElementById('suggestion-row');
+    const replyInput = document.getElementById('reply-input');
+    const replyCount = document.getElementById('reply-count');
+    const MAX_LEN = 200;
+
+    function updateSocketState(state) {
+      const dot = document.getElementById('socket-dot');
+      const label = document.getElementById('socket-state');
+      const map = { connecting: ['warning', '连接中'], connected: ['', '已连接'], disconnected: ['idle', '已断开'], error: ['danger', '异常'] };
+      const cfg = map[state] || ['idle', '未连接'];
+      dot.className = 'status-dot' + (cfg[0] ? ' ' + cfg[0] : '');
+      label.textContent = cfg[1];
+    }
+
+    function renderConversations() {
+      conversationList.innerHTML = '';
+      conversations.forEach(function (conv) {
+        const item = document.createElement('div');
+        item.className = 'conversation-item' + (conv.id === activeConvId ? ' active' : '');
+        item.setAttribute('data-conv', conv.id);
+        let html = '<div class="conv-top"><span class="conv-name">' + escapeHtml(conv.name) + '</span><span class="conv-time">' + escapeHtml(conv.time) + '</span></div>';
+        html += '<div class="conv-top"><span class="conv-last">' + escapeHtml(conv.last) + '</span>';
+        html += (conv.unread > 0 ? '<span class="conv-unread">' + conv.unread + '</span>' : '');
+        html += '</div>';
+        item.innerHTML = html;
+        item.addEventListener('click', function () { selectConversation(conv.id); });
+        conversationList.appendChild(item);
+      });
+    }
+
+    function messageBody(m) {
+      if (m.type === 'image') {
+        return '<div class="msg-card"><div class="msg-thumb">🖼️</div><div><div class="msg-card-title">图片</div><div class="msg-card-sub">点击查看（示例）</div></div></div>';
+      }
+      if (m.type === 'voice') {
+        return '<div class="msg-card"><div class="msg-thumb">🎤</div><div><div class="msg-card-title">语音</div><div class="msg-card-sub">' + escapeHtml(m.text || '0:08') + '</div></div></div>';
+      }
+      if (m.type === 'product') {
+        return '<div class="msg-card"><div class="msg-thumb">📦</div><div><div class="msg-card-title">' + escapeHtml(m.title || '商品') + '</div><div class="msg-card-sub">' + escapeHtml(m.sub || '') + '</div></div></div>';
+      }
+      if (m.type === 'order') {
+        return '<div class="msg-card"><div class="msg-thumb">🧾</div><div><div class="msg-card-title">' + escapeHtml(m.title || '订单') + '</div><div class="msg-card-sub">' + escapeHtml(m.sub || '') + '</div></div></div>';
+      }
+      return escapeHtml(m.text || '');
+    }
+
+    function renderMessages() {
+      const conv = conversations.find(function (c) { return c.id === activeConvId; });
+      if (!conv) return;
+      document.getElementById('chat-peer-name').textContent = conv.name;
+      document.getElementById('chat-peer-meta').textContent = '单会话未读 ' + conv.unread;
+      messageStream.innerHTML = '';
+      conv.messages.forEach(function (m) {
+        const row = document.createElement('div');
+        if (m.dir === 'sys' || m.type === 'system') {
+          row.className = 'msg-row';
+          row.innerHTML = '<div class="msg-bubble sys">' + escapeHtml(m.text || '') + '</div>';
+        } else {
+          row.className = 'msg-row' + (m.dir === 'out' ? ' out' : '');
+          row.innerHTML = '<div class="msg-meta"><span class="msg-type-tag">' + (TYPE_LABELS[m.type] || '文字') + '</span><span>' + escapeHtml(m.time || '') + '</span></div>'
+            + '<div class="msg-bubble">' + messageBody(m) + '</div>';
+        }
+        messageStream.appendChild(row);
+      });
+      messageStream.scrollTop = messageStream.scrollHeight;
+      renderSuggestions(conv);
+    }
+
+    function renderSuggestions(conv) {
+      suggestionRow.innerHTML = '';
+      (conv.suggestions || []).forEach(function (s) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'suggestion-chip';
+        chip.textContent = s;
+        chip.addEventListener('click', function () {
+          replyInput.value = s;
+          updateReplyCount();
+          replyInput.focus();
+        });
+        suggestionRow.appendChild(chip);
+      });
+    }
+
+    function selectConversation(id) {
+      activeConvId = id;
+      const conv = conversations.find(function (c) { return c.id === id; });
+      conv.unread = 0;
+      renderConversations();
+      renderMessages();
+      updateSocketState(conv.socket);
+    }
+
+    function updateReplyCount() {
+      const len = Array.from(replyInput.value).length;
+      replyCount.textContent = len;
+      replyCount.style.color = len > MAX_LEN ? 'var(--status-danger)' : '';
+    }
+    replyInput.addEventListener('input', updateReplyCount);
+
+    function sendReply() {
+      const text = replyInput.value.trim();
+      if (!text) { showToast('设计稿：请输入回复内容'); return; }
+      const conv = conversations.find(function (c) { return c.id === activeConvId; });
+      conv.messages.push({ dir: 'out', type: 'text', text: text, time: nowTime() });
+      conv.last = text;
+      conv.time = nowTime();
+      replyInput.value = '';
+      updateReplyCount();
+      renderMessages();
+      renderConversations();
+      showToast('设计稿：已模拟发送，不会真正发送到闲鱼');
+    }
+    document.getElementById('send-reply-btn').addEventListener('click', sendReply);
+    document.getElementById('adopt-suggestion-btn').addEventListener('click', function () {
+      if (!replyInput.value.trim()) {
+        const conv = conversations.find(function (c) { return c.id === activeConvId; });
+        if (conv.suggestions && conv.suggestions.length) {
+          replyInput.value = conv.suggestions[0];
+          updateReplyCount();
+        }
+      }
+      sendReply();
+    });
+
+    const toggleRuleViewBtn = document.getElementById('toggle-rule-view-btn');
+    toggleRuleViewBtn.addEventListener('click', function () {
+      const view = document.getElementById('chat-rule-view');
+      const willShow = view.style.display === 'none';
+      view.style.display = willShow ? '' : 'none';
+      toggleRuleViewBtn.textContent = willShow ? '收起规则' : '规则视图';
+    });
+
+    function bindModeTabs(containerId) {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      el.addEventListener('click', function (e) {
+        const btn = e.target.closest('.tab-btn');
+        if (!btn) return;
+        el.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        showToast('设计稿：回复模式已切换为「' + modeLabel(btn.getAttribute('data-mode')) + '」');
+      });
+    }
+    bindModeTabs('reply-mode-tabs');
+    bindModeTabs('settings-reply-mode-tabs');
+
+    function simulateSync(label) {
+      const state = document.getElementById('sync-state');
+      state.textContent = '同步中…';
+      showToast('设计稿：正在' + label + '…');
+      setTimeout(function () {
+        state.textContent = '空闲';
+        showToast('设计稿：已完成「' + label + '」模拟，未连接真实服务');
+      }, 700);
+    }
+    document.getElementById('sync-conversations-btn').addEventListener('click', function () { simulateSync('同步会话'); });
+    document.getElementById('sync-history-btn').addEventListener('click', function () { simulateSync('同步当前历史'); });
+
+    renderConversations();
+    renderMessages();
+    updateSocketState(conversations[0].socket);
+    updateReplyCount();
+
+    // ---------- 8. 发布中心 ----------
+    const publishSteps = Array.from(document.querySelectorAll('#publish-stepper .step-item'));
+    const publishContents = Array.from(document.querySelectorAll('.publish-step-content'));
+    const STEP_STATE = { prepare: '准备中', review: '待核对', submit: '提交中' };
+    function selectPublishStep(step) {
+      publishSteps.forEach(function (s) { s.classList.toggle('active', s.getAttribute('data-step') === step); });
+      publishContents.forEach(function (c) { c.hidden = c.getAttribute('data-step-content') !== step; });
+      document.getElementById('publish-step-state').textContent = STEP_STATE[step] || '';
+    }
+    publishSteps.forEach(function (s) {
+      s.addEventListener('click', function () { selectPublishStep(s.getAttribute('data-step')); });
+    });
+    document.getElementById('submit-publish-btn').addEventListener('click', function () {
+      showToast('设计稿：提交发布仅演示，门禁已展示，不会真正提交到平台');
+    });
+
+    // ---------- 9. 设置：分区 / 掩码 / 能力检查 ----------
+    const settingsNav = document.getElementById('settings-nav');
+    const settingsSections = Array.from(document.querySelectorAll('.settings-section'));
+    settingsNav.addEventListener('click', function (e) {
+      const item = e.target.closest('.nav-item');
+      if (!item) return;
+      const key = item.getAttribute('data-settings');
+      settingsNav.querySelectorAll('.nav-item').forEach(function (i) { i.classList.toggle('active', i === item); });
+      settingsSections.forEach(function (sec) {
+        sec.classList.toggle('active', sec.getAttribute('data-settings-section') === key);
+      });
+    });
+    settingsNav.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const item = e.target.closest('.nav-item');
+      if (item) { e.preventDefault(); item.click(); }
+    });
+
+    document.querySelectorAll('[data-toggle-mask]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const input = document.getElementById(btn.getAttribute('data-toggle-mask'));
+        if (!input) return;
+        const show = input.type === 'password';
+        input.type = show ? 'text' : 'password';
+        btn.textContent = show ? '隐藏' : '显示';
+      });
+    });
+
+    document.getElementById('settings-check-btn').addEventListener('click', function () {
+      showToast('设计稿：能力检查为演示。Bridge 未连接，各能力保持「未检测」');
+    });
+
+    // ---------- 10. 分析报告弹窗 ----------
+    const analysisDialog = document.getElementById('analysis-dialog');
+    const openAnalysisModalBtn = document.getElementById('open-analysis-modal-btn');
+    const closeModalBtn = document.getElementById('close-modal-btn');
+    const closeModalFooterBtn = document.getElementById('close-modal-footer-btn');
+    if (openAnalysisModalBtn && analysisDialog) {
+      openAnalysisModalBtn.addEventListener('click', function () { analysisDialog.showModal(); });
+      closeModalBtn.addEventListener('click', function () { analysisDialog.close(); });
+      closeModalFooterBtn.addEventListener('click', function () { analysisDialog.close(); });
+      analysisDialog.addEventListener('click', function (e) {
+        const rect = analysisDialog.getBoundingClientRect();
+        const isInDialog = (rect.top <= e.clientY && e.clientY <= rect.top + rect.height
+          && rect.left <= e.clientX && e.clientX <= rect.left + rect.width);
+        if (!isInDialog) analysisDialog.close();
+      });
+    }
+
+    // ---------- 11. 统一处理“设计稿”提示按钮 ----------
+    document.addEventListener('click', function (e) {
+      const el = e.target.closest('[data-design-toast]');
+      if (el) showToast(el.getAttribute('data-design-toast'));
+    });
+  </script>
+</body>
+</html>

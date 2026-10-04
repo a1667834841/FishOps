@@ -298,6 +298,95 @@ test('FormFiller: submit() 注入返回空数组 → 结构化 SCRIPT_INJECTION_
   await assertScriptInjectionFailed(() => filler.submit(1))
 })
 
+// ============================ 配送（邮费）与所在地 ============================
+
+const SHIPPING_READY_RESULT = {
+  titleFilled: true,
+  descFilled: true,
+  priceFilled: true,
+  origPriceFilled: true,
+  mainImageUploaded: true,
+  detailImagesCount: 0,
+  imagesUploadedCount: 1,
+  imagesFailed: [],
+  postFeeFilled: true,
+  locationFilled: true,
+  locationValue: '外滩',
+  locationStatus: 'ready',
+}
+
+test('FormFiller: 配送意图随可序列化 args 传递（包邮映射 0）', async () => {
+  let capturedArgs: unknown[] | undefined
+  const executor: ScriptingExecutor = {
+    async executeScript<T>(injection: { func: (...args: unknown[]) => T; args?: unknown[] }) {
+      if (injection.func === (injectCheckPageStatus as unknown)) {
+        return [{ result: READY_STATUS as unknown as T }]
+      }
+      capturedArgs = injection.args
+      return [{ result: SHIPPING_READY_RESULT as unknown as T }]
+    },
+  }
+  const filler = new DOMPublishFormFiller({ executor })
+
+  await filler.fill(7, makeItem({ shippingStatus: 'free', freeShip: true, postFee: 0 }), [])
+
+  const arg = capturedArgs?.[0] as Record<string, unknown>
+  assert.deepEqual(arg.shipping, { mode: 'free' })
+})
+
+test('FormFiller: 不包邮但缺邮费时结构化拒绝（FORM_VALIDATION_FAILED，不伪造收费）', async () => {
+  const filler = new DOMPublishFormFiller({ executor: createMockExecutor(SHIPPING_READY_RESULT) })
+
+  await assert.rejects(
+    () => filler.fill(1, makeItem({ shippingStatus: 'unspecified', freeShip: false }), []),
+    (err: unknown) => {
+      assert.ok(err instanceof PublishError)
+      assert.equal((err as PublishError).code, 'FORM_VALIDATION_FAILED')
+      assert.equal((err as PublishError).retryable, false)
+      return true
+    },
+  )
+})
+
+test('FormFiller: shippingStatus=paid 但缺邮费金额时结构化拒绝', async () => {
+  const filler = new DOMPublishFormFiller({ executor: createMockExecutor(SHIPPING_READY_RESULT) })
+
+  await assert.rejects(
+    () => filler.fill(1, makeItem({ shippingStatus: 'paid', freeShip: false }), []),
+    (err: unknown) => {
+      assert.ok(err instanceof PublishError)
+      assert.equal((err as PublishError).code, 'FORM_VALIDATION_FAILED')
+      return true
+    },
+  )
+})
+
+test('FormFiller: 配送与所在地状态进入 fillSummary，未满足时 ok 为 false（供编辑层提示）', async () => {
+  const filler = new DOMPublishFormFiller({
+    executor: createMockExecutor({
+      titleFilled: true,
+      descFilled: true,
+      priceFilled: true,
+      origPriceFilled: true,
+      mainImageUploaded: true,
+      detailImagesCount: 0,
+      imagesUploadedCount: 1,
+      imagesFailed: [],
+      postFeeFilled: false,
+      locationFilled: false,
+      locationValue: '',
+      locationStatus: 'needs_user_selection',
+      errors: ['发布页宝贝所在地为空：请在发布页选择所在地后重试'],
+    }),
+  })
+
+  const res = await filler.fill(1, makeItem({ shippingStatus: 'free', postFee: 0 }), [])
+  assert.equal(res.ok, false)
+  assert.equal(res.fillSummary.postFeeFilled, false)
+  assert.equal(res.fillSummary.locationFilled, false)
+  assert.equal(res.fillSummary.locationStatus, 'needs_user_selection')
+})
+
 test('FormFiller: executeScript 返回 rejected Promise → 结构化 SCRIPT_INJECTION_FAILED', async () => {
   const executor: ScriptingExecutor = {
     async executeScript<T>() {
@@ -329,4 +418,77 @@ test('FormFiller: executeScript 数组含空项 → 结构化 SCRIPT_INJECTION_F
   const filler = new DOMPublishFormFiller({ executor })
 
   await assertScriptInjectionFailed(() => filler.checkPageStatus(1))
+})
+
+// ============================ root guard：官方可见阻断优先于图片/字段失败 ============================
+
+/** 图片回读失败（页面确认 0 / 已构造 1）的最小注入结果：旧实现会退化为 FORM_FIELD_CHANGED。 */
+const IMAGE_READBACK_FAILED_RESULT = {
+  titleFilled: true,
+  descFilled: true,
+  priceFilled: true,
+  origPriceFilled: true,
+  mainImageUploaded: false,
+  detailImagesCount: 0,
+  imagesUploadedCount: 0,
+  imagesFailed: [{ index: 1, url: 'https://img.example.com/1.jpg', error: '回读 0' }],
+  postFeeFilled: true,
+  locationFilled: true,
+  errors: ['图片写入上传控件后回读确认未完全生效（页面确认 0 / 已构造 1）'],
+}
+
+test('FormFiller root guard: 官方「分类不支持网页端发布」结构化拒绝，优先于图片回读失败', async () => {
+  const filler = new DOMPublishFormFiller({
+    executor: createMockExecutor({
+      ...IMAGE_READBACK_FAILED_RESULT,
+      officialBlock: {
+        code: 'PUBLISH_CATEGORY_UNSUPPORTED',
+        message: '当前分类不支持网页端发布',
+        source: 'toast',
+      },
+    }),
+  })
+
+  await assert.rejects(
+    () => filler.fill(1, makeItem(), []),
+    (err: unknown) => {
+      assert.ok(err instanceof PublishError)
+      assert.equal((err as PublishError).code, 'PUBLISH_CATEGORY_UNSUPPORTED')
+      assert.equal((err as PublishError).retryable, false)
+      return true
+    },
+  )
+})
+
+test('FormFiller root guard: 官方 emoji 校验 → FORM_VALIDATION_FAILED，绝不误判为图片失败', async () => {
+  const filler = new DOMPublishFormFiller({
+    executor: createMockExecutor({
+      ...IMAGE_READBACK_FAILED_RESULT,
+      officialBlock: {
+        code: 'FORM_VALIDATION_FAILED',
+        message: '商品描述不能包含emoji',
+        source: 'form-validation',
+      },
+    }),
+  })
+
+  await assert.rejects(
+    () => filler.fill(1, makeItem(), []),
+    (err: unknown) => {
+      assert.ok(err instanceof PublishError)
+      assert.equal((err as PublishError).code, 'FORM_VALIDATION_FAILED')
+      assert.notEqual((err as PublishError).code, 'FORM_FIELD_CHANGED')
+      return true
+    },
+  )
+})
+
+test('FormFiller root guard: 无官方阻断时不误报，仍按图片回读失败返回 ok=false', async () => {
+  const filler = new DOMPublishFormFiller({
+    executor: createMockExecutor(IMAGE_READBACK_FAILED_RESULT),
+  })
+
+  const res = await filler.fill(1, makeItem(), [])
+  assert.equal(res.ok, false)
+  assert.equal(res.fillSummary.mainImageUploaded, false)
 })

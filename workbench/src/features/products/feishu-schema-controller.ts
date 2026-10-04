@@ -367,6 +367,7 @@ export class FeishuSchemaReconcileController extends StateStore<FeishuSchemaReco
    */
   invalidatePreview(): void {
     if (this.disposed) return
+    this.previewSeq++
     this.patch({
       preview: {
         phase: 'idle',

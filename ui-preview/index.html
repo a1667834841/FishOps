@@ -1,0 +1,2613 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FishOps Workbench 数据运营工作台设计稿</title>
+  <style>
+    /* 基础重置与系统字体栈 */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* 变量设计：浅色（默认）与深色主题切换 */
+    :root[data-theme="light"] {
+      --bg-canvas: #F1F4F8;
+      --bg-surface: #FFFFFF;
+      --bg-subtle: #F8FAFC;
+      --bg-muted: #ECEFF4;
+      --border-subtle: #E2E8F0;
+      --border-strong: #CBD5E1;
+      --text-primary: #0F172A;
+      --text-secondary: #475569;
+      --text-muted: #94A3B8;
+
+      /* 琥珀金主强调色体系 */
+      --brand-primary: #D97706;
+      --brand-hover: #B45309;
+      --brand-active: #92400E;
+      --brand-subtle: #FEF3C7;
+      --brand-light: #FFFBEB;
+      --brand-border: #FCD34D;
+      --brand-text: #92400E;
+
+      /* 状态色体系（红/绿只表达状态） */
+      --status-success: #15803D;
+      --status-success-bg: #DCFCE7;
+      --status-success-border: #86EFAC;
+      --status-danger: #B91C1C;
+      --status-danger-bg: #FEE2E2;
+      --status-danger-border: #FCA5A5;
+      --status-warning: #D97706;
+      --status-warning-bg: #FEF3C7;
+      --status-info: #0369A1;
+      --status-info-bg: #E0F2FE;
+
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+      --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
+      --shadow-pop: 0 12px 24px -4px rgba(15, 23, 42, 0.12);
+
+      --chart-grid: #E2E8F0;
+      --chart-axis: #94A3B8;
+      --chart-line: #D97706;
+      --chart-area: rgba(217, 119, 6, 0.12);
+      --chart-bar-bg: #E2E8F0;
+      --chart-bar-active: #D97706;
+    }
+
+    :root[data-theme="dark"] {
+      --bg-canvas: #090D14;
+      --bg-surface: #111827;
+      --bg-subtle: #182234;
+      --bg-muted: #1F2E45;
+      --border-subtle: #243044;
+      --border-strong: #374660;
+      --text-primary: #F8FAFC;
+      --text-secondary: #94A3B8;
+      --text-muted: #64748B;
+
+      /* 深色下更高亮度的琥珀金强调色 */
+      --brand-primary: #F59E0B;
+      --brand-hover: #FBBF24;
+      --brand-active: #D97706;
+      --brand-subtle: rgba(245, 158, 11, 0.16);
+      --brand-light: rgba(245, 158, 11, 0.08);
+      --brand-border: #78350F;
+      --brand-text: #FDE68A;
+
+      --status-success: #22C55E;
+      --status-success-bg: rgba(34, 197, 94, 0.16);
+      --status-success-border: rgba(34, 197, 94, 0.35);
+      --status-danger: #EF4444;
+      --status-danger-bg: rgba(239, 68, 68, 0.16);
+      --status-danger-border: rgba(239, 68, 68, 0.35);
+      --status-warning: #F59E0B;
+      --status-warning-bg: rgba(245, 158, 11, 0.16);
+      --status-info: #38BDF8;
+      --status-info-bg: rgba(56, 189, 248, 0.16);
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+      --shadow-md: 0 4px 10px rgba(0, 0, 0, 0.5);
+      --shadow-pop: 0 16px 32px rgba(0, 0, 0, 0.65);
+
+      --chart-grid: #243044;
+      --chart-axis: #64748B;
+      --chart-line: #F59E0B;
+      --chart-area: rgba(245, 158, 11, 0.2);
+      --chart-bar-bg: #1F2E45;
+      --chart-bar-active: #F59E0B;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--text-primary);
+      background-color: var(--bg-canvas);
+      display: flex;
+      min-height: 100vh;
+      overflow-x: hidden;
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
+    }
+
+    /* 整体布局结构 */
+    .app-shell {
+      display: flex;
+      width: 100%;
+      min-height: 100vh;
+    }
+
+    /* 左侧紧凑导航栏 */
+    .sidebar {
+      width: 220px;
+      min-width: 220px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      user-select: none;
+      z-index: 20;
+    }
+
+    .brand-header {
+      padding: 18px 16px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      box-shadow: 0 2px 4px rgba(217, 119, 6, 0.25);
+    }
+
+    .brand-title {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brand-name {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    .brand-tag {
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.2px;
+    }
+
+    .nav-group {
+      flex: 1;
+      padding: 14px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      overflow-y: auto;
+    }
+
+    .nav-label {
+      padding: 8px 10px 4px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+      border: 1px solid transparent;
+      outline: none;
+    }
+
+    .nav-item:hover {
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+    }
+
+    .nav-item:focus-visible {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 2px var(--brand-subtle);
+    }
+
+    .nav-item.active {
+      background: var(--brand-subtle);
+      color: var(--brand-text);
+      font-weight: 600;
+      border-color: var(--brand-border);
+    }
+
+    .nav-icon {
+      width: 16px;
+      height: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: bold;
+      color: inherit;
+    }
+
+    .nav-item.active .nav-icon {
+      color: var(--brand-primary);
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 10px;
+      background: var(--bg-muted);
+      color: var(--text-secondary);
+    }
+
+    .nav-badge.danger {
+      background: var(--status-danger-bg);
+      color: var(--status-danger);
+    }
+
+    .nav-badge.warning {
+      background: var(--status-warning-bg);
+      color: var(--status-warning);
+    }
+
+    .sidebar-footer {
+      padding: 14px 16px;
+      border-top: 1px solid var(--border-subtle);
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .runtime-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--status-success);
+      display: inline-block;
+      position: relative;
+    }
+
+    .status-dot::after {
+      content: "";
+      position: absolute;
+      top: -2px;
+      left: -2px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      border: 1px solid var(--status-success);
+      opacity: 0.6;
+      animation: pulse 2.4s infinite ease-out;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.8); opacity: 0.8; }
+      70% { transform: scale(1.6); opacity: 0; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+
+    /* 主工作台内容区 */
+    .main-workspace {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow-y: auto;
+    }
+
+    /* 顶部导航与控制栏 */
+    .topbar {
+      height: 56px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .page-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text-primary);
+    }
+
+    .connection-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border-radius: 6px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      outline: none;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    .btn:focus-visible {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 2px var(--brand-subtle);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-primary {
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      border-color: var(--brand-primary);
+      font-weight: 600;
+    }
+
+    .btn-primary:hover {
+      background: var(--brand-hover);
+      border-color: var(--brand-hover);
+      color: #FFFFFF;
+    }
+
+    .btn-primary:active {
+      background: var(--brand-active);
+    }
+
+    .btn-icon {
+      padding: 6px 9px;
+    }
+
+    .select-control {
+      appearance: none;
+      -webkit-appearance: none;
+      padding: 6px 28px 6px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      border: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      color: var(--text-primary);
+      outline: none;
+      cursor: pointer;
+      background-image: url("data:image/svg+xml;utf8,<svg fill='%2364748B' height='12' viewBox='0 0 24 24' width='12' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      transition: border-color 0.15s ease;
+    }
+
+    .select-control:hover {
+      border-color: var(--border-strong);
+    }
+
+    .select-control:focus-visible {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 2px var(--brand-subtle);
+    }
+
+    /* 视图容器 */
+    .view-content {
+      padding: 20px 24px 36px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .view-panel {
+      display: none;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .view-panel.active {
+      display: flex;
+    }
+
+    /* 卡片通用样式 */
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 11px;
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: normal;
+    }
+
+    .card-body {
+      padding: 16px 18px;
+    }
+
+    /* 指标卡网格 */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+
+    .stat-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 11px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: var(--shadow-sm);
+      position: relative;
+    }
+
+    .stat-label-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .stat-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    .stat-badge.amber {
+      background: var(--brand-subtle);
+      color: var(--brand-text);
+    }
+
+    .stat-badge.red {
+      background: var(--status-danger-bg);
+      color: var(--status-danger);
+    }
+
+    .stat-badge.green {
+      background: var(--status-success-bg);
+      color: var(--status-success);
+    }
+
+    .stat-val-wrap {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .stat-val {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.5px;
+      line-height: 1.1;
+    }
+
+    .stat-trend {
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .stat-trend.up {
+      color: var(--status-success);
+    }
+
+    .stat-trend.warn {
+      color: var(--status-danger);
+    }
+
+    .stat-foot {
+      font-size: 11px;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* 概览主视图：左右分栏布局 */
+    .dashboard-split {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+    }
+
+    /* 任务趋势图与内联 SVG */
+    .chart-container {
+      width: 100%;
+      height: 220px;
+      position: relative;
+    }
+
+    .chart-svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    .chart-legend {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-indicator {
+      width: 10px;
+      height: 3px;
+      border-radius: 2px;
+      display: inline-block;
+    }
+
+    /* 任务健康度列表 */
+    .health-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .health-row {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .health-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .health-row-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .health-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .health-score {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background: var(--bg-muted);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: var(--brand-primary);
+      transition: width 0.3s ease;
+    }
+
+    .progress-bar-fill.success {
+      background: var(--status-success);
+    }
+
+    .progress-bar-fill.warning {
+      background: var(--status-warning);
+    }
+
+    .health-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* 表格基础样式 */
+    .data-table-container {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 12px;
+    }
+
+    .data-table th {
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      font-weight: 600;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .data-table th.sortable {
+      cursor: pointer;
+    }
+
+    .data-table th.sortable:hover {
+      color: var(--text-primary);
+      background: var(--bg-muted);
+    }
+
+    .data-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      vertical-align: middle;
+      transition: padding 0.15s ease;
+    }
+
+    .data-table tr:hover td {
+      background-color: var(--bg-subtle);
+    }
+
+    /* 表格密度样式切换 */
+    .data-table.density-compact td {
+      padding: 6px 10px;
+      font-size: 11.5px;
+    }
+    .data-table.density-compact th {
+      padding: 6px 10px;
+      font-size: 11.5px;
+    }
+    .data-table.density-compact .prod-thumb {
+      width: 36px;
+      height: 36px;
+    }
+
+    /* 状态徽章 */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .badge-success {
+      background: var(--status-success-bg);
+      color: var(--status-success);
+    }
+
+    .badge-danger {
+      background: var(--status-danger-bg);
+      color: var(--status-danger);
+    }
+
+    .badge-warning {
+      background: var(--status-warning-bg);
+      color: var(--status-warning);
+    }
+
+    .badge-neutral {
+      background: var(--bg-muted);
+      color: var(--text-secondary);
+    }
+
+    .badge-amber {
+      background: var(--brand-subtle);
+      color: var(--brand-text);
+      border: 1px solid var(--brand-border);
+    }
+
+    /* 操作按钮组 */
+    .action-link {
+      color: var(--brand-primary);
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 11.5px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: background-color 0.15s;
+    }
+
+    .action-link:hover {
+      background: var(--brand-subtle);
+      color: var(--brand-hover);
+    }
+
+    /* 商品库专项组件 */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-wrap: wrap;
+    }
+
+    .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .search-input-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-input {
+      padding: 6px 12px 6px 28px;
+      border-radius: 8px;
+      font-size: 12px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      width: 220px;
+      outline: none;
+      transition: all 0.15s ease;
+    }
+
+    .search-input:focus {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 2px var(--brand-subtle);
+      width: 260px;
+    }
+
+    .search-icon-symbol {
+      position: absolute;
+      left: 9px;
+      color: var(--text-muted);
+      font-size: 12px;
+      pointer-events: none;
+    }
+
+    .density-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      background: var(--bg-subtle);
+      padding: 2px;
+    }
+
+    .density-btn {
+      padding: 3px 9px;
+      font-size: 11px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.12s ease;
+    }
+
+    .density-btn.active {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-weight: 600;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* 商品图片与信息 */
+    .prod-cell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .prod-thumb {
+      width: 48px;
+      height: 48px;
+      min-width: 48px;
+      border-radius: 8px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      transition: all 0.15s ease;
+    }
+
+    .prod-thumb-svg {
+      width: 70%;
+      height: 70%;
+      opacity: 0.75;
+    }
+
+    .prod-title-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-width: 320px;
+    }
+
+    .prod-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      text-decoration: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .prod-title:hover {
+      color: var(--brand-primary);
+    }
+
+    .prod-sku {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+
+    .prod-price {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--brand-primary);
+    }
+
+    /* 分页控件 */
+    .pagination-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 18px;
+      border-top: 1px solid var(--border-subtle);
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .pagination-pages {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .page-btn {
+      min-width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .page-btn:hover:not(:disabled) {
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+    }
+
+    .page-btn.active {
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      border-color: var(--brand-primary);
+      font-weight: 700;
+    }
+
+    .page-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* 数据分析看板 */
+    .analytics-summary-box {
+      background: var(--brand-light);
+      border: 1px solid var(--brand-border);
+      border-radius: 11px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .summary-text-block {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .summary-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--brand-text);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .summary-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .summary-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      max-width: 760px;
+      line-height: 1.5;
+    }
+
+    /* 价格分布直方图 */
+    .hist-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-top: 10px;
+    }
+
+    .hist-bars {
+      display: flex;
+      align-items: flex-end;
+      height: 180px;
+      gap: 14px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      position: relative;
+    }
+
+    .hist-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+      justify-content: flex-end;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .hist-col:hover .hist-bar {
+      filter: brightness(1.15);
+      background: var(--brand-hover);
+    }
+
+    .hist-col:hover .hist-tooltip {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(-4px);
+    }
+
+    .hist-bar {
+      width: 100%;
+      max-width: 48px;
+      border-radius: 6px 6px 2px 2px;
+      background: var(--brand-primary);
+      transition: height 0.3s ease, background 0.15s ease;
+      position: relative;
+    }
+
+    .hist-bar.dimmed {
+      background: var(--chart-bar-bg);
+    }
+
+    .hist-col-label {
+      position: absolute;
+      bottom: -22px;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .hist-tooltip {
+      position: absolute;
+      top: -32px;
+      background: var(--text-primary);
+      color: var(--bg-surface);
+      font-size: 10.5px;
+      padding: 3px 7px;
+      border-radius: 4px;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.15s ease;
+      font-weight: 600;
+      z-index: 5;
+    }
+
+    /* 价格区间建议卡片 */
+    .pricing-tier-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .pricing-card {
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 14px 16px;
+      background: var(--bg-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.15s;
+    }
+
+    .pricing-card.featured {
+      background: var(--brand-light);
+      border-color: var(--brand-border);
+    }
+
+    .pricing-tier-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .pricing-range {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--brand-primary);
+      letter-spacing: -0.3px;
+    }
+
+    .pricing-desc {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+    /* 商机/风险双栏 */
+    .insight-two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .insight-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      margin-bottom: 8px;
+    }
+
+    .insight-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .insight-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+
+    .insight-dot.green {
+      background: var(--status-success);
+    }
+
+    .insight-dot.red {
+      background: var(--status-danger);
+    }
+
+    .insight-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .insight-headline {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .insight-body {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+    /* 占位页面展示 */
+    .placeholder-wrap {
+      padding: 60px 20px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: var(--bg-surface);
+      border: 1px dashed var(--border-strong);
+      border-radius: 12px;
+      margin: 20px 0;
+    }
+
+    .placeholder-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: var(--brand-subtle);
+      color: var(--brand-text);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .placeholder-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .placeholder-desc {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      max-width: 480px;
+      line-height: 1.5;
+    }
+
+    /* 原生模态抽屉（查看完整分析） */
+    dialog.analysis-modal {
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      width: 680px;
+      max-width: calc(100vw - 40px);
+      padding: 0;
+      margin: auto;
+      box-shadow: var(--shadow-pop);
+      outline: none;
+    }
+
+    dialog::backdrop {
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(2px);
+    }
+
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .modal-title {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+      color: var(--text-muted);
+      padding: 4px;
+      border-radius: 4px;
+    }
+
+    .modal-close-btn:hover {
+      color: var(--text-primary);
+      background: var(--bg-subtle);
+    }
+
+    .modal-body {
+      padding: 20px;
+      max-height: 70vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      background: var(--bg-subtle);
+      border-radius: 0 0 12px 12px;
+    }
+
+    /* 响应式设计 */
+    @media (max-width: 1080px) {
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .dashboard-split {
+        grid-template-columns: 1fr;
+      }
+      .pricing-tier-grid {
+        grid-template-columns: 1fr;
+      }
+      .insight-two-col {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        width: 64px;
+        min-width: 64px;
+      }
+      .brand-title, .nav-item span, .nav-badge, .nav-label, .sidebar-footer {
+        display: none;
+      }
+      .nav-item {
+        justify-content: center;
+        padding: 10px;
+      }
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+      .topbar {
+        padding: 0 14px;
+      }
+      .view-content {
+        padding: 14px;
+      }
+      .search-input {
+        width: 150px;
+      }
+      .search-input:focus {
+        width: 180px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="app-shell">
+    <!-- 左侧紧凑导航栏 -->
+    <aside class="sidebar">
+      <div class="brand-header">
+        <div class="brand-mark">F</div>
+        <div class="brand-title">
+          <span class="brand-name">FishOps</span>
+          <span class="brand-tag">Workbench UI 预览</span>
+        </div>
+      </div>
+
+      <nav class="nav-group">
+        <div class="nav-label">核心模块</div>
+        <a class="nav-item active" data-view="overview" tabindex="0">
+          <span class="nav-icon">■</span>
+          <span>运营总览</span>
+        </a>
+        <a class="nav-item" data-view="tasks" tabindex="0">
+          <span class="nav-icon">●</span>
+          <span>采集任务</span>
+          <span class="nav-badge">4 活跃</span>
+        </a>
+        <a class="nav-item" data-view="inventory" tabindex="0">
+          <span class="nav-icon">▦</span>
+          <span>商品库</span>
+          <span class="nav-badge">1.2k</span>
+        </a>
+        <a class="nav-item" data-view="chat" tabindex="0">
+          <span class="nav-icon">▲</span>
+          <span>聊天中心</span>
+          <span class="nav-badge danger">18</span>
+        </a>
+        <a class="nav-item" data-view="publish" tabindex="0">
+          <span class="nav-icon">◆</span>
+          <span>发布中心</span>
+        </a>
+        <a class="nav-item" data-view="analytics" tabindex="0">
+          <span class="nav-icon">✦</span>
+          <span>数据分析</span>
+          <span class="nav-badge warning">新品类</span>
+        </a>
+
+        <div class="nav-label" style="margin-top: 12px;">系统配置</div>
+        <a class="nav-item" data-view="settings" tabindex="0">
+          <span class="nav-icon">⚙</span>
+          <span>设置</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="runtime-chip">
+          <span class="status-dot"></span>
+          <span>Bridge: isolated (就绪)</span>
+        </div>
+        <div>架构版本: P1-UI-Mockup</div>
+      </div>
+    </aside>
+
+    <!-- 主工作区 -->
+    <main class="main-workspace">
+      <!-- 顶部控制条 -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title" id="page-title-display">运营总览</h1>
+          <div class="connection-pill">
+            <span class="status-dot"></span>
+            <span>Runtime Client 已连接</span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <!-- 时间范围选择器 -->
+          <select class="select-control" id="time-range-select" aria-label="时间范围">
+            <option value="today">今日实时</option>
+            <option value="7d" selected>最近 7 天</option>
+            <option value="30d">最近 30 天</option>
+            <option value="season">本季度运营周期</option>
+          </select>
+
+          <!-- 刷新按钮 -->
+          <button class="btn" id="refresh-btn" title="刷新看板数据">
+            <span id="refresh-icon">↻</span>
+            <span id="refresh-text">刷新</span>
+          </button>
+
+          <!-- 明暗主题切换 -->
+          <button class="btn btn-icon" id="theme-toggle-btn" title="切换明暗主题" aria-label="切换明暗主题">
+            <span id="theme-icon">☼</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- 视图内容容器 -->
+      <div class="view-content">
+
+        <!-- 1. 运营总览看板 (默认激活) -->
+        <section class="view-panel active" id="view-overview">
+          <!-- 核心指标 4 宫格 -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">商品总数</span>
+                <span class="stat-badge amber">库存池</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">12,480</span>
+                <span class="stat-trend up">↑ 4.2%</span>
+              </div>
+              <div class="stat-foot">
+                <span>在售中: 9,812</span>
+                <span>草稿待审: 2,668</span>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">未读会话</span>
+                <span class="stat-badge red">需关注</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">18</span>
+                <span class="stat-trend warn">↑ 6 条新咨询</span>
+              </div>
+              <div class="stat-foot">
+                <span>催发货: 3</span>
+                <span>议价沟通: 15</span>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">运行中任务</span>
+                <span class="stat-badge green">队列健康</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">4</span>
+                <span class="stat-trend up">稳定处理中</span>
+              </div>
+              <div class="stat-foot">
+                <span>采集: 2 批次</span>
+                <span>发布同步: 2 项</span>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">失败任务</span>
+                <span class="stat-badge red">1 待排查</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">1</span>
+                <span class="stat-trend warn">失败率 0.38%</span>
+              </div>
+              <div class="stat-foot">
+                <span>最近失败: 验机接口重试超限</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 趋势图与任务健康度列表分栏 -->
+          <div class="dashboard-split">
+            <!-- 任务趋势图 -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <span>任务执行与抓取趋势</span>
+                  <span class="card-subtitle">按天统计任务吞吐量与异常波动</span>
+                </div>
+                <div class="chart-legend">
+                  <div class="legend-item">
+                    <span class="legend-indicator" style="background: var(--brand-primary);"></span>
+                    <span>采集解析</span>
+                  </div>
+                  <div class="legend-item">
+                    <span class="legend-indicator" style="background: var(--status-success);"></span>
+                    <span>数据同步</span>
+                  </div>
+                  <div class="legend-item">
+                    <span class="legend-indicator" style="background: var(--status-danger);"></span>
+                    <span>异常捕获</span>
+                  </div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="chart-container">
+                  <svg class="chart-svg" viewBox="0 0 540 180" preserveAspectRatio="none">
+                    <!-- 背景参考网格线 -->
+                    <line x1="0" y1="30" x2="540" y2="30" stroke="var(--chart-grid)" stroke-width="1" stroke-dasharray="3 3"/>
+                    <line x1="0" y1="75" x2="540" y2="75" stroke="var(--chart-grid)" stroke-width="1" stroke-dasharray="3 3"/>
+                    <line x1="0" y1="120" x2="540" y2="120" stroke="var(--chart-grid)" stroke-width="1" stroke-dasharray="3 3"/>
+                    <line x1="0" y1="165" x2="540" y2="165" stroke="var(--chart-axis)" stroke-width="1"/>
+
+                    <!-- 采集任务面积填充与折线 (琥珀金) -->
+                    <polygon points="10,140 90,110 170,125 250,70 330,85 410,40 490,55 530,35 530,165 10,165" fill="var(--chart-area)" />
+                    <polyline points="10,140 90,110 170,125 250,70 330,85 410,40 490,55 530,35" fill="none" stroke="var(--chart-line)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+
+                    <!-- 数据同步平滑线条 (成功绿) -->
+                    <polyline points="10,155 90,145 170,140 250,115 330,120 410,95 490,80 530,70" fill="none" stroke="var(--status-success)" stroke-width="1.8" stroke-dasharray="4 2" stroke-linecap="round" />
+
+                    <!-- 失败任务基线波动 (红) -->
+                    <polyline points="10,165 90,164 170,165 250,160 330,165 410,158 490,165 530,162" fill="none" stroke="var(--status-danger)" stroke-width="1.5" />
+
+                    <!-- 数据点圆点 -->
+                    <circle cx="250" cy="70" r="4" fill="var(--bg-surface)" stroke="var(--brand-primary)" stroke-width="2" />
+                    <circle cx="410" cy="40" r="4" fill="var(--bg-surface)" stroke="var(--brand-primary)" stroke-width="2" />
+                    <circle cx="530" cy="35" r="4" fill="var(--bg-surface)" stroke="var(--brand-primary)" stroke-width="2" />
+                  </svg>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 6px;">
+                  <span>09-29</span>
+                  <span>09-30</span>
+                  <span>10-01</span>
+                  <span>10-02</span>
+                  <span>10-03</span>
+                  <span>10-04</span>
+                  <span>10-05 (今日)</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 任务健康度监控 -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <span>系统健康度指标</span>
+                </div>
+                <span class="badge badge-success">整体健康 98.4%</span>
+              </div>
+              <div class="card-body">
+                <div class="health-list">
+                  <div class="health-row">
+                    <div class="health-row-header">
+                      <span class="health-name">采集解析命中率</span>
+                      <span class="health-score">99.2%</span>
+                    </div>
+                    <div class="progress-bar-wrap">
+                      <div class="progress-bar-fill success" style="width: 99.2%;"></div>
+                    </div>
+                    <div class="health-meta">
+                      <span>近 2,400 次调用</span>
+                      <span>DOM 规则匹配正常</span>
+                    </div>
+                  </div>
+
+                  <div class="health-row">
+                    <div class="health-row-header">
+                      <span class="health-name">闲鱼 Bridge 通信延迟</span>
+                      <span class="health-score">184 ms</span>
+                    </div>
+                    <div class="progress-bar-wrap">
+                      <div class="progress-bar-fill success" style="width: 88%;"></div>
+                    </div>
+                    <div class="health-meta">
+                      <span>中位数 P50: 142ms</span>
+                      <span>P99: 410ms</span>
+                    </div>
+                  </div>
+
+                  <div class="health-row">
+                    <div class="health-row-header">
+                      <span class="health-name">发布中心防风控安全分</span>
+                      <span class="health-score">92 / 100</span>
+                    </div>
+                    <div class="progress-bar-wrap">
+                      <div class="progress-bar-fill warning" style="width: 92%;"></div>
+                    </div>
+                    <div class="health-meta">
+                      <span>间隔防抖: 12-25 秒随机</span>
+                      <span>频次在安全阈值内</span>
+                    </div>
+                  </div>
+
+                  <div class="health-row">
+                    <div class="health-row-header">
+                      <span class="health-name">长连接 Heartbeat 保活</span>
+                      <span class="health-score">100%</span>
+                    </div>
+                    <div class="progress-bar-wrap">
+                      <div class="progress-bar-fill success" style="width: 100%;"></div>
+                    </div>
+                    <div class="health-meta">
+                      <span>Session 正常</span>
+                      <span>0 次意外断连重试</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 最近任务列表 -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>最近任务流</span>
+                <span class="card-subtitle">实时监控采集批次、数据同步与发布作业状态</span>
+              </div>
+              <button class="btn" onclick="switchNav('tasks')">查看全部任务</button>
+            </div>
+            <div class="data-table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>任务 ID</th>
+                    <th>业务类型</th>
+                    <th>目标关键词 / 批次名称</th>
+                    <th>执行耗时</th>
+                    <th>状态</th>
+                    <th>提交时间</th>
+                    <th style="text-align: right;">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>TASK-8832</code></td>
+                    <td><span class="badge badge-amber">关键词采集</span></td>
+                    <td><strong>Sony A7M4 机身及套机</strong> (全国范围)</td>
+                    <td>1分24秒</td>
+                    <td><span class="badge badge-success">● 已完成</span></td>
+                    <td>10-05 14:28:10</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="switchNav('inventory')">查看商品</a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>TASK-8831</code></td>
+                    <td><span class="badge badge-neutral">飞书表格同步</span></td>
+                    <td>数码二手行情底表自动写入 (新增 128 条)</td>
+                    <td>38秒</td>
+                    <td><span class="badge badge-success">● 已完成</span></td>
+                    <td>10-05 14:15:02</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="alert('设计稿演示: 飞书底表关联已对齐')">查看日志</a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>TASK-8830</code></td>
+                    <td><span class="badge badge-amber">实时采集</span></td>
+                    <td><strong>富士 X-T5 黑色机身</strong> (个人自用筛选)</td>
+                    <td>运行中 (42s)</td>
+                    <td><span class="badge badge-warning">◎ 抓取中</span></td>
+                    <td>10-05 14:32:00</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="alert('设计稿演示: 任务正在 isolated 管道中运行')">中断</a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>TASK-8829</code></td>
+                    <td><span class="badge badge-neutral">价格诊断分析</span></td>
+                    <td>摄影器材近 7 天加价率与竞争强度分析</td>
+                    <td>45秒</td>
+                    <td><span class="badge badge-success">● 已完成</span></td>
+                    <td>10-05 13:50:18</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="switchNav('analytics')">进入分析看板</a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>TASK-8825</code></td>
+                    <td><span class="badge badge-amber">验机数据抓取</span></td>
+                    <td>批量读取验机报告与序列号匹配 (批次 #12)</td>
+                    <td>超时 (180s)</td>
+                    <td><span class="badge badge-danger">× 失败重试</span></td>
+                    <td>10-05 11:20:44</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" style="color: var(--status-danger);" onclick="alert('设计稿演示: 已触发手动单次重试队列')">重试</a>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. 数据分析看板 -->
+        <section class="view-panel" id="view-analytics">
+          <!-- 诊断摘要条 -->
+          <div class="analytics-summary-box">
+            <div class="summary-text-block">
+              <div class="summary-badge">
+                <span>✦</span>
+                <span>品类深度诊断摘要 · Sony 微单相机品类</span>
+              </div>
+              <h2 class="summary-title">中高价位段供需比回升，建议聚焦“套机配件齐全”与“快门计数低于 5,000”切入点</h2>
+              <p class="summary-desc">
+                基于最近 7 天采样的 2,450 条有效闲鱼二手交易数据：价格中位数维持在 ¥8,600 区间，个人卖家出让意愿强，商机多集中在带箱说全套配件的高成色机身，建议适当提高包邮比率以缩短平均成交周期。
+              </p>
+            </div>
+            <button class="btn btn-primary" id="open-analysis-modal-btn">查看完整分析报告</button>
+          </div>
+
+          <!-- 4 项分析统计指标 -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">样本数量</span>
+                <span class="stat-badge amber">过滤后有效</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">2,450</span>
+                <span class="stat-trend">有效条目</span>
+              </div>
+              <div class="stat-foot">
+                <span>剔除求购/虚标条目: 312</span>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">价格中位数</span>
+                <span class="stat-badge green">市场公允</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">¥8,600</span>
+                <span class="stat-trend up">均价 ¥8,920</span>
+              </div>
+              <div class="stat-foot">
+                <span>25%分位: ¥7,200 | 75%: ¥9,800</span>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">竞争强度</span>
+                <span class="stat-badge warning">中高竞争</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">0.72</span>
+                <span class="stat-trend warn">同款在售较密集</span>
+              </div>
+              <div class="stat-foot">
+                <span>同城比价卖家均值: 8.4 人</span>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-label-wrap">
+                <span class="stat-label">风险等级</span>
+                <span class="stat-badge green">低风险 0.18</span>
+              </div>
+              <div class="stat-val-wrap">
+                <span class="stat-val">安全</span>
+                <span class="stat-trend up">争议率 0.4%</span>
+              </div>
+              <div class="stat-foot">
+                <span>无严重合规与翻新投诉潮</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 价格分布图 -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>样本价格分布直方图</span>
+                <span class="card-subtitle">按 1,000 元价位区间分箱统计数量及询价热度</span>
+              </div>
+              <span class="badge badge-amber">主销黄金带: ¥7,000 - ¥9,000</span>
+            </div>
+            <div class="card-body">
+              <div class="hist-container">
+                <div class="hist-bars">
+                  <!-- 0-3000 -->
+                  <div class="hist-col">
+                    <span class="hist-tooltip">48 件 (极低价/破损)</span>
+                    <div class="hist-bar dimmed" style="height: 15%;"></div>
+                    <span class="hist-col-label">&lt; ¥3k</span>
+                  </div>
+                  <!-- 3000-5000 -->
+                  <div class="hist-col">
+                    <span class="hist-tooltip">182 件 (老款机身)</span>
+                    <div class="hist-bar dimmed" style="height: 32%;"></div>
+                    <span class="hist-col-label">3k-5k</span>
+                  </div>
+                  <!-- 5000-7000 -->
+                  <div class="hist-col">
+                    <span class="hist-tooltip">420 件 (战损成色)</span>
+                    <div class="hist-bar" style="height: 55%;"></div>
+                    <span class="hist-col-label">5k-7k</span>
+                  </div>
+                  <!-- 7000-9000 (主销区) -->
+                  <div class="hist-col">
+                    <span class="hist-tooltip">890 件 (主流个人自用)</span>
+                    <div class="hist-bar" style="height: 96%; background: var(--brand-hover);"></div>
+                    <span class="hist-col-label">7k-9k (热点)</span>
+                  </div>
+                  <!-- 9000-11000 -->
+                  <div class="hist-col">
+                    <span class="hist-tooltip">610 件 (箱说全/低快门)</span>
+                    <div class="hist-bar" style="height: 72%;"></div>
+                    <span class="hist-col-label">9k-11k</span>
+                  </div>
+                  <!-- 11000-14000 -->
+                  <div class="hist-col">
+                    <span class="hist-tooltip">210 件 (高配带镜头)</span>
+                    <div class="hist-bar" style="height: 38%;"></div>
+                    <span class="hist-col-label">11k-14k</span>
+                  </div>
+                  <!-- 14000+ -->
+                  <div class="hist-col">
+                    <span class="hist-tooltip">90 件 (全新或大师镜头套机)</span>
+                    <div class="hist-bar dimmed" style="height: 20%;"></div>
+                    <span class="hist-col-label">14k+</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 价格区间建议 -->
+          <div>
+            <div style="margin-bottom: 10px; font-weight: 700; font-size: 13px;">定价策略建议区间</div>
+            <div class="pricing-tier-grid">
+              <div class="pricing-card">
+                <div class="pricing-tier-title">
+                  <span>快速周转起跑线</span>
+                  <span class="badge badge-neutral">出货周期 &lt; 3 天</span>
+                </div>
+                <div class="pricing-range">¥7,400 - ¥7,800</div>
+                <div class="pricing-desc">
+                  适合快速回笼资金、单机身略有使用痕迹的货品。价格处于市场前 20% 优势位，曝光即能引流大量想要数。
+                </div>
+              </div>
+
+              <div class="pricing-card featured">
+                <div class="pricing-tier-title">
+                  <span>推荐核心利润带</span>
+                  <span class="badge badge-amber">综合收益最优</span>
+                </div>
+                <div class="pricing-range">¥8,500 - ¥8,950</div>
+                <div class="pricing-desc">
+                  包含原装包装箱、两块电池及充电器。溢价支撑稳固，平均 5-7 天内可平稳出货，利润率提升 14.5%。
+                </div>
+              </div>
+
+              <div class="pricing-card">
+                <div class="pricing-tier-title">
+                  <span>高端精品溢价位</span>
+                  <span class="badge badge-neutral">毛利率 &gt; 22%</span>
+                </div>
+                <div class="pricing-range">¥9,600 - ¥10,200</div>
+                <div class="pricing-desc">
+                  针对快门 &lt; 1,000 次且附带原厂保修发票商品，配合顺丰包邮与官方验机报告出具，直击高净值买家痛点。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 商机与风险双栏看板 -->
+          <div class="insight-two-col">
+            <!-- 商机推荐 -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <span style="color: var(--status-success);">●</span>
+                  <span>高转化商机洞察</span>
+                </div>
+                <span class="badge badge-success">3 条高优先级</span>
+              </div>
+              <div class="card-body">
+                <div class="insight-item">
+                  <div class="insight-dot green"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">“赠送保护贴膜与原厂电池”带来 26% 转化率提升</div>
+                    <div class="insight-body">买家在此类高单价 3C 类目中极度关注耗材成本，赠送百元以内小配件可显著减少反复还价阻力。</div>
+                  </div>
+                </div>
+
+                <div class="insight-item">
+                  <div class="insight-dot green"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">晚间 20:30 - 22:45 为询价黄金期</div>
+                    <div class="insight-body">数据表明该时段消息响应速度在 2 分钟以内的卖家，当晚支付定金或全款概率提高 40%。</div>
+                  </div>
+                </div>
+
+                <div class="insight-item">
+                  <div class="insight-dot green"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">同城当面验机需求近两周上升 31%</div>
+                    <div class="insight-body">支持一二线核心商圈线下验机交易能有效打消买家顾虑，降低远途退货运费纠纷。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 风险预警 -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <span style="color: var(--status-danger);">●</span>
+                  <span>运营合规与风险预警</span>
+                </div>
+                <span class="badge badge-danger">防控建议</span>
+              </div>
+              <div class="card-body">
+                <div class="insight-item">
+                  <div class="insight-dot red"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">警惕低价引流号批量发布翻新机刷单</div>
+                    <div class="insight-body">市场出现定价低于 ¥6,000 的虚假货源，多引导站外微信交易，建议在采集规则中直接设黑名单过滤。</div>
+                  </div>
+                </div>
+
+                <div class="insight-item">
+                  <div class="insight-dot red"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">降价幅度超 18% 容易触发平台巡检限流</div>
+                    <div class="insight-body">单次调价过猛可能被平台算法识别为“异常抛售”或“非正常号”，建议采用单次 ¥100 - ¥200 阶梯渐进下调。</div>
+                  </div>
+                </div>
+
+                <div class="insight-item">
+                  <div class="insight-dot red"></div>
+                  <div class="insight-content">
+                    <div class="insight-headline">CMOS 感光元件灰尘争议多发</div>
+                    <div class="insight-body">发货前必须录制白墙小光圈 F22 测试视频并归档保存，防止恶意买家收货后无理要求补偿折价。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. 商品库 (包含紧凑/默认密度切换、筛选搜索、低行高表格、48px 缩略图) -->
+        <section class="view-panel" id="view-inventory">
+          <div class="card">
+            <!-- 工具栏与筛选区 -->
+            <div class="toolbar">
+              <div class="toolbar-left">
+                <!-- 搜索框 -->
+                <div class="search-input-wrap">
+                  <span class="search-icon-symbol">⌕</span>
+                  <input type="text" class="search-input" id="table-search-input" placeholder="搜索标题、卖家、地区..." aria-label="搜索商品">
+                </div>
+
+                <!-- 品类筛选 -->
+                <select class="select-control" id="category-filter" aria-label="商品品类">
+                  <option value="all">全新品类 (全部)</option>
+                  <option value="camera" selected>微单相机机身</option>
+                  <option value="lens">单反/微单镜头</option>
+                  <option value="accessory">三脚架/稳定器</option>
+                  <option value="drone">航拍无人机</option>
+                </select>
+
+                <!-- 包邮过滤 -->
+                <select class="select-control" id="shipping-filter" aria-label="包邮筛选">
+                  <option value="all">运费政策 (全部)</option>
+                  <option value="free">仅看包邮</option>
+                  <option value="pay">买家自理/自提</option>
+                </select>
+
+                <button class="btn" id="reset-filter-btn">重置筛选</button>
+              </div>
+
+              <div class="toolbar-right">
+                <!-- 密度切换控件 (紧凑 / 默认) -->
+                <span style="font-size: 11px; color: var(--text-muted);">行距密度:</span>
+                <div class="density-toggle" role="group" aria-label="表格行距密度">
+                  <button type="button" class="density-btn active" id="density-default">默认</button>
+                  <button type="button" class="density-btn" id="density-compact">紧凑</button>
+                </div>
+                <button class="btn btn-primary" onclick="alert('设计稿演示: 触发批量同步到飞书多维表格')">批量同步飞书</button>
+              </div>
+            </div>
+
+            <!-- 数据表格 -->
+            <div class="data-table-container">
+              <table class="data-table" id="inventory-table">
+                <thead>
+                  <tr>
+                    <th style="width: 40px; text-align: center;"><input type="checkbox" id="select-all-check" aria-label="全选"></th>
+                    <th style="width: 60px;">缩略图</th>
+                    <th>商品标题 / SKU 标识</th>
+                    <th class="sortable" id="sort-price" title="点击按价格排序">价格 <span style="font-size: 10px;">↕</span></th>
+                    <th class="sortable" id="sort-wants" title="点击按想要数排序">想要数 <span style="font-size: 10px;">↕</span></th>
+                    <th>卖家 / 信誉</th>
+                    <th>地区</th>
+                    <th>包邮状态</th>
+                    <th>采集时间</th>
+                    <th style="text-align: right;">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="inventory-tbody">
+                  <!-- 行 1 -->
+                  <tr data-cat="camera" data-shipping="free">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <!-- 内联 SVG 相机微缩图 -->
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="3" y="8" width="26" height="18" rx="3" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <circle cx="16" cy="17" r="5" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <rect x="8" y="5" width="6" height="3" rx="1" fill="var(--brand-primary)"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <a href="javascript:void(0)" class="prod-title" title="Sony A7M4 国行单机 极少用 快门3200 箱说全">Sony A7M4 国行单机 极少用 快门3200 箱说全</a>
+                        <span class="prod-sku">ID: FO-884029-CN · 99新</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥8,850.00</span></td>
+                    <td><strong>182</strong> 人想要</td>
+                    <td>
+                      <div>摄影小陈_自用</div>
+                      <span class="badge badge-success" style="font-size: 10px;">极好信用</span>
+                    </td>
+                    <td>上海 · 浦东</td>
+                    <td><span class="badge badge-amber">顺丰包邮</span></td>
+                    <td>10-05 14:12</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="alert('设计稿演示: 查看商品详情抽屉')">详情</a>
+                      <a class="action-link" onclick="alert('设计稿演示: 写入已选商品至发布草稿箱')">一键发布</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 2 -->
+                  <tr data-cat="camera" data-shipping="free">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="3" y="8" width="26" height="18" rx="3" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <circle cx="16" cy="17" r="5" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <rect x="8" y="5" width="6" height="3" rx="1" fill="var(--brand-primary)"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <a href="javascript:void(0)" class="prod-title" title="富士 X-T5 碳晶灰机身 官方延保中 诚心出">富士 X-T5 碳晶灰机身 官方延保中 诚心出</a>
+                        <span class="prod-sku">ID: FO-884030-FJ · 95新</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥9,200.00</span></td>
+                    <td><strong>245</strong> 人想要</td>
+                    <td>
+                      <div>日落街角Lens</div>
+                      <span class="badge badge-success" style="font-size: 10px;">优秀信用</span>
+                    </td>
+                    <td>浙江 · 杭州</td>
+                    <td><span class="badge badge-amber">包邮</span></td>
+                    <td>10-05 13:58</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="alert('设计稿演示: 查看商品详情抽屉')">详情</a>
+                      <a class="action-link" onclick="alert('设计稿演示: 写入已选商品至发布草稿箱')">一键发布</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 3 -->
+                  <tr data-cat="lens" data-shipping="pay">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <!-- 内联 SVG 镜头微缩图 -->
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="8" y="6" width="16" height="20" rx="3" stroke="var(--text-secondary)" stroke-width="2"/>
+                          <circle cx="16" cy="16" r="4" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <line x1="8" y1="11" x2="24" y2="11" stroke="var(--border-strong)" stroke-width="1.5"/>
+                          <line x1="8" y1="21" x2="24" y2="21" stroke="var(--border-strong)" stroke-width="1.5"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <a href="javascript:void(0)" class="prod-title" title="适马 24-70mm F2.8 DG DN 二代 E口 镜片通透">适马 24-70mm F2.8 DG DN 二代 E口 镜片通透</a>
+                        <span class="prod-sku">ID: FO-884031-SG · 98新</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥6,350.00</span></td>
+                    <td><strong>89</strong> 人想要</td>
+                    <td>
+                      <div>器材党退烧小李</div>
+                      <span class="badge badge-neutral" style="font-size: 10px;">良好信用</span>
+                    </td>
+                    <td>北京 · 朝阳</td>
+                    <td><span class="badge badge-neutral">买家付运费</span></td>
+                    <td>10-05 13:20</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="alert('设计稿演示: 查看商品详情抽屉')">详情</a>
+                      <a class="action-link" onclick="alert('设计稿演示: 写入已选商品至发布草稿箱')">一键发布</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 4 -->
+                  <tr data-cat="camera" data-shipping="free">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="3" y="8" width="26" height="18" rx="3" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <circle cx="16" cy="17" r="5" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <rect x="8" y="5" width="6" height="3" rx="1" fill="var(--brand-primary)"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <a href="javascript:void(0)" class="prod-title" title="佳能 EOS R6 Mark II 单机身 个人自用退坑">佳能 EOS R6 Mark II 单机身 个人自用退坑</a>
+                        <span class="prod-sku">ID: FO-884032-CN · 99新</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥11,800.00</span></td>
+                    <td><strong>312</strong> 人想要</td>
+                    <td>
+                      <div>光影实验室</div>
+                      <span class="badge badge-success" style="font-size: 10px;">极好信用</span>
+                    </td>
+                    <td>广东 · 深圳</td>
+                    <td><span class="badge badge-amber">顺丰包邮</span></td>
+                    <td>10-05 12:44</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="alert('设计稿演示: 查看商品详情抽屉')">详情</a>
+                      <a class="action-link" onclick="alert('设计稿演示: 写入已选商品至发布草稿箱')">一键发布</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 5 -->
+                  <tr data-cat="accessory" data-shipping="free">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <!-- 内联 SVG 三脚架微缩图 -->
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <circle cx="16" cy="7" r="3" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <line x1="16" y1="10" x2="8" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                          <line x1="16" y1="10" x2="24" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                          <line x1="16" y1="10" x2="16" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <a href="javascript:void(0)" class="prod-title" title="马小路 ET-1541T 碳纤维便携三脚架 云台完好">马小路 ET-1541T 碳纤维便携三脚架 云台完好</a>
+                        <span class="prod-sku">ID: FO-884033-MX · 9成新</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥680.00</span></td>
+                    <td><strong>54</strong> 人想要</td>
+                    <td>
+                      <div>远行户外徒步</div>
+                      <span class="badge badge-neutral" style="font-size: 10px;">良好信用</span>
+                    </td>
+                    <td>四川 · 成都</td>
+                    <td><span class="badge badge-amber">包邮</span></td>
+                    <td>10-05 11:30</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="alert('设计稿演示: 查看商品详情抽屉')">详情</a>
+                      <a class="action-link" onclick="alert('设计稿演示: 写入已选商品至发布草稿箱')">一键发布</a>
+                    </td>
+                  </tr>
+
+                  <!-- 行 6 -->
+                  <tr data-cat="drone" data-shipping="pay">
+                    <td style="text-align: center;"><input type="checkbox" class="row-checkbox" aria-label="选择此项"></td>
+                    <td>
+                      <div class="prod-thumb">
+                        <!-- 内联 SVG 无人机微缩图 -->
+                        <svg class="prod-thumb-svg" viewBox="0 0 32 32" fill="none">
+                          <rect x="12" y="12" width="8" height="8" rx="2" stroke="var(--brand-primary)" stroke-width="2"/>
+                          <line x1="8" y1="8" x2="24" y2="24" stroke="var(--text-secondary)" stroke-width="1.8"/>
+                          <line x1="8" y1="24" x2="24" y2="8" stroke="var(--text-secondary)" stroke-width="1.8"/>
+                          <circle cx="8" cy="8" r="2.5" fill="var(--brand-primary)"/>
+                          <circle cx="24" cy="8" r="2.5" fill="var(--brand-primary)"/>
+                          <circle cx="8" cy="24" r="2.5" fill="var(--brand-primary)"/>
+                          <circle cx="24" cy="24" r="2.5" fill="var(--brand-primary)"/>
+                        </svg>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="prod-title-wrap">
+                        <a href="javascript:void(0)" class="prod-title" title="大疆 DJI Mini 4 Pro 畅飞套装 带屏遥控器 无炸机">大疆 DJI Mini 4 Pro 畅飞套装 带屏遥控器 无炸机</a>
+                        <span class="prod-sku">ID: FO-884034-DJ · 98新</span>
+                      </div>
+                    </td>
+                    <td><span class="prod-price">¥4,500.00</span></td>
+                    <td><strong>198</strong> 人想要</td>
+                    <td>
+                      <div>飞行员老张</div>
+                      <span class="badge badge-success" style="font-size: 10px;">优秀信用</span>
+                    </td>
+                    <td>湖北 · 武汉</td>
+                    <td><span class="badge badge-neutral">顺丰到付</span></td>
+                    <td>10-05 10:15</td>
+                    <td style="text-align: right;">
+                      <a class="action-link" onclick="alert('设计稿演示: 查看商品详情抽屉')">详情</a>
+                      <a class="action-link" onclick="alert('设计稿演示: 写入已选商品至发布草稿箱')">一键发布</a>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 分页条 -->
+            <div class="pagination-bar">
+              <div>显示第 1 至 6 条，共 <strong>1,280</strong> 条商品记录</div>
+              <div class="pagination-pages">
+                <button class="page-btn" disabled aria-label="上一页">‹</button>
+                <button class="page-btn active">1</button>
+                <button class="page-btn">2</button>
+                <button class="page-btn">3</button>
+                <span style="color: var(--text-muted); padding: 0 4px;">...</span>
+                <button class="page-btn">64</button>
+                <button class="page-btn" aria-label="下一页">›</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. 采集任务 (占位模块) -->
+        <section class="view-panel" id="view-tasks">
+          <div class="placeholder-wrap">
+            <span class="placeholder-badge">模块设计稿就绪</span>
+            <h2 class="placeholder-title">采集任务中心 (Task Dispatcher)</h2>
+            <p class="placeholder-desc">
+              本模块承载闲鱼商品关键词深度爬取、卖家店铺批量建档与防风控采集调度。支持定时抓取、并发限速和字段映射配置。
+            </p>
+            <div style="display: flex; gap: 10px;">
+              <button class="btn btn-primary" onclick="switchNav('overview')">返回运营总览</button>
+              <button class="btn" onclick="switchNav('inventory')">进入已采集商品库</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. 聊天中心 (占位模块) -->
+        <section class="view-panel" id="view-chat">
+          <div class="placeholder-wrap">
+            <span class="placeholder-badge">会话聚合工作台</span>
+            <h2 class="placeholder-title">聊天与买家客服中心 (Chat Ops)</h2>
+            <p class="placeholder-desc">
+              聚合当前 18 个未读闲鱼买家会话，提供智能快捷议价回复、物流快速查单、历史发货买家画像与敏感词预警防违规。
+            </p>
+            <div style="display: flex; gap: 10px;">
+              <button class="btn btn-primary" onclick="switchNav('overview')">返回运营总览</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 6. 发布中心 (占位模块) -->
+        <section class="view-panel" id="view-publish">
+          <div class="placeholder-wrap">
+            <span class="placeholder-badge">批量上架流水线</span>
+            <h2 class="placeholder-title">发布中心 (Product Publisher)</h2>
+            <p class="placeholder-desc">
+              基于已清洗商品库，实现文案自动脱敏、规格自适应填充、图片自动去水印与防重复铺货校验的一键上架调度。
+            </p>
+            <div style="display: flex; gap: 10px;">
+              <button class="btn btn-primary" onclick="switchNav('inventory')">前往商品库选品</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 7. 设置 (占位模块) -->
+        <section class="view-panel" id="view-settings">
+          <div class="placeholder-wrap">
+            <span class="placeholder-badge">系统连接配置</span>
+            <h2 class="placeholder-title">工作台环境与规则设置 (Preferences)</h2>
+            <p class="placeholder-desc">
+              配置 Chrome Extension Runtime 通信端口、飞书多维表格 API 密钥、闲鱼账号会话状态检测周期与告警 Webhook。
+            </p>
+            <div style="display: flex; gap: 10px;">
+              <button class="btn btn-primary" onclick="switchNav('overview')">返回总览看板</button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- 原生完整分析报告弹出对话框 (<dialog>) -->
+  <dialog class="analysis-modal" id="analysis-dialog">
+    <div class="modal-header">
+      <div class="modal-title">Sony 微单相机品类完整数据诊断与运营建议报告</div>
+      <button class="modal-close-btn" id="close-modal-btn" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size: 12.5px; color: var(--text-secondary); line-height: 1.6;">
+        <p style="margin-bottom: 10px;">
+          <strong>诊断范围:</strong> 2026年最近 7 天内闲鱼平台包含 "Sony"、"A7M4"、"A7C2"、"A7R5" 的有效挂牌与成交动态。
+        </p>
+        <div style="background: var(--bg-subtle); padding: 12px; border-radius: 8px; border: 1px solid var(--border-subtle); margin-bottom: 12px;">
+          <div style="font-weight: 700; color: var(--text-primary); margin-bottom: 4px;">核心发现:</div>
+          <ul style="padding-left: 18px; display: flex; flex-direction: column; gap: 4px;">
+            <li>全网有效个人出让人群占比约 64%，二手流通速度保持在 6.2 天周转线。</li>
+            <li>在标价为 ¥8,400 至 ¥8,900 的商品中，顺丰包邮对首日获得收藏/想要数的概率有 38% 的拉动力。</li>
+            <li>快门数在 5,000 次以下与 20,000 次以上的价格剪刀差约为 ¥950.00。</li>
+          </ul>
+        </div>
+        <p style="margin-bottom: 8px;">
+          <strong>建议调价节奏:</strong> 建议运营人员采用“高标首发 + 24 小时微调降”模式，避免首次出价过低丧失溢价空间，亦避免降价频次过高触发闲鱼安全审核机制。
+        </p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="close-modal-footer-btn">关闭</button>
+      <button class="btn btn-primary" onclick="alert('设计稿演示: 导出诊断 PDF 简报')">导出完整 PDF</button>
+    </div>
+  </dialog>
+
+  <!-- 原生 JavaScript 交互控制逻辑 -->
+  <script>
+    // 1. 导航切换交互
+    const navItems = document.querySelectorAll('.nav-item');
+    const viewPanels = document.querySelectorAll('.view-panel');
+    const pageTitleDisplay = document.getElementById('page-title-display');
+
+    const viewTitleMap = {
+      'overview': '运营总览',
+      'tasks': '采集任务中心',
+      'inventory': '商品库管理',
+      'chat': '聊天与消息中心',
+      'publish': '发布中心',
+      'analytics': '数据分析看板',
+      'settings': '系统设置'
+    };
+
+    function switchNav(viewId) {
+      navItems.forEach(item => {
+        if (item.getAttribute('data-view') === viewId) {
+          item.classList.add('active');
+        } else {
+          item.classList.remove('active');
+        }
+      });
+
+      viewPanels.forEach(panel => {
+        if (panel.id === `view-${viewId}`) {
+          panel.classList.add('active');
+        } else {
+          panel.classList.remove('active');
+        }
+      });
+
+      if (viewTitleMap[viewId]) {
+        pageTitleDisplay.textContent = viewTitleMap[viewId];
+      }
+    }
+
+    navItems.forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        const viewId = item.getAttribute('data-view');
+        switchNav(viewId);
+      });
+      // 支持键盘 Enter 触发
+      item.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          const viewId = item.getAttribute('data-view');
+          switchNav(viewId);
+        }
+      });
+    });
+
+    // 2. 明暗主题切换 (浅色默认，持久化至 localStorage)
+    const themeToggleBtn = document.getElementById('theme-toggle-btn');
+    const themeIcon = document.getElementById('theme-icon');
+    const rootHtml = document.documentElement;
+
+    function setTheme(theme) {
+      rootHtml.setAttribute('data-theme', theme);
+      if (theme === 'dark') {
+        themeIcon.textContent = '☾';
+        themeToggleBtn.title = '当前深色模式，点击切换为浅色';
+      } else {
+        themeIcon.textContent = '☼';
+        themeToggleBtn.title = '当前浅色模式，点击切换为深色';
+      }
+      try {
+        localStorage.setItem('fishops_theme', theme);
+      } catch (e) {}
+    }
+
+    // 初始化主题
+    try {
+      const savedTheme = localStorage.getItem('fishops_theme') || 'light';
+      setTheme(savedTheme);
+    } catch (e) {
+      setTheme('light');
+    }
+
+    themeToggleBtn.addEventListener('click', () => {
+      const currentTheme = rootHtml.getAttribute('data-theme');
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      setTheme(newTheme);
+    });
+
+    // 3. 表格密度切换 (紧凑 vs 默认)
+    const densityCompactBtn = document.getElementById('density-compact');
+    const densityDefaultBtn = document.getElementById('density-default');
+    const inventoryTable = document.getElementById('inventory-table');
+
+    densityCompactBtn.addEventListener('click', () => {
+      densityCompactBtn.classList.add('active');
+      densityDefaultBtn.classList.remove('active');
+      inventoryTable.classList.add('density-compact');
+    });
+
+    densityDefaultBtn.addEventListener('click', () => {
+      densityDefaultBtn.classList.add('active');
+      densityCompactBtn.classList.remove('active');
+      inventoryTable.classList.remove('density-compact');
+    });
+
+    // 4. 刷新按钮动画模拟
+    const refreshBtn = document.getElementById('refresh-btn');
+    const refreshIcon = document.getElementById('refresh-icon');
+    const refreshText = document.getElementById('refresh-text');
+
+    refreshBtn.addEventListener('click', () => {
+      refreshIcon.style.display = 'inline-block';
+      refreshIcon.style.transformOrigin = 'center';
+      refreshIcon.style.transition = 'transform 0.6s ease';
+      refreshIcon.style.transform = 'rotate(360deg)';
+      refreshText.textContent = '正在刷新...';
+      refreshBtn.disabled = true;
+
+      setTimeout(() => {
+        refreshIcon.style.transform = 'none';
+        refreshText.textContent = '刷新';
+        refreshBtn.disabled = false;
+      }, 600);
+    });
+
+    // 5. 完整分析模态窗口控制
+    const analysisDialog = document.getElementById('analysis-dialog');
+    const openAnalysisModalBtn = document.getElementById('open-analysis-modal-btn');
+    const closeModalBtn = document.getElementById('close-modal-btn');
+    const closeModalFooterBtn = document.getElementById('close-modal-footer-btn');
+
+    if (openAnalysisModalBtn && analysisDialog) {
+      openAnalysisModalBtn.addEventListener('click', () => {
+        analysisDialog.showModal();
+      });
+      closeModalBtn.addEventListener('click', () => {
+        analysisDialog.close();
+      });
+      closeModalFooterBtn.addEventListener('click', () => {
+        analysisDialog.close();
+      });
+      // 点击背景遮罩关闭
+      analysisDialog.addEventListener('click', (e) => {
+        const rect = analysisDialog.getBoundingClientRect();
+        const isInDialog = (rect.top <= e.clientY && e.clientY <= rect.top + rect.height
+          && rect.left <= e.clientX && e.clientX <= rect.left + rect.width);
+        if (!isInDialog) {
+          analysisDialog.close();
+        }
+      });
+    }
+
+    // 6. 商品库前端简易实时过滤演示 (搜索框、品类、包邮)
+    const searchInput = document.getElementById('table-search-input');
+    const categoryFilter = document.getElementById('category-filter');
+    const shippingFilter = document.getElementById('shipping-filter');
+    const resetFilterBtn = document.getElementById('reset-filter-btn');
+    const tableRows = document.querySelectorAll('#inventory-tbody tr');
+
+    function applyFilters() {
+      const query = (searchInput.value || '').trim().toLowerCase();
+      const cat = categoryFilter.value;
+      const shipping = shippingFilter.value;
+
+      tableRows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        const rowCat = row.getAttribute('data-cat');
+        const rowShipping = row.getAttribute('data-shipping');
+
+        const matchQuery = !query || text.includes(query);
+        const matchCat = cat === 'all' || rowCat === cat;
+        const matchShipping = shipping === 'all' || rowShipping === shipping;
+
+        if (matchQuery && matchCat && matchShipping) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      });
+    }
+
+    searchInput.addEventListener('input', applyFilters);
+    categoryFilter.addEventListener('change', applyFilters);
+    shippingFilter.addEventListener('change', applyFilters);
+    resetFilterBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      categoryFilter.value = 'all';
+      shippingFilter.value = 'all';
+      applyFilters();
+    });
+
+    // 7. 全选复选框
+    const selectAllCheck = document.getElementById('select-all-check');
+    const rowCheckboxes = document.querySelectorAll('.row-checkbox');
+
+    selectAllCheck.addEventListener('change', () => {
+      rowCheckboxes.forEach(cb => {
+        cb.checked = selectAllCheck.checked;
+      });
+    });
+
+    // 8. 表格字段排序演示 (价格、想要数)
+    let priceSortAsc = true;
+    let wantsSortAsc = false;
+    const sortPriceBtn = document.getElementById('sort-price');
+    const sortWantsBtn = document.getElementById('sort-wants');
+    const tbody = document.getElementById('inventory-tbody');
+
+    sortPriceBtn.addEventListener('click', () => {
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        const priceA = parseFloat(a.querySelector('.prod-price').textContent.replace(/[^\d.]/g, ''));
+        const priceB = parseFloat(b.querySelector('.prod-price').textContent.replace(/[^\d.]/g, ''));
+        return priceSortAsc ? priceA - priceB : priceB - priceA;
+      });
+      priceSortAsc = !priceSortAsc;
+      rows.forEach(r => tbody.appendChild(r));
+    });
+
+    sortWantsBtn.addEventListener('click', () => {
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        const wantsA = parseInt(a.querySelector('td:nth-child(5) strong').textContent, 10);
+        const wantsB = parseInt(b.querySelector('td:nth-child(5) strong').textContent, 10);
+        return wantsSortAsc ? wantsA - wantsB : wantsB - wantsA;
+      });
+      wantsSortAsc = !wantsSortAsc;
+      rows.forEach(r => tbody.appendChild(r));
+    });
+  </script>
+</body>
+</html>

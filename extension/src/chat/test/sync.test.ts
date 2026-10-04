@@ -5,6 +5,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { INITIAL_CURSOR, type LwpRequest, type LwpResponse } from '../../../../shared/chat/index'
 import { ChatHistoryClient, type ChatTransport } from '../history'
+import {
+  PeerProfileResolver,
+  type PeerProfileRequest,
+  type PeerProfileRequester,
+} from '../peer-profiles'
 import { ChatStore } from '../store'
 import { ChatSync } from '../sync'
 
@@ -148,4 +153,144 @@ test('ingestMessages：归一后写入', () => {
   ])
   assert.equal(result.added, 1)
   assert.equal(store.getMessages('1')[0].senderName, '买家')
+})
+
+const AVATAR = 'https://img.alicdn.com/bao/uploaded/i2/x-0-mtopupload.jpg'
+
+class FakePeerRequester implements PeerProfileRequester {
+  readonly calls: PeerProfileRequest[] = []
+  readonly handler: (request: PeerProfileRequest) => unknown | Promise<unknown>
+
+  constructor(handler: (request: PeerProfileRequest) => unknown | Promise<unknown>) {
+    this.handler = handler
+  }
+
+  async request(request: PeerProfileRequest): Promise<unknown> {
+    this.calls.push(request)
+    return this.handler(request)
+  }
+}
+
+/** 会话列表响应：会话 111，reminderUrl 不含 peerUserId（需由 session.sync 补全）。 */
+function conversationTransport(): FakeTransport {
+  return new FakeTransport(() => ({
+    code: 200,
+    body: {
+      userConvs: [
+        {
+          singleChatUserConversation: {
+            cid: '111@goofish',
+            modifyTime: 100,
+            lastMessage: {
+              message: {
+                cid: '111@goofish',
+                createAt: 100,
+                content: { custom: { summary: 'hi' } },
+                extension: { reminderUrl: 'https://x?itemId=456' },
+              },
+            },
+          },
+        },
+      ],
+      hasMore: false,
+    },
+  }))
+}
+
+test('syncConversations：会话同步后按 session.sync 补齐对方头像并写回 store', async () => {
+  const requester = new FakePeerRequester((request) => {
+    if (request.api === 'session.sync') {
+      return {
+        ret: ['SUCCESS::调用成功'],
+        data: {
+          sessions: [
+            { session: { sessionId: '111', ownerInfo: { userId: 'me' }, userInfo: { userId: 'peer', logo: AVATAR } } },
+          ],
+        },
+      }
+    }
+    return { data: {} }
+  })
+  const store = new ChatStore()
+  const sync = new ChatSync({
+    store,
+    history: new ChatHistoryClient({ transport: conversationTransport() }),
+    peerProfiles: new PeerProfileResolver({ requester, myUserId: 'me' }),
+  })
+
+  const result = await sync.syncConversations()
+  assert.equal(result.ok, true)
+  assert.equal(result.added, 1)
+  assert.equal(store.getConversation('111')?.peerAvatarUrl, AVATAR)
+  assert.equal(store.getConversation('111')?.peerUserId, 'peer')
+  assert.ok((result.notes ?? []).some((n) => n.includes('头像')))
+})
+
+test('syncConversations：已有头像不被覆盖，也不发起头像请求', async () => {
+  const requester = new FakePeerRequester(() => {
+    throw new Error('不应被调用')
+  })
+  const store = new ChatStore()
+  // 预置一个已有头像的会话（sessionId 111）。
+  store.upsertConversations([
+    {
+      sessionId: '111',
+      cid: '111@goofish',
+      peerUserName: '买家',
+      peerAvatarUrl: AVATAR,
+      lastMessage: 'old',
+      lastMessageTime: 1,
+      unreadCount: 0,
+      sortIndex: 1,
+      visible: true,
+    },
+  ])
+  const sync = new ChatSync({
+    store,
+    history: new ChatHistoryClient({ transport: conversationTransport() }),
+    peerProfiles: new PeerProfileResolver({ requester, myUserId: 'me' }),
+  })
+
+  const result = await sync.syncConversations()
+  assert.equal(result.ok, true)
+  assert.equal(store.getConversation('111')?.peerAvatarUrl, AVATAR)
+  assert.equal(requester.calls.length, 0)
+})
+
+test('syncConversations：头像补齐失败不中断会话同步（resolver 抛错走兜底）', async () => {
+  const throwingResolver = {
+    resolveMissing: async () => {
+      throw new Error('mtop down')
+    },
+  } as unknown as PeerProfileResolver
+  const store = new ChatStore()
+  const sync = new ChatSync({
+    store,
+    history: new ChatHistoryClient({ transport: conversationTransport() }),
+    peerProfiles: throwingResolver,
+  })
+
+  const result = await sync.syncConversations()
+  assert.equal(result.ok, true)
+  assert.equal(result.added, 1)
+  assert.equal(store.sessionCount, 1)
+  assert.ok((result.notes ?? []).some((n) => n.includes('失败')))
+})
+
+test('syncConversations：resolver 静默返回空（内部已隔离失败）时不产生错误提示', async () => {
+  const requester = new FakePeerRequester(() => {
+    throw new Error('mtop down')
+  })
+  const store = new ChatStore()
+  const sync = new ChatSync({
+    store,
+    history: new ChatHistoryClient({ transport: conversationTransport() }),
+    peerProfiles: new PeerProfileResolver({ requester, myUserId: 'me' }),
+  })
+
+  const result = await sync.syncConversations()
+  assert.equal(result.ok, true)
+  assert.equal(store.sessionCount, 1)
+  assert.equal(store.getConversation('111')?.peerAvatarUrl, undefined)
+  assert.equal(result.notes, undefined)
 })

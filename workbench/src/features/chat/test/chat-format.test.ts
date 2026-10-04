@@ -11,7 +11,9 @@ import {
   describeSyncError,
   formatShortTime,
   isoTime,
+  messageAvatarUrl,
   messageDisplayText,
+  peerAvatarUrl,
   safeHttpsUrl,
   socketStatusView,
 } from '../chat-format'
@@ -115,6 +117,31 @@ test('derivePeer：优先会话信息，其次对方消息，都没有则为 nul
 test('messageDisplayText：正文为空时给出类型提示而不是空气泡', () => {
   assert.equal(messageDisplayText(msg({ content: '嗨' })), '嗨')
   assert.match(messageDisplayText(msg({ content: '  ', kind: 'voice' })), /语音/)
+})
+
+test('peerAvatarUrl：优先会话且仅放行 https，缺失时回退对方消息头像', () => {
+  assert.equal(
+    peerAvatarUrl(conv({ peerAvatarUrl: 'https://img.alicdn.com/a.jpg' }), []),
+    'https://img.alicdn.com/a.jpg',
+  )
+  assert.equal(peerAvatarUrl(conv({ peerAvatarUrl: 'http://img.alicdn.com/a.jpg' }), []), null)
+  assert.equal(peerAvatarUrl(conv({ peerAvatarUrl: 'https://user:pw@evil.example/a.png' }), []), null)
+  // 会话无头像：取最近一条对方消息头像，忽略自己发出的消息
+  assert.equal(
+    peerAvatarUrl(conv(), [
+      msg({ id: 'm1', senderAvatarUrl: 'https://img.alicdn.com/old.png' }),
+      msg({ id: 'm2', direction: 'out', senderAvatarUrl: 'https://img.alicdn.com/mine.png' }),
+      msg({ id: 'm3', senderAvatarUrl: 'https://img.alicdn.com/new.png' }),
+    ]),
+    'https://img.alicdn.com/new.png',
+  )
+  assert.equal(peerAvatarUrl(conv(), [msg({ senderAvatarUrl: 'javascript:alert(1)' })]), null)
+})
+
+test('messageAvatarUrl：仅返回通过校验的 https 地址', () => {
+  assert.equal(messageAvatarUrl(msg({ senderAvatarUrl: 'https://img.alicdn.com/x.png' })), 'https://img.alicdn.com/x.png')
+  assert.equal(messageAvatarUrl(msg({ senderAvatarUrl: 'http://img.alicdn.com/x.png' })), null)
+  assert.equal(messageAvatarUrl(msg()), null)
 })
 
 test('时间格式化：无效 / 越界时间戳安全返回空值', () => {

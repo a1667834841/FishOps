@@ -26,6 +26,8 @@ export const PlatformMethods = {
   AUTH_STATE: 'platform.authState',
   /** 当前登录用户 ID。 */
   CURRENT_USER_ID: 'platform.currentUserId',
+  /** 当前账号官方「我的商品库」在售商品（读全：分组发现 + nextPage 分页）。 */
+  PUBLISHED_ITEMS: 'platform.publishedItems',
 } as const
 
 export type PlatformMethod = (typeof PlatformMethods)[keyof typeof PlatformMethods]
@@ -49,6 +51,13 @@ export interface SearchParams {
   searchFilter?: string
   /** 搜索来源页，默认 `pcSearch`。 */
   searchReqFromPage?: string
+  /**
+   * 搜索专用基础间隔（毫秒）。仅采集搜索会传递：携带时该次搜索改用「基础间隔 +
+   * 随机增量」节流，而非全局固定 1500ms；缺省 / 非采集请求保持全局限速不变。
+   */
+  minIntervalMs?: number
+  /** 搜索专用随机增量上限（毫秒），配合 `minIntervalMs` 使用。 */
+  intervalJitterMs?: number
 }
 
 /** 详情参数。 */
@@ -86,6 +95,22 @@ export interface CurrentUserIdResult {
   userId: string | null
 }
 
+/** 当前账号在售商品读取参数。 */
+export interface PublishedItemsParams {
+  /** 每页条数（官方上限 20，超出会被服务端拒绝）。 */
+  pageSize?: number
+  /** 防御性翻页上限（在售商品极端多时也要有界）。 */
+  maxPages?: number
+}
+
+/** 当前账号在售商品读取结果（只暴露真实业务卡片，不含任何凭据）。 */
+export interface PublishedItemsResult {
+  /** 归属账号 ID（官方 `unb` / `havana` 解析）。 */
+  accountId: string
+  /** 原始在售卡片（`cardList[].cardData`，未归一）。 */
+  items: MtopRawResult[]
+}
+
 /** MTOP 原始 JSON 响应（保留关键字段，不裁剪）。 */
 export type MtopRawResult = Record<string, unknown>
 
@@ -97,6 +122,7 @@ export interface PlatformParamsMap {
   [PlatformMethods.SUGGEST]: SuggestParams
   [PlatformMethods.AUTH_STATE]: EmptyParams
   [PlatformMethods.CURRENT_USER_ID]: EmptyParams
+  [PlatformMethods.PUBLISHED_ITEMS]: PublishedItemsParams
 }
 
 /** 方法 → 结果 映射。 */
@@ -107,6 +133,7 @@ export interface PlatformResultMap {
   [PlatformMethods.SUGGEST]: string[]
   [PlatformMethods.AUTH_STATE]: AuthStateResult
   [PlatformMethods.CURRENT_USER_ID]: CurrentUserIdResult
+  [PlatformMethods.PUBLISHED_ITEMS]: PublishedItemsResult
 }
 
 /** 调用请求信封。 */

@@ -1,3 +1,7 @@
+import { syncCapturedProductsToFeishu } from '../../background/capture-feishu-sync'
+import { createCaptureRuntime } from '../../background/capture-runtime'
+import { MemoryTaskStore, TaskManager } from '../../../../shared/task/index'
+import { MockPlatform, makeListItem, makePage } from '../../capture/test/fixtures'
 /**
  * 飞书商品写入后台运行时测试。
  *
@@ -187,6 +191,22 @@ test('飞书写入: 字段缺失时预览标记不兼容', async () => {
   assert.deepEqual(result.missingFields, ['商品详情URL'])
   assert.deepEqual(result.typeConflicts, [])
   assert.equal(harness.batchCalls.length, 0)
+})
+
+test('飞书写入: 旧表缺少商品描述字段时阻止整批写入并提示显式补齐', async () => {
+  const repository = await seedRepository()
+  const harness = createHarness({
+    fields: defaultFields().filter((field) => field.field_name !== '商品描述'),
+  })
+  const runtime = setup(harness, new MemoryFeishuConfigStore(CONFIG), repository)
+
+  const res = await preview(runtime, ['B'])
+  assert.equal(res.ok, true)
+  const result = res.result as FeishuProductWritePreviewResult
+  assert.equal(result.fieldCompatible, false)
+  assert.deepEqual(result.missingFields, ['商品描述'])
+  assert.equal(harness.batchCalls.length, 0)
+  assert.equal(harness.fieldPosts, 0)
 })
 
 test('飞书写入: 字段类型冲突时预览标记不兼容', async () => {
@@ -452,4 +472,60 @@ test('飞书写入: 严格去重查询失败时执行失败，不静默重复写
   assert.equal(harness.batchCalls.length, 0)
   // 固定文案：不回显底层异常文本。
   assert.equal(res.error?.message.includes('boom'), false)
+})
+
+
+test('采集自动同步完整链路：真实采集入库后调用飞书 batch_create', async () => {
+  const repository = createMemoryProductRepository()
+  const tasks = new TaskManager({ store: new MemoryTaskStore() })
+  const harness = createHarness()
+  const writeRuntime = setup(harness, new MemoryFeishuConfigStore(CONFIG), repository)
+  const platform = new MockPlatform()
+  platform.pages.set(1, makePage([makeListItem({ itemId: 'captured_A' })]))
+  let finish!: (status: string) => void
+  const terminal = new Promise<string>((resolve) => { finish = resolve })
+  const capture = createCaptureRuntime({
+    platform, repository, tasks, sleep: async () => {},
+    syncProducts: (ids) => syncCapturedProductsToFeishu(writeRuntime, ids),
+    onEvent: (event) => {
+      const status = (event.payload as { task: { status: string } }).task.status
+      if (['completed', 'paused', 'failed'].includes(status)) finish(status)
+    },
+  })
+  await capture.handleCommand(createCommand(CommandTypes.CAPTURE_CREATE, { keyword: 'k', pages: 1 }))
+  assert.equal(await terminal, 'completed')
+  assert.equal(harness.batchCalls.length, 1)
+  assert.equal(harness.batchCalls[0]![0]!.fields['商品ID'], 'captured_A')
+  assert.equal(harness.fieldPosts, 0)
+})
+
+test('采集同步分批不超过 200 条，并跳过飞书已有组合键', async () => {
+  const repository = createMemoryProductRepository()
+  const products = Array.from({ length: 201 }, (_, i) => makeProduct(`bulk_${i}`, 10, 100))
+  await repository.upsertProducts(products, 1)
+  const harness = createHarness({ existingItems: [{ 商品ID: 'bulk_0', 想要人数: 10, 价格: 100 }] })
+  const runtime = setup(harness, new MemoryFeishuConfigStore(CONFIG), repository)
+  const result = await syncCapturedProductsToFeishu(runtime, products.map((p) => p.itemId))
+  assert.deepEqual(result, { createdCount: 200, skippedCount: 1 })
+  assert.deepEqual(harness.batchCalls.map((records) => records.length), [199, 1])
+})
+
+test('采集同步缺字段明确失败，空采集不发起飞书请求', async () => {
+  const repository = await seedRepository()
+  const harness = createHarness({ fields: [] })
+  const runtime = setup(harness, new MemoryFeishuConfigStore(CONFIG), repository)
+  assert.deepEqual(await syncCapturedProductsToFeishu(runtime, []), { createdCount: 0, skippedCount: 0 })
+  await assert.rejects(syncCapturedProductsToFeishu(runtime, ['A']), /字段不兼容/)
+  assert.equal(harness.batchCalls.length, 0)
+})
+
+
+test('采集同步取消后不再发送下一批飞书写入', async () => {
+  const repository = createMemoryProductRepository()
+  const products = Array.from({ length: 201 }, (_, i) => makeProduct(`stop_${i}`, 10, 100))
+  await repository.upsertProducts(products, 1)
+  const harness = createHarness()
+  const runtime = setup(harness, new MemoryFeishuConfigStore(CONFIG), repository)
+  await assert.rejects(syncCapturedProductsToFeishu(runtime, products.map((p) => p.itemId), async () => harness.batchCalls.length === 0), /同步已中止/)
+  assert.deepEqual(harness.batchCalls.map((records) => records.length), [200])
 })

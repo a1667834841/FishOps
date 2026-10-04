@@ -72,7 +72,13 @@ export class IndexedDbProductRepository implements ProductRepository {
   ): Promise<T> {
     const db = await this.getDb()
     const transaction = db.transaction(storeName, mode)
-    return requestToPromise(run(transaction.objectStore(storeName)))
+    // 请求成功不代表事务已提交；快照引用只能在事务提交后写入任务断点。
+    return new Promise<T>((resolve, reject) => {
+      const request = run(transaction.objectStore(storeName))
+      transaction.oncomplete = () => resolve(request.result)
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB 事务已中止'))
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB 事务失败'))
+    })
   }
 
   async upsertProducts(products: readonly Product[], capturedAt: number): Promise<ProductUpsertResult> {
@@ -93,14 +99,17 @@ export class IndexedDbProductRepository implements ProductRepository {
       if (existing) updated += 1
       else added += 1
 
-      const snapshot = buildProductSnapshot(stored, capturedAt)
+      // 当次采集内容与商品目录的合并策略隔离，恢复同步仍读取原始快照。
+      const snapshot = buildProductSnapshot(product.captureKeyword === undefined ? stored : product, capturedAt)
       const existingSnapshot = await this.withStore(
         SNAPSHOT_STORE,
         'readonly',
         (store) => store.get(snapshot.id) as IDBRequest<ProductSnapshot | undefined>,
       )
-      // 同一 (itemId, capturedAt) 覆盖写入，仅在首次时计入新增快照。
-      await this.withStore(SNAPSHOT_STORE, 'readwrite', (store) => store.put(snapshot) as IDBRequest<IDBValidKey>)
+      // 新采集的完整快照不可覆盖；旧分析快照保留原覆盖规则。
+      if (!existingSnapshot || product.captureKeyword === undefined) {
+        await this.withStore(SNAPSHOT_STORE, 'readwrite', (store) => store.put(snapshot) as IDBRequest<IDBValidKey>)
+      }
       if (!existingSnapshot) snapshots += 1
     }
 

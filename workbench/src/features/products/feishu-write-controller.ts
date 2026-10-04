@@ -139,6 +139,7 @@ export class FeishuWriteController extends StateStore<FeishuWriteState> {
    * 只要选中的 itemIds 改变，已有预览结果立即失效作废，执行结果也一并清理。
    */
   invalidatePreview(): void {
+    this.previewSeq++
     this.patch({
       preview: {
         phase: 'idle',

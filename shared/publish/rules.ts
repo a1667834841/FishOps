@@ -17,6 +17,7 @@ import {
   type PublishItemOverride,
   type PublishPriceRule,
   type PublishRule,
+  type PublishShippingStatus,
 } from '../types/publish'
 
 /**
@@ -283,6 +284,89 @@ export function validateAndFilterImages(
 }
 
 /**
+ * 配送（邮费）解析结果
+ */
+export interface ResolvedShipping {
+  /** free 包邮（映射 0）/ paid 收费 / unspecified 缺费用需用户行动 */
+  status: PublishShippingStatus
+  /** 最终邮费（元）。status 为 unspecified 时缺省。 */
+  postFee?: number
+  /** 是否包邮 */
+  freeShip?: boolean
+  /** 所在地文本（直接透传 override，不做任何伪造） */
+  location?: string
+  /** status 为 unspecified 时的可行动提示 */
+  actionable?: string
+}
+
+/**
+ * 解析配送（邮费）意图。
+ *
+ * 安全铁律：
+ * 1. 绝不伪造收费 —— 来源标记不包邮（或 override.freeShip === false）但未提供金额时，
+ *    返回 `unspecified` 并要求用户行动（补齐 `postFee` 或改为包邮），不替用户编造收费；
+ * 2. 包邮 / 免费配送映射邮费 0；
+ * 3. 来源未提供包邮信息（未知/空）时，保守按包邮处理（默认 0，不产生收费）；
+ * 4. `location` 仅透传用户显式值，缺省时保留发布页当前账号已有地址，绝不伪造。
+ *
+ * @param product 来源商品（读取其 freeShip 字符串标记）
+ * @param override 手动覆盖项
+ */
+export function resolveShipping(
+  product: Pick<Product, 'freeShip'> | { freeShip?: string },
+  override?: PublishItemOverride,
+): ResolvedShipping {
+  const location = override?.location
+  const explicitPostFee = override?.postFee
+
+  if (explicitPostFee !== undefined) {
+    if (typeof explicitPostFee !== 'number' || !Number.isFinite(explicitPostFee) || explicitPostFee < 0) {
+      return {
+        status: 'unspecified',
+        freeShip: false,
+        location,
+        actionable: '显式邮费（override.postFee）必须为 >= 0 的数字；请修正后重试，绝不伪造收费',
+      }
+    }
+    const fee = Number(explicitPostFee.toFixed(2))
+    return fee === 0
+      ? { status: 'free', postFee: 0, freeShip: true, location }
+      : { status: 'paid', postFee: fee, freeShip: false, location }
+  }
+
+  if (override?.freeShip === true) {
+    return { status: 'free', postFee: 0, freeShip: true, location }
+  }
+
+  if (override?.freeShip === false) {
+    return {
+      status: 'unspecified',
+      freeShip: false,
+      location,
+      actionable:
+        '已要求不包邮但未提供邮费金额：请提供 override.postFee（>0）或改为包邮（override.freeShip=true / override.postFee=0）',
+    }
+  }
+
+  const sourceFlag = typeof product?.freeShip === 'string' ? product.freeShip.trim() : ''
+  if (sourceFlag === '是') {
+    return { status: 'free', postFee: 0, freeShip: true, location }
+  }
+  if (sourceFlag === '否') {
+    return {
+      status: 'unspecified',
+      freeShip: false,
+      location,
+      actionable:
+        '来源商品标记为不包邮，但未提供邮费金额：请提供 override.postFee（>0）或改为包邮（override.freeShip=true / override.postFee=0），绝不伪造收费',
+    }
+  }
+
+  // 来源未提供包邮信息：保守按包邮处理（默认 0），不产生任何收费。
+  return { status: 'free', postFee: 0, freeShip: true, location }
+}
+
+/**
  * 组装标准待发布商品数据（PublishItem）
  *
  * @param product 来源商品实体
@@ -297,6 +381,7 @@ export function buildPublishItem(
   const priceResult = applyPriceRule(product, rule?.price)
   const contentResult = applyContentRule(product, rule?.content)
   const imageResult = validateAndFilterImages(product, rule?.image)
+  const shipping = resolveShipping(product, override)
 
   // 处理覆盖项
   const finalTitle = override?.title?.trim() || contentResult.title
@@ -354,6 +439,11 @@ export function buildPublishItem(
     mainImage: finalMainImage,
     detailImages: finalDetailImages,
     allImages: finalAllImages,
+
+    postFee: shipping.status === 'unspecified' ? undefined : shipping.postFee,
+    freeShip: shipping.freeShip,
+    shippingStatus: shipping.status,
+    location: shipping.location,
 
     confirmationStatus: 'unconfirmed',
   }

@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildProductSnapshot,
+  mergeProductImages,
   normalizeDetailPatch,
   normalizeProductFromSearchItem,
   normalizeProductsFromSearchPayload,
@@ -96,6 +97,35 @@ test('normalizeDetailPatch 只填充真实存在的字段', () => {
   assert.equal(patch.desc, undefined)
 
   assert.deepEqual(normalizeDetailPatch(null), {})
+})
+
+test('normalizeDetailPatch 图片全量规范化、去重保序', () => {
+  const patch = normalizeDetailPatch({
+    data: {
+      itemDO: {
+        imageInfos: [
+          { url: '//img.example/a.jpg' },
+          { url: '//img.example/a.jpg' },
+          { url: 'https://img.example/b.jpg' },
+          { url: '//img.example/a.jpg' },
+          { url: '' },
+        ],
+      },
+    },
+  })
+  // 协议相对地址规范化 + 去重 + 保留首次出现顺序 + 丢弃空值。
+  assert.deepEqual(patch.images, ['https://img.example/a.jpg', 'https://img.example/b.jpg'])
+})
+
+test('mergeProductImages 已有在前、追加去重保序，不覆盖已有集合', () => {
+  assert.deepEqual(mergeProductImages(['https://a/1.jpg'], ['//a/1.jpg', '//a/2.jpg']), [
+    'https://a/1.jpg',
+    'https://a/2.jpg',
+  ])
+  assert.deepEqual(mergeProductImages(undefined, ['https://a/1.jpg', 'https://a/1.jpg']), [
+    'https://a/1.jpg',
+  ])
+  assert.deepEqual(mergeProductImages(['https://a/1.jpg'], undefined), ['https://a/1.jpg'])
 })
 
 test('buildProductSnapshot 生成稳定快照 ID', () => {
@@ -207,4 +237,41 @@ test('sellerId 兼容数字类型：数字卖家 ID 统一转字符串保留（�
 
   const patch = normalizeDetailPatch({ data: { sellerDO: { sellerId: 888003 } } })
   assert.equal(patch.sellerId, '888003')
+})
+
+test('normalizeDetailPatch 兼容真实描述字段（desc / description）', () => {
+  // 标准字段 desc。
+  assert.equal(normalizeDetailPatch({ data: { itemDO: { desc: '标准描述' } } }).desc, '标准描述')
+  // 部分响应使用 description 别名。
+  assert.equal(normalizeDetailPatch({ data: { itemDO: { description: '别名描述' } } }).desc, '别名描述')
+  // 同时存在时标准字段优先。
+  assert.equal(
+    normalizeDetailPatch({ data: { itemDO: { desc: '标准', description: '别名' } } }).desc,
+    '标准',
+  )
+  // 无描述时不写入（不臆造）。
+  assert.equal(normalizeDetailPatch({ data: { itemDO: {} } }).desc, undefined)
+})
+
+test('normalizeDetailPatch 地区兼容 prov：缺失 city 时用省份兜底（不臆造）', () => {
+  // 真实详情响应可能只返回省份 `prov`（见 goods-api.js：`itemDO.prov || itemDO.city`）。
+  assert.equal(normalizeDetailPatch({ data: { itemDO: { prov: '浙江省' } } }).sellerCity, '浙江省')
+  // city（市）优先于 prov（省），更具体。
+  assert.equal(
+    normalizeDetailPatch({ data: { itemDO: { city: '杭州市', prov: '浙江省' } } }).sellerCity,
+    '杭州市',
+  )
+  // 地区也可能放在 sellerDO。
+  assert.equal(normalizeDetailPatch({ data: { sellerDO: { prov: '广东省' } } }).sellerCity, '广东省')
+  // 无任何地区字段时不写入（不臆造）。
+  assert.equal(normalizeDetailPatch({ data: { itemDO: {} } }).sellerCity, undefined)
+})
+
+test('normalizeDetailPatch 想要人数兼容数值与字符串（含千分位 / 「人想要」）', () => {
+  assert.equal(normalizeDetailPatch({ data: { itemDO: { wantCnt: 0 } } }).wantCnt, 0)
+  assert.equal(normalizeDetailPatch({ data: { itemDO: { wantCnt: 12 } } }).wantCnt, 12)
+  assert.equal(normalizeDetailPatch({ data: { itemDO: { wantCnt: '12人想要' } } }).wantCnt, 12)
+  assert.equal(normalizeDetailPatch({ data: { itemDO: { wantCnt: '1,234' } } }).wantCnt, 1234)
+  // 无法解析时不写入（不臆造 0）。
+  assert.equal(normalizeDetailPatch({ data: { itemDO: { wantCnt: '暂无' } } }).wantCnt, undefined)
 })

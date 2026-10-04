@@ -193,6 +193,14 @@ test('FEISHU_CONFIG_SET：合并后不完整时拒绝写入，且错误不回显
   assert.equal(await s.feishuConfigStore.hasConfig(), false)
 })
 
+test('FEISHU_CONFIG_SET：每日分表配置不要求预先提供商品表 ID', async () => {
+  const s = setup()
+  const response = await s.runtime.handleCommand(createCommand(CommandTypes.FEISHU_CONFIG_SET, { appId: 'app', appSecret: 'secret', spreadsheetToken: 'base' }))
+  assert.equal(response.ok, true)
+  assert.equal((await s.feishuConfigStore.load())?.productTableId, '')
+  assert.equal((response.result as FeishuConfigStatus).hasProductTableId, false)
+})
+
 test('FEISHU_CONFIG_STATUS：未配置时只回 false 存在性', async () => {
   const s = setup()
   const res = await s.runtime.handleCommand(createCommand(CommandTypes.FEISHU_CONFIG_STATUS, {}))

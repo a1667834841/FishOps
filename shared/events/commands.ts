@@ -3,9 +3,9 @@
 import type { ChatMessage, Conversation, SyncError } from '../types/chat'
 import type { Task, TaskStatus, TaskType } from '../types/task'
 import type {
+  PublishCreatePayload,
+  PublishDiagnostics,
   PublishManualConfirmationStatus,
-  PublishItemOverride,
-  PublishRule,
   PublishSubmitOutcome,
   PublishTask,
 } from '../types/publish'
@@ -39,6 +39,16 @@ import type {
   FeishuProductSchemaReconcilePreviewPayload,
   FeishuProductSchemaReconcilePreviewResult,
 } from '../types/feishu-schema-reconcile'
+import type {
+  FeishuProductGetPayload,
+  FeishuProductGetResult,
+  FeishuProductsPagePayload,
+  FeishuProductsPageResult,
+} from '../types/feishu-products'
+import type {
+  ProductCatalogQueryPayload,
+  ProductCatalogQueryResult,
+} from '../types/product-catalog'
 import type {
   LegacyConfigPreview,
   LegacyConfigMigrationResult,
@@ -83,6 +93,8 @@ export const CommandTypes = {
   CHAT_SYNC_HISTORY: 'CHAT_SYNC_HISTORY',
   /** 拉取会话列表（只读 LWP）（P5）。 */
   CHAT_SYNC_CONVERSATIONS: 'CHAT_SYNC_CONVERSATIONS',
+  /** 对单个会话的指定服务端消息确认已读（受控平台写操作）。 */
+  CHAT_MARK_READ: 'CHAT_MARK_READ',
   /**
    * 由 goofish 页面的 MAIN world 上报的原始 WebSocket 事件（P5 只读）。
    * 该命令**只接受来自 goofish content script 的来源**，Workbench 不应发送。
@@ -202,6 +214,26 @@ export const CommandTypes = {
    * 同名类型冲突需显式 `acceptTypeConflicts: true` 且绝不自动覆盖，**绝不删除字段**。
    */
   FEISHU_PRODUCT_SCHEMA_RECONCILE_EXECUTE: 'FEISHU_PRODUCT_SCHEMA_RECONCILE_EXECUTE',
+  // ---------------- 飞书商品库分页浏览 / 单条读取（P7 商品库） ----------------
+  /**
+   * 分页读取飞书商品表：**真实单次请求**（默认每页 20 条），关键词 / 排序由飞书 search API 服务端过滤，
+   * **绝不本地全量拉取或全表过滤**；目标表固定为已配置商品表（不接受任意 tableId），结果不含任何密钥。
+   * 本命令只做分页浏览，**不改变** DATA_SOURCE_QUERY 的批量分析语义。
+   */
+  FEISHU_PRODUCTS_PAGE: 'FEISHU_PRODUCTS_PAGE',
+  /**
+   * 读取飞书商品表**单条**真实记录并映射为可编辑发布素材：缺字段时明确回退（title / cover）并报告，
+   * 绝不伪造 ID；目标表固定为已配置商品表（不接受任意 tableId），结果不含任何密钥。
+   */
+  FEISHU_PRODUCT_GET: 'FEISHU_PRODUCT_GET',
+  // ---------------- 商品目录统一查询（P7 商品库） ----------------
+  /**
+   * 商品目录查询：`source: 'feishu'`（复用飞书专用分页读取）/ `'my_published'`
+   * （当前账号官方「我的商品库」在售，经 MAIN world 平台桥接读取 + 按需详情补齐）；
+   * 支持关键词 / 排序 / 分页 / `forceRefresh`。本命令**不改变** `PRODUCT_LIST`（本地商品库）语义。
+   * 只读；结果不含任何密钥；`my_published` 读取失败报错而非空列表，详情部分失败进 `warnings`。
+   */
+  PRODUCT_CATALOG_QUERY: 'PRODUCT_CATALOG_QUERY',
   // ---------------- 发布中心（P8） ----------------
   /** 创建发布任务（从指定 itemId 获取商品，严格校验入参，禁止随机偷选）。 */
   PUBLISH_CREATE: 'PUBLISH_CREATE',
@@ -334,6 +366,17 @@ export interface ChatSyncHistoryPayload {
   pages?: number
   /** 每页条数。 */
   count?: number
+}
+
+/** CHAT_MARK_READ 请求负载；只接受规范化会话 ID 和服务端 messageId。 */
+export interface ChatMarkReadPayload {
+  sessionId: string
+}
+
+/** CHAT_MARK_READ 结果。 */
+export interface ChatMarkReadResult {
+  ok: boolean
+  error?: SyncError
 }
 
 /** CHAT_SYNC_CONVERSATIONS 请求负载。 */
@@ -804,15 +847,8 @@ export type {
 
 // ---------------- 发布中心（P8） 负载与结果 ----------------
 
-/** PUBLISH_CREATE 请求负载 */
-export interface PublishCreatePayload {
-  /** 商品 itemId（必填，禁止偷偷随机选择） */
-  itemId: string
-  /** 自定义发布规则覆盖 */
-  rule?: Partial<PublishRule>
-  /** 手动字段覆盖 */
-  override?: PublishItemOverride
-}
+/** 重新导出 PUBLISH_CREATE 请求负载（命令契约主体定义于 shared/types/publish）。 */
+export type { PublishCreatePayload } from '../types/publish'
 
 /** PUBLISH_CREATE 结果 */
 export interface PublishCreateResult {
@@ -845,6 +881,11 @@ export interface PublishGetPayload {
 /** PUBLISH_GET 结果 */
 export interface PublishGetResult {
   task: PublishTask
+  /**
+   * 可选：从 `task.meta.diagnostics` 提取的发布诊断时间线（安全、有界），
+   * 便于 UI 无需额外路由即可直接渲染时间线。缺省表示该任务尚无诊断记录。
+   */
+  diag?: PublishDiagnostics
 }
 
 /** PUBLISH_FILL_FORM 请求负载 */
@@ -932,9 +973,66 @@ export interface PublishSubmitResult {
   task: PublishTask
   /** 目标发布页 tabId */
   tabId?: number
+  /**
+   * 官方「我的商品库」确认到的新增商品 itemId（仅 outcome === 'submitted' 且以官方在售商品数**严格 +1** 为证据时携带）。
+   */
+  newItemId?: string
+  /** 提交前官方在售商品数基线（仅成功时携带，供 UI 展示可信验据）。 */
+  beforeCount?: number
+  /** 提交后官方在售商品数（仅成功时携带；必须等于 beforeCount + 1）。 */
+  afterCount?: number
   /** 结果说明 */
   message: string
 }
+
+// ---------------- 飞书商品库分页浏览 / 单条读取（P7） 负载与结果 ----------------
+
+/** 重新导出飞书商品分页浏览 / 单条读取领域类型，方便 Workbench 直接引用。 */
+export type {
+  FeishuProductsPagePayload,
+  FeishuProductsPageResult,
+  FeishuProductGetPayload,
+  FeishuProductGetResult,
+  FeishuProductMaterial,
+  FeishuProductRow,
+  FeishuProductsOrder,
+} from '../types/feishu-products'
+
+/** FEISHU_PRODUCTS_PAGE 请求负载。 */
+export type FeishuProductsPageCommandPayload = FeishuProductsPagePayload
+
+/** FEISHU_PRODUCTS_PAGE 结果。 */
+export type FeishuProductsPageCommandResult = FeishuProductsPageResult
+
+/** FEISHU_PRODUCT_GET 请求负载。 */
+export type FeishuProductGetCommandPayload = FeishuProductGetPayload
+
+/** FEISHU_PRODUCT_GET 结果。 */
+export type FeishuProductGetCommandResult = FeishuProductGetResult
+
+// ---------------- 商品目录统一查询（P7） 负载与结果 ----------------
+
+/** PRODUCT_CATALOG_QUERY 请求负载。 */
+export type ProductCatalogQueryCommandPayload = ProductCatalogQueryPayload
+
+/** PRODUCT_CATALOG_QUERY 结果。 */
+export type ProductCatalogQueryCommandResult = ProductCatalogQueryResult
+
+/** 商品目录统一商品模型、来源与查询类型（供 Workbench 直接引用）。 */
+export type {
+  CatalogProduct,
+  ProductCatalogQueryPayload,
+  ProductCatalogQueryResult,
+  ProductCatalogSource,
+} from '../types/product-catalog'
+
+/** 商品目录查询相关的运行时常量。 */
+export {
+  PRODUCT_CATALOG_DEFAULT_PAGE_SIZE,
+  PRODUCT_CATALOG_MAX_PAGE_SIZE,
+  PRODUCT_CATALOG_KEYWORD_MAX_LENGTH,
+  PRODUCT_CATALOG_CURSOR_MAX_LENGTH,
+} from '../types/product-catalog'
 
 /** 命令 → 负载 映射。 */
 export interface CommandPayloadMap {
@@ -949,6 +1047,7 @@ export interface CommandPayloadMap {
   [CommandTypes.CHAT_GET_MESSAGES]: ChatGetMessagesPayload
   [CommandTypes.CHAT_SYNC_HISTORY]: ChatSyncHistoryPayload
   [CommandTypes.CHAT_SYNC_CONVERSATIONS]: ChatSyncConversationsPayload
+  [CommandTypes.CHAT_MARK_READ]: ChatMarkReadPayload
   [CommandTypes.CHAT_SOCKET_EVENT]: ChatSocketEventPayload
   [CommandTypes.CAPTURE_CREATE]: CaptureCreatePayload
   [CommandTypes.CAPTURE_PAUSE]: CaptureTaskRefPayload
@@ -987,6 +1086,9 @@ export interface CommandPayloadMap {
   [CommandTypes.FEISHU_PRODUCT_WRITE_EXECUTE]: FeishuProductWriteExecuteCommandPayload
   [CommandTypes.FEISHU_PRODUCT_SCHEMA_RECONCILE_PREVIEW]: FeishuProductSchemaReconcilePreviewCommandPayload
   [CommandTypes.FEISHU_PRODUCT_SCHEMA_RECONCILE_EXECUTE]: FeishuProductSchemaReconcileExecuteCommandPayload
+  [CommandTypes.FEISHU_PRODUCTS_PAGE]: FeishuProductsPageCommandPayload
+  [CommandTypes.FEISHU_PRODUCT_GET]: FeishuProductGetCommandPayload
+  [CommandTypes.PRODUCT_CATALOG_QUERY]: ProductCatalogQueryCommandPayload
   [CommandTypes.PUBLISH_CREATE]: PublishCreatePayload
   [CommandTypes.PUBLISH_LIST]: PublishListPayload
   [CommandTypes.PUBLISH_GET]: PublishGetPayload
@@ -1011,6 +1113,7 @@ export interface CommandResultMap {
   [CommandTypes.CHAT_GET_MESSAGES]: ChatGetMessagesResult
   [CommandTypes.CHAT_SYNC_HISTORY]: ChatSyncResultDto
   [CommandTypes.CHAT_SYNC_CONVERSATIONS]: ChatSyncResultDto
+  [CommandTypes.CHAT_MARK_READ]: ChatMarkReadResult
   [CommandTypes.CHAT_SOCKET_EVENT]: ChatSocketEventResult
   [CommandTypes.CAPTURE_CREATE]: CaptureTaskResult
   [CommandTypes.CAPTURE_PAUSE]: CaptureTaskResult
@@ -1049,6 +1152,9 @@ export interface CommandResultMap {
   [CommandTypes.FEISHU_PRODUCT_WRITE_EXECUTE]: FeishuProductWriteExecuteCommandResult
   [CommandTypes.FEISHU_PRODUCT_SCHEMA_RECONCILE_PREVIEW]: FeishuProductSchemaReconcilePreviewCommandResult
   [CommandTypes.FEISHU_PRODUCT_SCHEMA_RECONCILE_EXECUTE]: FeishuProductSchemaReconcileExecuteCommandResult
+  [CommandTypes.FEISHU_PRODUCTS_PAGE]: FeishuProductsPageCommandResult
+  [CommandTypes.FEISHU_PRODUCT_GET]: FeishuProductGetCommandResult
+  [CommandTypes.PRODUCT_CATALOG_QUERY]: ProductCatalogQueryCommandResult
   [CommandTypes.PUBLISH_CREATE]: PublishCreateResult
   [CommandTypes.PUBLISH_LIST]: PublishListResult
   [CommandTypes.PUBLISH_GET]: PublishGetResult

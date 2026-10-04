@@ -2,10 +2,10 @@
  * 飞书表字段同步 · 命令登记 / 负载校验 / 路由 回归。
  *
  * 验证：
- * 1. 命令已在 CommandTypes 登记；
+ * 1. 命令已在 CommandTypes 登记（协议保留）；
  * 2. 预览负载必须为空（不接受 tableId 等任意目标）；执行负载严格白名单（previewId + confirm:true +
  *    可选 acceptTypeConflicts）；
- * 3. 路由到 feishuSchema deps；未接线回 INTERNAL。
+ * 3. **后台已停止注册字段同步路由**：命中该命令时回 UNKNOWN_COMMAND（不再路由到 feishuSchema）。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -51,8 +51,7 @@ test('isFeishuProductSchemaReconcileExecutePayload：必须 previewId + confirm:
   assert.equal(isFeishuProductSchemaReconcileExecutePayload({ previewId: 'p1', confirm: true, fields: [] }), false)
 })
 
-test('message-router：字段同步命令路由到 feishuSchema deps；未接线回 INTERNAL', async () => {
-  const command = createCommand(CommandTypes.FEISHU_PRODUCT_SCHEMA_RECONCILE_PREVIEW, {})
+test('message-router：后台已停止注册字段同步路由（→ UNKNOWN_COMMAND）', async () => {
   const baseDeps = {
     now: () => 1,
     workerStartedAt: 1,
@@ -62,25 +61,17 @@ test('message-router：字段同步命令路由到 feishuSchema deps；未接线
     unsubscribe: (e: string[]) => e,
   }
 
-  const routed = await handleCommand(command, {
-    ...baseDeps,
-    feishuSchema: {
-      handleCommand: async () => ({
-        kind: 'response',
-        protocol: 1,
-        requestId: command.requestId,
-        type: command.type,
-        ok: true,
-        result: { targetTableId: 'tbl', strategy: 'UNION', targetFieldCount: 20 },
-        respondedAt: 1,
-      }),
-    },
-  } as never)
-  assert.equal(routed.ok, true)
-  assert.equal((routed.result as { targetTableId: string }).targetTableId, 'tbl')
+  const preview = await handleCommand(
+    createCommand(CommandTypes.FEISHU_PRODUCT_SCHEMA_RECONCILE_PREVIEW, {}),
+    { ...baseDeps } as never,
+  )
+  assert.equal(preview.ok, false)
+  assert.equal(preview.error?.code, 'UNKNOWN_COMMAND')
 
-  const notWired = await handleCommand(command, { ...baseDeps } as never)
-  assert.equal(notWired.ok, false)
-  assert.equal(notWired.error?.code, 'INTERNAL')
-  assert.equal(notWired.error?.message.includes('未接线'), true)
+  const execute = await handleCommand(
+    createCommand(CommandTypes.FEISHU_PRODUCT_SCHEMA_RECONCILE_EXECUTE, { previewId: 'p', confirm: true }),
+    { ...baseDeps } as never,
+  )
+  assert.equal(execute.ok, false)
+  assert.equal(execute.error?.code, 'UNKNOWN_COMMAND')
 })

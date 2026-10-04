@@ -1,7 +1,8 @@
 /**
  * 聊天中心控制器（纯 TypeScript，不依赖 Vue / DOM / chrome，可在 Node 下直接测试）。
  *
- * 职责：把 P5 的 5 条只读命令 + 4 个实时事件编排成一份可订阅的页面状态。
+ * 职责：把 P5 的只读命令 + 受控 `CHAT_MARK_READ`（会话已读，不发送消息）+ 实时事件
+ * 编排成一份可订阅的页面状态。
  *
  * 关键约束（均有对应单测）：
  * - 本地缓存查询（STATUS / LIST / GET_MESSAGES）可自动触发；
@@ -10,7 +11,7 @@
  * - 事件只作为「元数据信号」：收到后重新读 store，绝不从事件取正文，也不输出任何日志；
  * - 订阅只在 `start()` 里注册一次，`dispose()` 全部释放；刷新按钮只重新查询，不重新订阅；
  * - 同步 `result.ok === false` 与抛异常同样视为失败并展示；
- * - 绝不发送聊天消息、不调用 AI（P6 才实现）。
+ * - 绝不发送聊天消息、不调用 AI（P6 才实现）；会话已读仅经受控的 `CHAT_MARK_READ`，且全局单飞。
  */
 import {
   CommandTypes,
@@ -29,6 +30,7 @@ export type ChatCommandType =
   | typeof CommandTypes.CHAT_GET_MESSAGES
   | typeof CommandTypes.CHAT_SYNC_CONVERSATIONS
   | typeof CommandTypes.CHAT_SYNC_HISTORY
+  | typeof CommandTypes.CHAT_MARK_READ
 
 /** 本页面订阅的事件。WORKER_STARTED 用于 service worker 重启 / Port 重连后重新对账。 */
 export const CHAT_CENTER_EVENTS = [
@@ -100,6 +102,11 @@ export interface ChatCenterState {
   historySync: SyncState
   /** 实时事件订阅失败时的说明；为 null 表示订阅正常。 */
   realtimeError: string | null
+  /** 用户显式刷新平台最近记录时的运行状态与错误。 */
+  recentSyncing: boolean
+  recentSyncError: string | null
+  /** 当前会话已读请求错误；成功后为 null。 */
+  markReadError: string | null
 }
 
 export interface ChatCenterControllerOptions {
@@ -166,6 +173,9 @@ export function createInitialState(availability: ChatCenterState['availability']
     conversationSync: idleSync(),
     historySync: idleSync(),
     realtimeError: null,
+    recentSyncing: false,
+    recentSyncError: null,
+    markReadError: null,
   }
 }
 
@@ -182,6 +192,15 @@ export class ChatCenterController {
 
   /** 各类请求的最新令牌；返回时令牌不一致说明已被更新的请求取代。 */
   private readonly seq = { status: 0, list: 0, messages: 0 }
+  private recentSyncInFlight: Promise<void> | null = null
+  /** 全局单飞：同一时刻只允许一个已读请求在途，切会话立即作废旧响应，避免重复 / 竞态。 */
+  private markReadInFlight: Promise<void> | null = null
+  /** 在途已读请求 settle 后是否还需对「当前选中会话 / 新水位」补一次。 */
+  private markReadDirty = false
+  /** 会话选择代（epoch）：切会话即递增，使旧会话在途的已读响应作废。 */
+  private markReadGeneration = 0
+  /** 已成功确认已读的会话 → 其确认时的服务端 messageId（缓存无历史时记空串）。 */
+  private readonly markedReadMessageIds = new Map<string, string>()
   /** 实时连接状态事件序号：status 响应若发起后又收到了事件，则以事件为准。 */
   private socketEventSeq = 0
 
@@ -248,7 +267,7 @@ export class ChatCenterController {
     }
   }
 
-  /** 手动刷新：只重新查询本地缓存，不拉取平台数据，也不重新订阅。 */
+  /** 只重新查询本地缓存，不拉取平台数据，也不重新订阅；供内部事件与发送完成后对账。 */
   async refresh(): Promise<void> {
     if (this.disposed || !this.api) return
     const tasks: Promise<void>[] = [this.loadStatus(), this.loadConversations(false)]
@@ -256,16 +275,46 @@ export class ChatCenterController {
     await Promise.all(tasks)
   }
 
+  /** 用户显式刷新：同步平台最近一页会话及刷新开始时选中会话的最近一页历史。 */
+  async syncRecent(): Promise<void> {
+    if (this.disposed || !this.api || this.recentSyncInFlight) return this.recentSyncInFlight ?? undefined
+    const selectedId = this.state.selectedId
+    this.patch({ recentSyncing: true, recentSyncError: null })
+    const run = (async () => {
+      try {
+        await this.syncConversations()
+        if (this.disposed) return
+        if (this.state.conversationSync.phase === 'failed') {
+          this.patch({ recentSyncError: this.state.conversationSync.error })
+          return
+        }
+        if (!selectedId || this.state.selectedId !== selectedId) return
+        await this.syncHistoryFor(selectedId)
+        if (this.state.historySync.phase === 'failed' && this.state.historySync.sessionId === selectedId) {
+          this.patch({ recentSyncError: this.state.historySync.error })
+        }
+      } finally {
+        if (!this.disposed) this.patch({ recentSyncing: false })
+        this.recentSyncInFlight = null
+      }
+    })()
+    this.recentSyncInFlight = run
+    return run
+  }
+
   /** 选择会话并读取其本地缓存消息。重复选择同一会话不会重载。 */
   selectSession(sessionId: string): void {
     if (this.disposed || !this.api || !sessionId) return
     if (this.state.selectedId === sessionId) return
+    this.markReadGeneration++
     // 先让在途的旧会话请求作废，再切换，避免旧响应在切换瞬间写入。
     this.seq.messages++
     this.patch({
       selectedId: sessionId,
       messages: { sessionId, phase: 'loading', items: [], error: null, refreshing: false },
+      markReadError: null,
     })
+    // 消息读取完成后会统一触发已读检查（见 loadMessages 成功分支）。
     void this.loadMessages(sessionId, false)
   }
 
@@ -289,13 +338,18 @@ export class ChatCenterController {
       this.patch({ conversationSync: this.failedSync(describeError(error), null) })
     }
     // 无论成败都重新读本地缓存：分页同步可能已写入部分数据。
-    void Promise.all([this.loadStatus(), this.loadConversations(true)])
+    await Promise.all([this.loadStatus(), this.loadConversations(true)])
   }
 
   /** 显式同步当前选中会话的历史消息：向平台只读拉取。同一时刻只允许一个历史同步。 */
   async syncHistory(): Promise<void> {
     const sessionId = this.state.selectedId
-    if (this.disposed || !this.api || !sessionId || this.state.historySync.phase === 'running') return
+    if (!sessionId) return
+    await this.syncHistoryFor(sessionId)
+  }
+
+  private async syncHistoryFor(sessionId: string): Promise<void> {
+    if (this.disposed || !this.api || this.state.historySync.phase === 'running') return
     this.patch({ historySync: { ...idleSync(), phase: 'running', sessionId } })
     try {
       const result = await this.api.call(CommandTypes.CHAT_SYNC_HISTORY, { sessionId })
@@ -308,10 +362,94 @@ export class ChatCenterController {
     const tasks: Promise<void>[] = [this.loadStatus(), this.loadConversations(true)]
     // 用户若已切到别的会话，就不要再为旧会话重读消息。
     if (this.state.selectedId === sessionId) tasks.push(this.loadMessages(sessionId, true))
-    void Promise.all(tasks)
+    await Promise.all(tasks)
   }
 
   // ---------------- 内部实现 ----------------
+
+  private async markSelectedRead(sessionId: string): Promise<void> {
+    const api = this.api
+    if (!api || this.disposed || this.state.selectedId !== sessionId) return
+    // 已有已读在途：登记 dirty，待其 settle 后对当前选中会话 / 新水位补一次（不返回在途 promise，
+    // 否则新会话会被静默丢弃、依赖用户再点）。
+    if (this.markReadInFlight) {
+      this.markReadDirty = true
+      return
+    }
+    const latestId = this.latestServerInboundId(sessionId)
+    const alreadyMarked = this.markedReadMessageIds.get(sessionId)
+    // 已确认过且水位未变则不再请求，避免事件风暴。
+    // 注意：缓存无历史（latestId 未定义）时仍需触发——后台 markRead 会先补同步最近一页历史再确认，
+    // 不能因为页面消息为空就完全不触发而永远未读。
+    if (alreadyMarked !== undefined && (latestId === undefined || alreadyMarked === latestId)) {
+      this.markReadDirty = false
+      return
+    }
+    const generation = this.markReadGeneration
+    this.markReadDirty = false
+    this.patch({ markReadError: null })
+    const run = (async () => {
+      try {
+        const markResult = await api.call(CommandTypes.CHAT_MARK_READ, { sessionId })
+        // 会话代 + 选中会话校验：切会话后的旧响应丢弃。
+        // 不用 seq.messages：同会话因事件触发的消息重读不应作废已读请求（否则会被自己的广播更新不停作废）。
+        if (this.disposed || this.state.selectedId !== sessionId || this.markReadGeneration !== generation) return
+        if (!isRecord(markResult) || markResult['ok'] !== true) {
+          const error = isRecord(markResult) && isRecord(markResult['error']) && typeof markResult['error']['message'] === 'string'
+            ? markResult['error']['message'] : '平台未确认已读'
+          this.patch({ markReadError: error })
+          return
+        }
+        this.markedReadMessageIds.set(sessionId, latestId ?? '')
+        // 成功后重读会话列表，清除该会话的未读标记（不改动消息，也不自动发送）。
+        const result = await api.call(CommandTypes.CHAT_LIST_CONVERSATIONS, {})
+        if (this.disposed || this.state.selectedId !== sessionId || this.markReadGeneration !== generation) return
+        const items = parseConversations(result)
+        if (items) this.patch({ conversations: { phase: 'ready', items, error: null, refreshing: false } })
+      } catch (error) {
+        if (this.disposed || this.state.selectedId !== sessionId || this.markReadGeneration !== generation) return
+        this.patch({ markReadError: describeError(error) })
+      } finally {
+        this.markReadInFlight = null
+        this.scheduleMarkReadFollowUp()
+      }
+    })()
+    this.markReadInFlight = run
+    return run
+  }
+
+  /**
+   * 已读在途请求 settle 后的补发调度。
+   *
+   * 仅当 dirty（在途期间发生了会话切换或当前会话出现新水位）且仍有选中会话时补一次；
+   * dispose / 无选中会话则不补。补发失败不会再递归补发（dirty 已清），避免循环重试与事件风暴。
+   */
+  private scheduleMarkReadFollowUp(): void {
+    if (this.disposed) return
+    if (!this.markReadDirty) return
+    const selected = this.state.selectedId
+    this.markReadDirty = false
+    if (!selected) return
+    void this.markSelectedRead(selected)
+  }
+
+  /** 取当前会话最新的服务端入站 messageId（过滤本地 pendingEcho 回显，不当作已读水位）。 */
+  private latestServerInboundId(sessionId: string): string | undefined {
+    if (this.state.messages.sessionId !== sessionId) return undefined
+    const items = this.state.messages.items
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      const message = items[i]
+      if (
+        message.direction === 'in' &&
+        message.pendingEcho !== true &&
+        typeof message.messageId === 'string' &&
+        message.messageId.length > 0
+      ) {
+        return message.messageId
+      }
+    }
+    return undefined
+  }
 
   private async reload(): Promise<void> {
     await Promise.all([this.loadStatus(), this.loadConversations(false)])
@@ -442,6 +580,8 @@ export class ChatCenterController {
       const items = parseMessages(result)
       if (!items) throw new Error(BAD_SHAPE)
       this.patch({ messages: { sessionId, phase: 'ready', items, error: null, refreshing: false } })
+      // 消息就绪后统一检查已读：会话切换与同会话新水位都由这里驱动（在途时会登记 dirty）。
+      void this.markSelectedRead(sessionId)
     } catch (error) {
       if (this.isStale('messages', token) || this.state.selectedId !== sessionId) return
       const latest = this.state.messages

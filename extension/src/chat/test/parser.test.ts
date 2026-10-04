@@ -7,6 +7,7 @@ import {
   classifyPayload,
   decodeChatData,
   decodeMessagePackBase64,
+  extractAvatarUrl,
   parseHistoryMessageModel,
   parseWebSocketMessage,
 } from '../parser'
@@ -186,4 +187,51 @@ test('历史消息解析：文本与方向', () => {
 test('历史消息解析：无内容返回 null', () => {
   const model = { message: { cid: '123@goofish', content: { custom: {} } } }
   assert.equal(parseHistoryMessageModel(model), null)
+})
+
+test('历史消息方向：发送者 UID 带 @goofish 后缀时按本体匹配当前用户（不误判为自己左侧）', () => {
+  const model = {
+    message: {
+      messageId: 'h2',
+      cid: '123@goofish',
+      createAt: 1,
+      content: { custom: { contentType: 1, data: b64(JSON.stringify({ contentType: 1, text: { text: '我发的' } })) } },
+      extension: { senderUserId: '3004743608@goofish', reminderTitle: '我' },
+    },
+  }
+  const mine = parseHistoryMessageModel(model, { myUserId: '3004743608' })
+  assert.equal(mine?.senderId, '3004743608', '发送者 ID 应归一为去掉 @goofish 后缀的本体')
+  assert.equal(mine?.direction, 'out')
+
+  // 当前用户 ID 反向带后缀时也应正确判定。
+  const alsoMine = parseHistoryMessageModel(model, { myUserId: '3004743608@goofish' })
+  assert.equal(alsoMine?.direction, 'out')
+})
+
+test('实时消息方向：发送者 UID 带 @goofish 后缀时按本体匹配当前用户', () => {
+  const payload = {
+    body: {
+      content: { custom: { contentType: 1, data: b64(JSON.stringify({ contentType: 1, text: { text: '我发的' } })) } },
+      extension: { senderUserId: '3004743608@goofish', reminderUrl: 'https://x?sid=123&peerUserId=999' },
+      createAt: 1,
+      messageId: 'm3',
+    },
+  }
+  const res = parseWebSocketMessage(JSON.stringify(payload), { myUserId: '3004743608' })
+  assert.equal(res.ok, true)
+  if (!res.ok) return
+  assert.equal(res.event.messages[0].senderId, '3004743608')
+  assert.equal(res.event.messages[0].direction, 'out')
+})
+
+test('头像字段：识别真实 logo 字段，且不把商品图当头像', () => {
+  // 真实平台头像字段为 logo：mtop `idlemessage.pc.user.query` 的 data.userInfo.logo，
+  // 以及 `idlemessage.pc.session.sync` 的 ownerInfo.logo / userInfo.logo。
+  const avatar = 'https://img.alicdn.com/bao/uploaded/i2/O1CN01FdtcnZ1N8xK86vifa_!!0-mtopupload.jpg'
+  assert.equal(extractAvatarUrl([{ logo: avatar }]), avatar)
+  assert.equal(extractAvatarUrl([{ userInfo: { logo: avatar } }]), undefined) // 嵌套需由调用方展开
+
+  // 商品封面 picUrl / 商品主图 itemMainPic 是商品图，绝不能当作头像。
+  assert.equal(extractAvatarUrl([{ picUrl: 'https://img.alicdn.com/bao/uploaded/i3/x-0-fleamarket.jpg' }]), undefined)
+  assert.equal(extractAvatarUrl([{ itemMainPic: 'https://img.alicdn.com/bao/uploaded/i3/x-0-xy_item.jpg' }]), undefined)
 })

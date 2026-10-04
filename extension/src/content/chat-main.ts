@@ -59,6 +59,17 @@ export function installChatHost(win: Window): void {
 
   // 挂载只读 LWP transport host：只暴露 send，不暴露 socket / 凭据。
   const transportHost = {
+    getSocketStatus: () => host.getSocketStatus(),
+    async markRead(sessionId: unknown, messageId: unknown): Promise<ChatTransportHostResponse> {
+      try {
+        if (typeof sessionId !== 'string' || typeof messageId !== 'string') throw new Error('已读参数非法')
+        const response = await host.readTransport.markRead(sessionId, messageId)
+        return { ok: true, response }
+      } catch (error) {
+        const code = error instanceof Error ? error.message : 'MARK_READ_FAILED'
+        return { ok: false, error: { code: 'MARK_READ_FAILED', message: code } }
+      }
+    },
     async send(request: unknown, timeoutMs: number): Promise<ChatTransportHostResponse> {
       try {
         const response = await host.transport.send(request as never, { timeoutMs })

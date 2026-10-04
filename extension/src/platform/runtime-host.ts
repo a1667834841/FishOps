@@ -5,7 +5,7 @@
  * 因此可以在 Node 中直接单测。真正的页面挂载（postMessage 监听、`window.__FISHOPS_PLATFORM_HOST__`）
  * 由 {@link ./host-entry} 完成。
  */
-import { PlatformError, toPlatformError } from './errors'
+import { PlatformError, defaultMessageFor, toPlatformError } from './errors'
 import {
   PLATFORM_CHANNEL,
   PlatformMethods,
@@ -14,10 +14,12 @@ import {
   type PlatformMethod,
   type PlatformParamsMap,
   type PlatformResultMap,
+  type PublishedItemsParams,
   type SearchParams,
   type SuggestParams,
 } from './protocol'
 import { buildSearchData, type MtopClient } from './xianyu/mtop-client'
+import { readAllOnSaleCards } from './xianyu/my-items'
 import type { AuthService } from './xianyu/auth'
 
 export interface RuntimeHostDeps {
@@ -52,6 +54,10 @@ function asSearchParams(params: unknown): SearchParams {
     ...(typeof params.searchReqFromPage === 'string'
       ? { searchReqFromPage: params.searchReqFromPage }
       : {}),
+    ...(typeof params.minIntervalMs === 'number' ? { minIntervalMs: params.minIntervalMs } : {}),
+    ...(typeof params.intervalJitterMs === 'number'
+      ? { intervalJitterMs: params.intervalJitterMs }
+      : {}),
   }
 }
 
@@ -76,6 +82,14 @@ function asSuggestParams(params: unknown): SuggestParams {
   }
 }
 
+function asPublishedItemsParams(params: unknown): PublishedItemsParams {
+  const record = isRecord(params) ? params : {}
+  return {
+    ...(typeof record['pageSize'] === 'number' ? { pageSize: record['pageSize'] } : {}),
+    ...(typeof record['maxPages'] === 'number' ? { maxPages: record['maxPages'] } : {}),
+  }
+}
+
 /** 创建 runtime host。 */
 export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
   const now = deps.now ?? (() => Date.now())
@@ -84,8 +98,16 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
     switch (method) {
       case PlatformMethods.PING:
         return { pong: true, host: 'main-world', now: now() } satisfies PlatformResultMap[typeof PlatformMethods.PING]
-      case PlatformMethods.SEARCH:
-        return deps.client.requestRaw('search', buildSearchData(asSearchParams(params)))
+      case PlatformMethods.SEARCH: {
+        const p = asSearchParams(params)
+        // 采集搜索携带专用间隔时，用「基础间隔 + 随机增量」覆盖全局固定 1500ms；
+        // 非采集 / 未携带时保持全局限速不变。
+        const options =
+          typeof p.minIntervalMs === 'number'
+            ? { rateLimit: { minIntervalMs: p.minIntervalMs, jitterMs: p.intervalJitterMs ?? 0 } }
+            : undefined
+        return deps.client.requestRaw('search', buildSearchData(p), options)
+      }
       case PlatformMethods.DETAIL:
         return deps.client.requestRaw('detail', { itemId: asDetailItemId(params) })
       case PlatformMethods.SUGGEST: {
@@ -100,6 +122,19 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
         return deps.auth.getAuthState()
       case PlatformMethods.CURRENT_USER_ID:
         return { userId: await deps.auth.getCurrentUserId() } satisfies PlatformResultMap[typeof PlatformMethods.CURRENT_USER_ID]
+      case PlatformMethods.PUBLISHED_ITEMS: {
+        const p = asPublishedItemsParams(params)
+        // 账号必须是当前登录账号；缺失（未登录）直接抛 unauthorized，绝不返回空集合。
+        const accountId = await deps.auth.getCurrentUserId()
+        if (!accountId) {
+          throw new PlatformError('unauthorized', defaultMessageFor('unauthorized'))
+        }
+        const items = await readAllOnSaleCards(deps.client, accountId, {
+          ...(p.pageSize === undefined ? {} : { pageSize: p.pageSize }),
+          ...(p.maxPages === undefined ? {} : { maxPages: p.maxPages }),
+        })
+        return { accountId, items } satisfies PlatformResultMap[typeof PlatformMethods.PUBLISHED_ITEMS]
+      }
       default:
         throw new PlatformError('unknown', `未知平台方法: ${method}`)
     }

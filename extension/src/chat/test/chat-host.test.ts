@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import { CHAT_SOCKET_MAX_RAW_LENGTH, type ChatSocketEventPayload } from '@fishops/shared'
 import { createLwpRequest, LWP_ROUTES } from '../../../../shared/chat/index'
 import { createChatHost } from '../chat-host'
+import { probeChatSocketInPage } from '../socket-readiness'
 import { ChatWebSocketMonitor, type WebSocketConstructorLike, type WebSocketLike } from '../websocket'
 
 class FakeWebSocket implements WebSocketLike {
@@ -105,4 +106,38 @@ test('reportStatus：connecting 不上报，open/closed/error 上报', () => {
     reported.map((event) => event.event),
     ['open', 'close', 'error'],
   )
+})
+
+test('连接快照：直接读取 transport 的真实连接状态，不依赖已上报事件', () => {
+  const host = createChatHost({ report: () => {} })
+  assert.equal(host.getSocketStatus(), null)
+  const socket = new FakeWebSocket(TARGET)
+  host.attachSocket(socket)
+  assert.equal(host.getSocketStatus(), 'connecting')
+  socket.readyState = 1
+  assert.equal(host.getSocketStatus(), 'open')
+  socket.readyState = 2
+  assert.equal(host.getSocketStatus(), 'closed')
+  socket.readyState = 3
+  assert.equal(host.getSocketStatus(), 'closed')
+  assert.equal(socket.sendCalls.length, 0)
+  host.dispose()
+})
+
+test('页面连接探测：host 缺失或旧版 host 返回 null，新版只返回合法状态', () => {
+  const page = globalThis as Record<string, unknown>
+  const original = page.__FISHOPS_CHAT_TRANSPORT__
+  try {
+    delete page.__FISHOPS_CHAT_TRANSPORT__
+    assert.equal(probeChatSocketInPage(), null)
+    page.__FISHOPS_CHAT_TRANSPORT__ = { send: () => {} }
+    assert.equal(probeChatSocketInPage(), null)
+    page.__FISHOPS_CHAT_TRANSPORT__ = { getSocketStatus: () => 'open' }
+    assert.equal(probeChatSocketInPage(), 'open')
+    page.__FISHOPS_CHAT_TRANSPORT__ = { getSocketStatus: () => ({ secret: '不得透传' }) }
+    assert.equal(probeChatSocketInPage(), null)
+  } finally {
+    if (original === undefined) delete page.__FISHOPS_CHAT_TRANSPORT__
+    else page.__FISHOPS_CHAT_TRANSPORT__ = original
+  }
 })

@@ -112,3 +112,48 @@ test('handleCall：成功响应带 channel 与 callId', async () => {
   assert.equal(response.kind, 'platform-result')
   assert.equal(response.callId, 'call_1')
 })
+
+function makePublishedItemsHost(userId: string | null) {
+  const clientCalls: Array<{ apiType: string; data: Record<string, unknown> }> = []
+  const client = {
+    requestRaw: async (apiType: string, data: Record<string, unknown>) => {
+      clientCalls.push({ apiType, data })
+      if (data['needGroupInfo'] === true) {
+        return {
+          ret: ['SUCCESS::x'],
+          data: { itemGroupList: [{ groupName: '在售', groupId: 7 }], cardList: [] },
+        }
+      }
+      return {
+        ret: ['SUCCESS::x'],
+        data: { nextPage: false, cardList: [{ cardData: { id: 'x', title: 'X' } }] },
+      }
+    },
+  } as unknown as MtopClient
+  const auth: AuthService = {
+    hasToken: () => true,
+    getToken: () => 'tok',
+    getAuthState: () => ({ loggedIn: true, hasToken: true }),
+    getCurrentUserId: async () => userId,
+  }
+  return { host: createRuntimeHost({ client, auth }), clientCalls }
+}
+
+test('publishedItems：读取当前账号在售并返回 { accountId, items }', async () => {
+  const { host, clientCalls } = makePublishedItemsHost('42')
+  const result = (await host.handle(PlatformMethods.PUBLISHED_ITEMS, {})) as {
+    accountId: string
+    items: Array<Record<string, unknown>>
+  }
+  assert.equal(result.accountId, '42')
+  assert.equal(result.items.length, 1)
+  assert.equal(result.items[0]!['id'], 'x')
+  assert.equal(clientCalls[0]!.apiType, 'myOnSaleItems')
+})
+
+test('publishedItems：未登录（无 userId）返回 unauthorized 失败，不返回空集合', async () => {
+  const { host } = makePublishedItemsHost(null)
+  const response = await host.handleCall(makeRequest(PlatformMethods.PUBLISHED_ITEMS, {}))
+  assert.equal(response.ok, false)
+  if (!response.ok) assert.equal(response.error.category, 'unauthorized')
+})

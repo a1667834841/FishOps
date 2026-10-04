@@ -21,8 +21,10 @@
 import { CommandTypes, EventTypes } from '@fishops/shared'
 import type { ChatEventKind, ChatMessage, Conversation } from '../../../shared/types/chat'
 import type { ChatSocketStatus } from './websocket'
-import type { ChatSync, SyncResult } from './sync'
+import { correctMessageDirection } from './parser'
+import type { ChatSync, SyncConversationsOptions, SyncResult } from './sync'
 import type { ChatStore } from './store'
+import { isServerMessageId, type ChatReadTransport } from './read-transport'
 
 // ---------------- 与 P1 Bridge 信封兼容的最小结构 ----------------
 
@@ -71,6 +73,8 @@ export const ChatBridgeCommands = {
   CHAT_SYNC_HISTORY: CommandTypes.CHAT_SYNC_HISTORY,
   /** 拉取会话列表。 */
   CHAT_SYNC_CONVERSATIONS: CommandTypes.CHAT_SYNC_CONVERSATIONS,
+  /** 对指定会话最新入站服务端消息确认已读。 */
+  CHAT_MARK_READ: CommandTypes.CHAT_MARK_READ,
   /** 聊天层状态（socket 连接、计数）。 */
   CHAT_STATUS: CommandTypes.CHAT_STATUS,
 } as const
@@ -95,6 +99,8 @@ export type ChatBridgeEvent = (typeof ChatBridgeEvents)[keyof typeof ChatBridgeE
 export interface ChatBridgeAdapterDeps {
   sync: ChatSync
   store: ChatStore
+  /** 已读接口独立写 transport；不复用只读历史 transport 白名单。 */
+  readTransport?: ChatReadTransport
   /** 当前用户 ID。 */
   myUserId?: string
   /** 时间源，便于测试。 */
@@ -122,14 +128,32 @@ export class ChatBridgeAdapter {
   private readonly store: ChatStore
   private readonly now: () => number
   private readonly genEventId: () => string
+  private readonly readTransport?: ChatReadTransport
+  /** 当前用户 ID；用于读取时对方向做即时校正（防御归一尚未执行的窗口）。 */
+  private myUserId?: string
   private readonly events: BridgeEventEnvelopeLike[] = []
   private socketStatus: ChatSocketStatus = 'connecting'
+  /** 进行中的会话同步 promise（并发去重：并发的 CHAT_SYNC_CONVERSATIONS 只拉取一次平台数据）。 */
+  private conversationsSyncInFlight: Promise<SyncResult> | null = null
 
   constructor(deps: ChatBridgeAdapterDeps) {
     this.sync = deps.sync
     this.store = deps.store
+    this.readTransport = deps.readTransport
+    this.myUserId = deps.myUserId
     this.now = deps.now ?? (() => Date.now())
     this.genEventId = deps.genEventId ?? defaultEventId
+  }
+
+  /**
+   * 动态更新当前用户 ID。
+   *
+   * 适配器本身不持有历史解析逻辑；这里保存 ID 仅用于读取（`CHAT_GET_MESSAGES`）时对未
+   * 归一的消息做即时方向校正，避免 runtime 后置解析的窗口内仍把自己显示在左侧。
+   * 已写入 store 的批量归一由 {@link ChatSync.setMyUserId} 负责。
+   */
+  setMyUserId(myUserId?: string): void {
+    this.myUserId = myUserId
   }
 
   /**
@@ -150,7 +174,9 @@ export class ChatBridgeAdapter {
         }
         const order = payload['order'] === 'desc' ? 'desc' : 'asc'
         const limit = typeof payload['limit'] === 'number' ? payload['limit'] : undefined
-        const messages: ChatMessage[] = this.store.getMessages(payload['sessionId'] as string, { order, limit })
+        const messages: ChatMessage[] = this.store
+          .getMessages(payload['sessionId'] as string, { order, limit })
+          .map((message) => correctMessageDirection(message, this.myUserId) ?? message)
         return this.ok(requestId, type, { messages })
       }
       case ChatBridgeCommands.CHAT_SYNC_HISTORY: {
@@ -167,18 +193,46 @@ export class ChatBridgeAdapter {
       }
       case ChatBridgeCommands.CHAT_SYNC_CONVERSATIONS: {
         const payload = isRecord(command.payload) ? command.payload : {}
-        const result = await this.sync.syncConversations({
+        // 并发去重：多个并发同步共享同一次拉取与事件（事件只推送一次），
+        // 每个调用方各自拿到一份带自己 requestId / type 的合法响应。
+        const result = await this.syncConversationsOnce({
           pages: typeof payload['pages'] === 'number' ? payload['pages'] : undefined,
           pageSize: typeof payload['pageSize'] === 'number' ? payload['pageSize'] : undefined,
         })
-        if (result.added + result.updated > 0) {
-          this.push(ChatBridgeEvents.CHAT_CONVERSATION_UPDATED, {
-            added: result.added,
-            updated: result.updated,
-          })
-        }
-        this.pushSyncCompleted('conversations', result)
         return this.ok(requestId, type, result)
+      }
+      case ChatBridgeCommands.CHAT_MARK_READ: {
+        const payload = command.payload
+        if (!isRecord(payload) || typeof payload['sessionId'] !== 'string' || !/^[^@\s]{1,128}$/.test(payload['sessionId'])) {
+          return this.fail(requestId, type, 'INVALID_PAYLOAD', 'CHAT_MARK_READ 需要有效 sessionId')
+        }
+        if (!this.readTransport) return this.ok(requestId, type, { ok: false, error: { code: 'READ_UNAVAILABLE', message: '已读 transport 未接线' } })
+        const sessionId = payload['sessionId']
+        const existingConversation = this.store.getConversation(sessionId)
+        if (!existingConversation) return this.ok(requestId, type, { ok: false, error: { code: 'INVALID_SESSION', message: '会话不存在' } })
+        let messages = this.store.getMessages(sessionId, { order: 'desc' })
+        let latest = messages.find((message) => message.direction === 'in' && isServerMessageId(message.messageId))
+        if (!latest) {
+          const history = await this.sync.syncHistory(sessionId, { pages: 1 })
+          if (!history.ok) return this.ok(requestId, type, { ok: false, error: { code: 'HISTORY_SYNC_FAILED', message: history.error?.message ?? '读取最新消息失败' } })
+          messages = this.store.getMessages(sessionId, { order: 'desc' })
+          latest = messages.find((message) => message.direction === 'in' && isServerMessageId(message.messageId))
+        }
+        if (!latest) return this.ok(requestId, type, { ok: false, error: { code: 'MESSAGE_ID_UNAVAILABLE', message: '没有可用的服务端消息 ID' } })
+        try {
+          const response = await this.readTransport.markRead(sessionId, latest.messageId)
+          if (response.code !== 200) return this.ok(requestId, type, { ok: false, error: { code: 'PLATFORM_REJECTED', message: '平台未确认已读' } })
+          const newest = this.store.getMessages(sessionId, { order: 'desc' }).find((message) => message.direction === 'in' && isServerMessageId(message.messageId))
+          const conversation = this.store.getConversation(sessionId)
+          if (conversation && newest?.messageId === latest.messageId) {
+            this.store.upsertConversations([{ ...conversation, unreadCount: 0 }])
+            await this.store.flush()
+            this.push(ChatBridgeEvents.CHAT_CONVERSATION_UPDATED, { added: 0, updated: 1 })
+          }
+          return this.ok(requestId, type, { ok: true })
+        } catch (error) {
+          return this.ok(requestId, type, { ok: false, error: { code: 'MARK_READ_FAILED', message: error instanceof Error ? error.message : '已读请求失败' } })
+        }
       }
       case ChatBridgeCommands.CHAT_STATUS:
         return this.ok(requestId, type, {
@@ -217,6 +271,31 @@ export class ChatBridgeAdapter {
   /** 取出并清空待广播事件；background 拿到后交给 P1 `broadcast` 投递。 */
   drainEvents(): BridgeEventEnvelopeLike[] {
     return this.events.splice(0, this.events.length)
+  }
+
+  /**
+   * 执行一次会话同步（含事件推送），并发调用共享同一 promise。
+   *
+   * 事件（CHAT_CONVERSATION_UPDATED / CHAT_SYNC_COMPLETED）在共享工作内**只推送一次**，
+   * 避免并发的重复同步向 Workbench 广播重复事件；完成后清空，后续同步会重新拉取。
+   */
+  private syncConversationsOnce(options: SyncConversationsOptions): Promise<SyncResult> {
+    if (this.conversationsSyncInFlight) return this.conversationsSyncInFlight
+    const run = (async (): Promise<SyncResult> => {
+      const result = await this.sync.syncConversations(options)
+      if (result.added + result.updated > 0) {
+        this.push(ChatBridgeEvents.CHAT_CONVERSATION_UPDATED, {
+          added: result.added,
+          updated: result.updated,
+        })
+      }
+      this.pushSyncCompleted('conversations', result)
+      return result
+    })()
+    this.conversationsSyncInFlight = run.finally(() => {
+      this.conversationsSyncInFlight = null
+    })
+    return this.conversationsSyncInFlight
   }
 
   private pushSyncCompleted(scope: 'history' | 'conversations', result: SyncResult): void {

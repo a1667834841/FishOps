@@ -1,0 +1,2584 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FishOps Workbench - Seline 风格设计稿</title>
+  <style>
+    /* 基础重置 */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Seline 风格变量系统：默认浅色，带暖黄石底色 (Warm Stone / Paper Canvas) */
+    :root[data-theme="light"] {
+      /* 画布与表面 */
+      --bg-canvas: #FAF9F5;
+      --bg-card: #FFFFFF;
+      --bg-subtle: #F4F2EC;
+      --bg-hover: #ECE9E1;
+      --bg-active: #E4E0D6;
+
+      /* 1px 细线边框体系 */
+      --border-line: #E8E5DC;
+      --border-hover: #D6D2C4;
+      --border-focus: #F5C400;
+
+      /* 文字层级 (深暖灰 / 灰褐) */
+      --text-main: #1C1917;
+      --text-secondary: #57534E;
+      --text-muted: #8C867E;
+      --text-faint: #B5AFA6;
+
+      /* FishOps 核心黄色强调色 */
+      --brand-yellow: #F5C400;
+      --brand-yellow-hover: #E5B700;
+      --brand-yellow-active: #CCA300;
+      --brand-yellow-bg: #FEF9E6;
+      --brand-yellow-border: #F3DC7D;
+      --brand-yellow-text: #826200;
+
+      /* 真实状态色（仅用于状态，不用于装饰） */
+      --status-success: #16A34A;
+      --status-success-bg: #F0FDF4;
+      --status-success-border: #BBF7D0;
+      --status-danger: #DC2626;
+      --status-danger-bg: #FEF2F2;
+      --status-danger-border: #FECACA;
+      --status-warning: #D97706;
+      --status-warning-bg: #FEF3C7;
+      --status-warning-border: #FDE68A;
+
+      /* Seline 式超轻中性阴影 */
+      --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.03);
+      --shadow-card: 0 1px 3px rgba(28, 25, 23, 0.04), 0 1px 2px rgba(28, 25, 23, 0.02);
+      --shadow-pop: 0 8px 24px -4px rgba(28, 25, 23, 0.08), 0 2px 6px -1px rgba(28, 25, 23, 0.04);
+
+      /* 图表通道 */
+      --chart-grid: #EFECE4;
+      --chart-axis: #A8A29A;
+      --chart-line: #F5C400;
+      --chart-area: rgba(245, 196, 0, 0.12);
+      --chart-bar-dim: #EAE6DC;
+      --chart-bar-active: #F5C400;
+    }
+
+    /* 深色模式：保留克制细线与平静底色 */
+    :root[data-theme="dark"] {
+      --bg-canvas: #121210;
+      --bg-card: #1A1916;
+      --bg-subtle: #24221E;
+      --bg-hover: #2D2A24;
+      --bg-active: #37332C;
+
+      --border-line: #2E2B25;
+      --border-hover: #423E34;
+      --border-focus: #F5C400;
+
+      --text-main: #FBF9F5;
+      --text-secondary: #ABA59A;
+      --text-muted: #7A746B;
+      --text-faint: #4E4A43;
+
+      --brand-yellow: #F5C400;
+      --brand-yellow-hover: #FFD21A;
+      --brand-yellow-active: #E5B700;
+      --brand-yellow-bg: rgba(245, 196, 0, 0.12);
+      --brand-yellow-border: rgba(245, 196, 0, 0.32);
+      --brand-yellow-text: #FDE68A;
+
+      --status-success: #22C55E;
+      --status-success-bg: rgba(34, 197, 94, 0.12);
+      --status-success-border: rgba(34, 197, 94, 0.28);
+      --status-danger: #EF4444;
+      --status-danger-bg: rgba(239, 68, 68, 0.12);
+      --status-danger-border: rgba(239, 68, 68, 0.28);
+      --status-warning: #F59E0B;
+      --status-warning-bg: rgba(245, 158, 11, 0.12);
+      --status-warning-border: rgba(245, 158, 11, 0.28);
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
+      --shadow-pop: 0 12px 32px -4px rgba(0, 0, 0, 0.7);
+
+      --chart-grid: #282520;
+      --chart-axis: #6E685E;
+      --chart-line: #F5C400;
+      --chart-area: rgba(245, 196, 0, 0.16);
+      --chart-bar-dim: #2A2722;
+      --chart-bar-active: #F5C400;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: var(--text-main);
+      background-color: var(--bg-canvas);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
+    }
+
+    /* 顶部统一极简导航栏 (Seline 风格分析桌面导航) */
+    .top-nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: var(--bg-canvas);
+      border-bottom: 1px solid var(--border-line);
+      backdrop-filter: blur(8px);
+    }
+
+    .nav-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .brand-logo-mark {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: var(--brand-yellow);
+      color: #1C1917;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: -0.5px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    }
+
+    .brand-name-wrap {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .brand-title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+      color: var(--text-main);
+    }
+
+    .brand-version-pill {
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: 9999px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      color: var(--text-muted);
+    }
+
+    /* Seline 风格药丸式 Tab 导航 */
+    .tab-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--bg-subtle);
+      padding: 3px 4px;
+      border-radius: 9999px;
+      border: 1px solid var(--border-line);
+    }
+
+    .tab-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-size: 12.5px;
+      font-weight: 400;
+      color: var(--text-secondary);
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      outline: none;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .tab-item:hover {
+      color: var(--text-main);
+      background: rgba(0, 0, 0, 0.03);
+    }
+
+    :root[data-theme="dark"] .tab-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-item.active {
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-weight: 500;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      border: 1px solid var(--border-line);
+    }
+
+    .tab-item.active .tab-dot {
+      background: var(--brand-yellow);
+    }
+
+    .tab-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: transparent;
+      display: inline-block;
+      transition: background 0.15s ease;
+    }
+
+    .tab-count {
+      font-size: 10.5px;
+      padding: 0 5px;
+      border-radius: 9999px;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-line);
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    /* 右侧控制栏 */
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 11.5px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      color: var(--text-secondary);
+    }
+
+    .status-live-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--status-success);
+    }
+
+    /* Seline 风格极简胶囊按钮 */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 5px 13px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 400;
+      cursor: pointer;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      outline: none;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+      border-color: var(--border-hover);
+    }
+
+    .btn:focus-visible {
+      border-color: var(--brand-yellow);
+      box-shadow: 0 0 0 2px var(--brand-yellow-bg);
+    }
+
+    .btn:active {
+      background: var(--bg-active);
+      transform: translateY(1px);
+    }
+
+    /* 品牌黄色主按钮 (黑字+黄底，严守 Seline 的平静对比) */
+    .btn-brand {
+      background: var(--brand-yellow);
+      border-color: var(--brand-yellow);
+      color: #1C1917;
+      font-weight: 500;
+      box-shadow: 0 1px 2px rgba(245, 196, 0, 0.2);
+    }
+
+    .btn-brand:hover {
+      background: var(--brand-yellow-hover);
+      border-color: var(--brand-yellow-hover);
+      color: #1C1917;
+    }
+
+    .btn-brand:active {
+      background: var(--brand-yellow-active);
+      border-color: var(--brand-yellow-active);
+    }
+
+    .btn-icon-only {
+      padding: 5px 9px;
+      border-radius: 9999px;
+    }
+
+    /* 页面工作区容器 (最大宽度 1200px，紧凑分析桌面感) */
+    .workspace-wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 20px 48px;
+    }
+
+    /* 页面顶标题与上下文控制栏 */
+    .view-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      gap: 16px;
+    }
+
+    .view-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .view-title {
+      font-size: 19px;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      color: var(--text-main);
+    }
+
+    .view-sub {
+      font-size: 12.5px;
+      color: var(--text-muted);
+    }
+
+    .view-tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 周期切换胶囊 */
+    .period-switch {
+      display: inline-flex;
+      align-items: center;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      border-radius: 9999px;
+      padding: 2px;
+    }
+
+    .period-btn {
+      border: none;
+      background: transparent;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .period-btn:hover {
+      color: var(--text-main);
+    }
+
+    .period-btn.active {
+      background: var(--bg-card);
+      color: var(--text-main);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      border: 1px solid var(--border-line);
+      font-weight: 500;
+    }
+
+    /* Seline 核心内容卡片 (纯白卡片，1px 细线边框，微弱阴影，10px 圆角) */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      border-radius: 10px;
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    .card.feature-card {
+      border-radius: 14px;
+    }
+
+    .card-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: var(--bg-card);
+    }
+
+    .card-title-wrap {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .card-title {
+      font-size: 13.5px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      color: var(--text-main);
+    }
+
+    .card-caption {
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+
+    .card-body {
+      padding: 16px;
+    }
+
+    /* 4 列指标栅格 */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: border-color 0.15s ease;
+    }
+
+    .metric-card:hover {
+      border-color: var(--border-hover);
+    }
+
+    .metric-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .metric-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .metric-badge {
+      font-size: 10.5px;
+      padding: 1px 7px;
+      border-radius: 9999px;
+      border: 1px solid var(--border-line);
+      color: var(--text-muted);
+      background: var(--bg-subtle);
+    }
+
+    .metric-badge.yellow {
+      background: var(--brand-yellow-bg);
+      border-color: var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+    }
+
+    .metric-badge.red {
+      background: var(--status-danger-bg);
+      border-color: var(--status-danger-border);
+      color: var(--status-danger);
+    }
+
+    .metric-value-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    .metric-num {
+      font-size: 24px;
+      font-weight: 400;
+      letter-spacing: -0.03em;
+      color: var(--text-main);
+      line-height: 1.1;
+    }
+
+    .metric-diff {
+      font-size: 11.5px;
+      color: var(--status-success);
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .metric-diff.neg {
+      color: var(--status-danger);
+    }
+
+    .metric-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding-top: 4px;
+      border-top: 1px solid var(--border-line);
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+    }
+
+    /* 左右分栏 (图表 + 系统健康) */
+    .dashboard-split {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* Seline 风格折线图表容器 */
+    .chart-box {
+      width: 100%;
+      height: 200px;
+      position: relative;
+    }
+
+    .chart-svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    .chart-hover-indicator {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border-line);
+    }
+
+    .chart-legend-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .legend-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11.5px;
+      color: var(--text-secondary);
+    }
+
+    .legend-dot-yellow {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--brand-yellow);
+    }
+
+    .legend-dot-gray {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--border-hover);
+    }
+
+    /* 系统健康度指标条 */
+    .health-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .health-unit {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .health-unit-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+
+    .health-name {
+      color: var(--text-main);
+      font-weight: 400;
+    }
+
+    .health-score {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 4px;
+      background: var(--bg-subtle);
+      border-radius: 9999px;
+      overflow: hidden;
+      border: 1px solid var(--border-line);
+    }
+
+    .progress-bar {
+      height: 100%;
+      border-radius: 9999px;
+      background: var(--brand-yellow);
+      transition: width 0.3s ease;
+    }
+
+    .progress-bar.green {
+      background: var(--status-success);
+    }
+
+    .progress-bar.amber {
+      background: var(--brand-yellow);
+    }
+
+    .health-meta-line {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* 表格基础样式 (低行高，紧凑密度，1px 细线分隔) */
+    .table-responsive {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .seline-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+      text-align: left;
+    }
+
+    .seline-table th {
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      font-weight: 500;
+      padding: 7px 12px;
+      height: 32px;
+      border-bottom: 1px solid var(--border-line);
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .seline-table th.sortable {
+      cursor: pointer;
+    }
+
+    .seline-table th.sortable:hover {
+      color: var(--text-main);
+      background: var(--bg-hover);
+    }
+
+    .seline-table td {
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border-line);
+      color: var(--text-main);
+      vertical-align: middle;
+      transition: background 0.1s ease;
+    }
+
+    .seline-table tr:hover td {
+      background: var(--bg-subtle);
+    }
+
+    /* 紧凑密度切换类 */
+    .seline-table.density-compact td {
+      padding: 5px 10px;
+      font-size: 11.5px;
+    }
+
+    .seline-table.density-compact th {
+      padding: 4px 10px;
+      height: 28px;
+      font-size: 11.5px;
+    }
+
+    .code-tag {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      color: var(--text-secondary);
+    }
+
+    /* 药丸标签 (Pills) */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 400;
+      border: 1px solid var(--border-line);
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    .pill.pill-yellow {
+      background: var(--brand-yellow-bg);
+      border-color: var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+    }
+
+    .pill.pill-green {
+      background: var(--status-success-bg);
+      border-color: var(--status-success-border);
+      color: var(--status-success);
+    }
+
+    .pill.pill-red {
+      background: var(--status-danger-bg);
+      border-color: var(--status-danger-border);
+      color: var(--status-danger);
+    }
+
+    .action-btn {
+      color: var(--brand-yellow-text);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-left: 8px;
+      background: transparent;
+      border: none;
+      padding: 0;
+    }
+
+    .action-btn:hover {
+      text-decoration: underline;
+    }
+
+    /* 商品库专属控件 */
+    .toolbar-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-line);
+      background: var(--bg-card);
+      flex-wrap: wrap;
+    }
+
+    .toolbar-left, .toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* 输入框与选择器 (Seline 风格 6px 圆角，极细线) */
+    .input-text {
+      height: 30px;
+      padding: 0 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-size: 12.5px;
+      outline: none;
+      transition: border-color 0.15s ease;
+      width: 220px;
+    }
+
+    .input-text:focus {
+      border-color: var(--brand-yellow);
+      box-shadow: 0 0 0 2px var(--brand-yellow-bg);
+    }
+
+    .select-dropdown {
+      height: 30px;
+      padding: 0 26px 0 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg fill='%238C867E' height='12' viewBox='0 0 24 24' width='12' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      transition: border-color 0.15s ease;
+    }
+
+    .select-dropdown:focus {
+      border-color: var(--brand-yellow);
+      box-shadow: 0 0 0 2px var(--brand-yellow-bg);
+    }
+
+    /* 48px 商品缩略图 */
+    .product-thumb {
+      width: 48px;
+      height: 48px;
+      min-width: 48px;
+      border-radius: 6px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .product-thumb-svg {
+      width: 28px;
+      height: 28px;
+      opacity: 0.8;
+    }
+
+    .product-info-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-width: 300px;
+    }
+
+    .product-name {
+      font-size: 13px;
+      color: var(--text-main);
+      font-weight: 500;
+      text-decoration: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .product-name:hover {
+      color: var(--brand-yellow-text);
+      text-decoration: underline;
+    }
+
+    .product-sku {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+
+    .product-price {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    /* 分页与底栏 */
+    .table-footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border-line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--bg-card);
+    }
+
+    .page-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .page-btn {
+      min-width: 26px;
+      height: 26px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9999px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      cursor: pointer;
+    }
+
+    .page-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+    }
+
+    .page-btn.active {
+      background: var(--brand-yellow);
+      border-color: var(--brand-yellow);
+      color: #1C1917;
+      font-weight: 600;
+    }
+
+    /* 数据分析页专属视觉结构 */
+    .analysis-hero-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      border-radius: 12px;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      box-shadow: var(--shadow-card);
+      position: relative;
+    }
+
+    .analysis-hero-card::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 16px;
+      bottom: 16px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--brand-yellow);
+    }
+
+    .analysis-hero-content {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-left: 8px;
+    }
+
+    .analysis-hero-tag {
+      font-size: 11px;
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+
+    .analysis-hero-title {
+      font-size: 16px;
+      font-weight: 400;
+      letter-spacing: -0.01em;
+      color: var(--text-main);
+      line-height: 1.4;
+    }
+
+    .analysis-hero-desc {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      max-width: 820px;
+    }
+
+    /* 价格直方图直观展示 (Seline 柱状分析) */
+    .hist-wrapper {
+      padding: 12px 4px 6px;
+    }
+
+    .hist-chart {
+      display: flex;
+      align-items: flex-end;
+      height: 160px;
+      gap: 12px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border-line);
+      position: relative;
+    }
+
+    .hist-bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+      justify-content: flex-end;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .hist-bar-col:hover .hist-fill {
+      filter: brightness(0.95);
+    }
+
+    .hist-bar-col:hover .hist-pop {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(-4px);
+    }
+
+    .hist-fill {
+      width: 100%;
+      max-width: 44px;
+      border-radius: 4px 4px 1px 1px;
+      background: var(--chart-bar-dim);
+      transition: height 0.25s ease, background 0.15s ease;
+    }
+
+    .hist-fill.highlight {
+      background: var(--brand-yellow);
+    }
+
+    .hist-axis-label {
+      position: absolute;
+      bottom: -20px;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .hist-pop {
+      position: absolute;
+      top: -30px;
+      background: var(--text-main);
+      color: var(--bg-card);
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.15s ease;
+      z-index: 10;
+      font-weight: 500;
+    }
+
+    /* 价格区间建议三卡片 */
+    .tier-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .tier-card {
+      border: 1px solid var(--border-line);
+      border-radius: 10px;
+      background: var(--bg-card);
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .tier-card.featured {
+      border-color: var(--brand-yellow-border);
+      background: var(--brand-yellow-bg);
+    }
+
+    .tier-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .tier-price-val {
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--text-main);
+      letter-spacing: -0.02em;
+    }
+
+    .tier-card.featured .tier-price-val {
+      color: var(--brand-yellow-text);
+      font-weight: 600;
+    }
+
+    .tier-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    /* 商机与风险双栏极简列表 */
+    .insights-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .insight-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-line);
+    }
+
+    .insight-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .insight-status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-top: 6px;
+      flex-shrink: 0;
+    }
+
+    .insight-status-dot.green {
+      background: var(--status-success);
+    }
+
+    .insight-status-dot.red {
+      background: var(--status-danger);
+    }
+
+    .insight-text-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .insight-headline {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-main);
+    }
+
+    .insight-body {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    /* 原生 Dialog 弹窗 (分析报告) */
+    dialog.seline-dialog {
+      border: 1px solid var(--border-line);
+      border-radius: 12px;
+      background: var(--bg-card);
+      color: var(--text-main);
+      width: 640px;
+      max-width: calc(100vw - 32px);
+      padding: 0;
+      margin: auto;
+      box-shadow: var(--shadow-pop);
+      outline: none;
+    }
+
+    dialog.seline-dialog::backdrop {
+      background: rgba(28, 25, 23, 0.35);
+      backdrop-filter: blur(2px);
+    }
+
+    .dialog-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .dialog-title {
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+    }
+
+    .dialog-body {
+      padding: 18px;
+      max-height: 65vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+
+    .dialog-footer {
+      padding: 10px 18px;
+      border-top: 1px solid var(--border-line);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      background: var(--bg-subtle);
+    }
+
+    /* 页面占位态 */
+    .view-placeholder {
+      padding: 56px 20px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .placeholder-pill {
+      font-size: 11px;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      background: var(--brand-yellow-bg);
+      border: 1px solid var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+    }
+
+    .placeholder-title {
+      font-size: 16px;
+      font-weight: 400;
+      color: var(--text-main);
+    }
+
+    .placeholder-desc {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      max-width: 440px;
+      line-height: 1.5;
+    }
+
+    /* 刷新 Toast 提示反馈 */
+    .toast-notice {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--text-main);
+      color: var(--bg-card);
+      padding: 8px 16px;
+      border-radius: 9999px;
+      font-size: 12px;
+      box-shadow: var(--shadow-pop);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transform: translateY(60px);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 100;
+    }
+
+    .toast-notice.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    /* 响应式断点 */
+    @media (max-width: 992px) {
+      .metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .dashboard-split {
+        grid-template-columns: 1fr;
+      }
+      .tier-cards-grid {
+        grid-template-columns: 1fr;
+      }
+      .insights-grid {
+        grid-template-columns: 1fr;
+      }
+      .nav-container {
+        padding: 0 14px;
+      }
+      .workspace-wrap {
+        padding: 16px 14px 40px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .tab-bar {
+        overflow-x: auto;
+        max-width: calc(100vw - 120px);
+      }
+      .metrics-grid {
+        grid-template-columns: 1fr;
+      }
+      .toolbar-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .input-text {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Seline 风格顶栏导航 -->
+  <header class="top-nav">
+    <div class="nav-container">
+      <!-- 品牌标识 -->
+      <div class="brand-section">
+        <div class="brand-logo-mark">F</div>
+        <div class="brand-name-wrap">
+          <span class="brand-title">FishOps</span>
+          <span class="brand-version-pill">Seline Edition</span>
+        </div>
+      </div>
+
+      <!-- 核心 Tab 药丸组 -->
+      <nav class="tab-bar" id="main-tabs" role="tablist">
+        <button class="tab-item active" data-view="overview" role="tab">
+          <span class="tab-dot"></span>
+          <span>运营总览</span>
+        </button>
+        <button class="tab-item" data-view="tasks" role="tab">
+          <span class="tab-dot"></span>
+          <span>采集任务</span>
+          <span class="tab-count">4</span>
+        </button>
+        <button class="tab-item" data-view="inventory" role="tab">
+          <span class="tab-dot"></span>
+          <span>商品库</span>
+        </button>
+        <button class="tab-item" data-view="chat" role="tab">
+          <span class="tab-dot"></span>
+          <span>聊天中心</span>
+          <span class="tab-count">18</span>
+        </button>
+        <button class="tab-item" data-view="publish" role="tab">
+          <span class="tab-dot"></span>
+          <span>发布中心</span>
+        </button>
+        <button class="tab-item" data-view="analytics" role="tab">
+          <span class="tab-dot"></span>
+          <span>数据分析</span>
+        </button>
+        <button class="tab-item" data-view="settings" role="tab">
+          <span class="tab-dot"></span>
+          <span>设置</span>
+        </button>
+      </nav>
+
+      <!-- 状态与快捷操作 -->
+      <div class="nav-actions">
+        <div class="status-pill" title="长连接状态正常">
+          <span class="status-live-dot"></span>
+          <span>会话在线</span>
+        </div>
+        <button class="btn btn-icon-only" id="refresh-btn" title="立即同步实时数据">
+          <span id="refresh-icon">↻</span>
+        </button>
+        <button class="btn btn-icon-only" id="theme-toggle-btn" title="切换浅色/深色模式" aria-label="切换浅色/深色模式">
+          <svg id="theme-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 页面工作空间 (Max-width 1200px) -->
+  <main class="workspace-wrap">
+
+    <!-- 1. 运营总览视图 (默认) -->
+    <section class="view-panel" id="view-overview">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">运营总览</h1>
+          <span class="view-sub">全渠道商品资产规模、未读会话与任务流水线运行看板</span>
+        </div>
+        <div class="view-tools">
+          <div class="period-switch" role="group">
+            <button class="period-btn">24h</button>
+            <button class="period-btn active">7d</button>
+            <button class="period-btn">30d</button>
+          </div>
+          <button class="btn btn-brand" onclick="switchTab('inventory')">浏览商品库</button>
+        </div>
+      </div>
+
+      <!-- 4 核心指标卡 -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">商品总数</span>
+            <span class="metric-badge yellow">全量在库</span>
+          </div>
+          <div class="metric-value-row">
+            <span class="metric-num">12,840</span>
+            <span class="metric-diff">+128 环比</span>
+          </div>
+          <div class="metric-meta">
+            <span>活跃在售: 9,420</span>
+            <span>已归档: 3,420</span>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">未读会话</span>
+            <span class="metric-badge yellow">即时互动</span>
+          </div>
+          <div class="metric-value-row">
+            <span class="metric-num">18</span>
+            <span class="metric-diff">高意向买家 6</span>
+          </div>
+          <div class="metric-meta">
+            <span>平均响应: 1.4 分钟</span>
+            <span>待报价: 4</span>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">运行中任务</span>
+            <span class="metric-badge">并发执行</span>
+          </div>
+          <div class="metric-value-row">
+            <span class="metric-num">4</span>
+            <span class="metric-diff" style="color: var(--text-muted);">调度正常</span>
+          </div>
+          <div class="metric-meta">
+            <span>采集任务: 3</span>
+            <span>底表同步: 1</span>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">失败任务</span>
+            <span class="metric-badge red">需关注</span>
+          </div>
+          <div class="metric-value-row">
+            <span class="metric-num">1</span>
+            <span class="metric-diff neg">待重试</span>
+          </div>
+          <div class="metric-meta">
+            <span>网络超时 (TASK-8825)</span>
+            <span>成功率 98.4%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 分栏布局：左趋势图，右系统健康 -->
+      <div class="dashboard-split">
+        <!-- 任务趋势图 (内联 SVG) -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="card-title">采集与写入吞吐量趋势</span>
+              <span class="card-caption">近 7 天每日采集条目与飞书同步量</span>
+            </div>
+            <div class="chart-legend-wrap">
+              <div class="legend-chip">
+                <span class="legend-dot-yellow"></span>
+                <span>有效条目采集</span>
+              </div>
+              <div class="legend-chip">
+                <span class="legend-dot-gray"></span>
+                <span>基线平准</span>
+              </div>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="chart-hover-indicator">
+              <span>区间: 09-29 至 10-05</span>
+              <span>峰值采样: <strong>2,850 条 / 日</strong></span>
+            </div>
+            <div class="chart-box">
+              <svg class="chart-svg" viewBox="0 0 700 160" preserveAspectRatio="none">
+                <defs>
+                  <!-- 弱黄色面积渐变 -->
+                  <linearGradient id="yellowAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#F5C400" stop-opacity="0.18"/>
+                    <stop offset="100%" stop-color="#F5C400" stop-opacity="0.0"/>
+                  </linearGradient>
+                </defs>
+
+                <!-- 水平参考线 (1px 极细线) -->
+                <line x1="0" y1="30" x2="700" y2="30" stroke="var(--chart-grid)" stroke-width="1" stroke-dasharray="3,3" />
+                <line x1="0" y1="75" x2="700" y2="75" stroke="var(--chart-grid)" stroke-width="1" stroke-dasharray="3,3" />
+                <line x1="0" y1="120" x2="700" y2="120" stroke="var(--chart-grid)" stroke-width="1" stroke-dasharray="3,3" />
+                <line x1="0" y1="155" x2="700" y2="155" stroke="var(--border-line)" stroke-width="1" />
+
+                <!-- 背景平准线 -->
+                <path d="M 0,110 Q 180,95 350,105 T 700,90" fill="none" stroke="var(--border-hover)" stroke-width="1.2" stroke-dasharray="4,4" />
+
+                <!-- 填充面积 -->
+                <polygon points="0,155 0,105 116,92 233,65 350,80 466,45 583,38 700,52 700,155" fill="url(#yellowAreaGrad)" />
+
+                <!-- 主高亮折线 (FishOps 原始黄色) -->
+                <polyline points="0,105 116,92 233,65 350,80 466,45 583,38 700,52" fill="none" stroke="#F5C400" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+
+                <!-- 采样数据圆点 -->
+                <circle cx="0" cy="105" r="3" fill="#FFFFFF" stroke="#F5C400" stroke-width="1.8"/>
+                <circle cx="116" cy="92" r="3" fill="#FFFFFF" stroke="#F5C400" stroke-width="1.8"/>
+                <circle cx="233" cy="65" r="3" fill="#FFFFFF" stroke="#F5C400" stroke-width="1.8"/>
+                <circle cx="350" cy="80" r="3" fill="#FFFFFF" stroke="#F5C400" stroke-width="1.8"/>
+                <circle cx="466" cy="45" r="3" fill="#FFFFFF" stroke="#F5C400" stroke-width="1.8"/>
+                <circle cx="583" cy="38" r="3.5" fill="#F5C400" stroke="#FFFFFF" stroke-width="1.5"/>
+                <circle cx="700" cy="52" r="3" fill="#FFFFFF" stroke="#F5C400" stroke-width="1.8"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- 系统健康度卡片 -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">系统健康度</span>
+            <span class="pill pill-green">运行稳健</span>
+          </div>
+          <div class="card-body">
+            <div class="health-stack">
+              <div class="health-unit">
+                <div class="health-unit-head">
+                  <span class="health-name">闲鱼 Web 协议会话</span>
+                  <span class="health-score">99.8%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-bar green" style="width: 99.8%;"></div>
+                </div>
+                <div class="health-meta-line">
+                  <span>有效 Token 保活中</span>
+                  <span>剩余 28 小时</span>
+                </div>
+              </div>
+
+              <div class="health-unit">
+                <div class="health-unit-head">
+                  <span class="health-name">反爬风控阈值余量</span>
+                  <span class="health-score">84.0%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-bar amber" style="width: 84%;"></div>
+                </div>
+                <div class="health-meta-line">
+                  <span>单 IP 频次安全</span>
+                  <span>42 次 / 分钟</span>
+                </div>
+              </div>
+
+              <div class="health-unit">
+                <div class="health-unit-head">
+                  <span class="health-name">飞书同步队列延迟</span>
+                  <span class="health-score">0.4s</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-bar green" style="width: 94%;"></div>
+                </div>
+                <div class="health-meta-line">
+                  <span>多维表格队列畅通</span>
+                  <span>0 阻塞堆积</span>
+                </div>
+              </div>
+
+              <div class="health-unit">
+                <div class="health-unit-head">
+                  <span class="health-name">心跳 Heartbeat 保活</span>
+                  <span class="health-score">100%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-bar green" style="width: 100%;"></div>
+                </div>
+                <div class="health-meta-line">
+                  <span>WebSocket 监听中</span>
+                  <span>0 异常重连</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 最近任务列表 -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <span class="card-title">最近任务流水线</span>
+            <span class="card-caption">实时跟踪爬取批次、底表回传与诊断作业状态</span>
+          </div>
+          <button class="btn" onclick="switchTab('tasks')">查看全部任务</button>
+        </div>
+        <div class="table-responsive">
+          <table class="seline-table">
+            <thead>
+              <tr>
+                <th style="width: 110px;">任务编号</th>
+                <th style="width: 110px;">作业类型</th>
+                <th>目标关键词 / 批次对象</th>
+                <th style="width: 90px;">耗时</th>
+                <th style="width: 100px;">状态</th>
+                <th style="width: 130px;">提交时间</th>
+                <th style="width: 80px; text-align: right;">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="code-tag">TASK-8832</span></td>
+                <td><span class="pill pill-yellow">关键词采集</span></td>
+                <td>Sony A7M4 机身及套机 (全国范围)</td>
+                <td>1分24秒</td>
+                <td><span class="pill pill-green">已完成</span></td>
+                <td>10-05 14:28</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="switchTab('inventory')">商品</button>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="code-tag">TASK-8831</span></td>
+                <td><span class="pill">飞书底表同步</span></td>
+                <td>数码二手行情底表自动写入 (新增 128 条)</td>
+                <td>38秒</td>
+                <td><span class="pill pill-green">已完成</span></td>
+                <td>10-05 14:15</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="showToast('已查看飞书多维表格同步日志')">日志</button>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="code-tag">TASK-8830</span></td>
+                <td><span class="pill pill-yellow">实时抓取</span></td>
+                <td>富士 X-T5 碳晶灰机身 (个人自用筛选)</td>
+                <td>运行中 42s</td>
+                <td><span class="pill pill-yellow">抓取中</span></td>
+                <td>10-05 14:32</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="showToast('已向任务调度器发送中断信号')">中断</button>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="code-tag">TASK-8829</span></td>
+                <td><span class="pill">价格诊断分析</span></td>
+                <td>摄影器材类目近 7 天加价率与竞争强度分析</td>
+                <td>45秒</td>
+                <td><span class="pill pill-green">已完成</span></td>
+                <td>10-05 13:50</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="switchTab('analytics')">分析</button>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="code-tag">TASK-8825</span></td>
+                <td><span class="pill pill-yellow">验机报告抓取</span></td>
+                <td>批量读取验机证书与序列号匹配 (批次 #12)</td>
+                <td>超时 180s</td>
+                <td><span class="pill pill-red">失败重试</span></td>
+                <td>10-05 11:20</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" style="color: var(--status-danger);" onclick="showToast('已加入高优先级重试队列')">重试</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. 数据分析视图 -->
+    <section class="view-panel" id="view-analytics" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">数据分析看板</h1>
+          <span class="view-sub">AI 辅助定价决策模型、市场供需价格分布及高转化切入点诊断</span>
+        </div>
+        <div class="view-tools">
+          <button class="btn btn-brand" id="open-report-btn">查看完整 AI 报告</button>
+        </div>
+      </div>
+
+      <!-- 分析摘要横幅 (Seline 风格极简，黄色强调线) -->
+      <div class="analysis-hero-card">
+        <div class="analysis-hero-content">
+          <span class="analysis-hero-tag">品类深度诊断摘要 · Sony 微单相机品类</span>
+          <h2 class="analysis-hero-title">中高价位段供需比回升，建议聚焦“套机配件齐全”与“快门计数低于 5,000”切入点</h2>
+          <p class="analysis-hero-desc">
+            基于最近 7 天采样的 2,450 条有效闲鱼二手交易数据：价格中位数维持在 ¥8,600 区间，个人卖家出让意愿强，商机多集中在带箱说全套配件的高成色机身，建议适当提高包邮比率以缩短平均成交周期。
+          </p>
+        </div>
+        <button class="btn" onclick="document.getElementById('report-dialog').showModal()">阅读细节</button>
+      </div>
+
+      <!-- 4 项分析统计指标 -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">样本数量</span>
+            <span class="metric-badge yellow">过滤后有效</span>
+          </div>
+          <div class="metric-value-row">
+            <span class="metric-num">2,450</span>
+            <span class="metric-diff" style="color: var(--text-muted);">有效条目</span>
+          </div>
+          <div class="metric-meta">
+            <span>剔除求购/虚标条目: 312</span>
+            <span>置信度 99%</span>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">价格中位数</span>
+            <span class="metric-badge">市场公允</span>
+          </div>
+          <div class="metric-value-row">
+            <span class="metric-num">¥8,600</span>
+            <span class="metric-diff">均价 ¥8,920</span>
+          </div>
+          <div class="metric-meta">
+            <span>25%分位: ¥7,200</span>
+            <span>75%分位: ¥9,800</span>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">竞争强度</span>
+            <span class="metric-badge">中高竞争</span>
+          </div>
+          <div class="metric-value-row">
+            <span class="metric-num">0.72</span>
+            <span class="metric-diff neg">同款在售密集</span>
+          </div>
+          <div class="metric-meta">
+            <span>同城比价卖家均值: 8.4 人</span>
+            <span>货源充足</span>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">风险等级</span>
+            <span class="metric-badge green">安全 0.18</span>
+          </div>
+          <div class="metric-value-row">
+            <span class="metric-num" style="color: var(--status-success);">安全</span>
+            <span class="metric-diff">争议率 0.4%</span>
+          </div>
+          <div class="metric-meta">
+            <span>无严重翻新投诉潮</span>
+            <span>合规稳健</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 价格分布直方图 -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <span class="card-title">样本价格分布直方图</span>
+            <span class="card-caption">按价格分箱统计数量及买家想要热度</span>
+          </div>
+          <span class="pill pill-yellow">主销黄金带: ¥7,000 - ¥9,000</span>
+        </div>
+        <div class="card-body">
+          <div class="hist-wrapper">
+            <div class="hist-chart">
+              <!-- 柱 1 -->
+              <div class="hist-bar-col">
+                <span class="hist-pop">48 件 (极低价/破损)</span>
+                <div class="hist-fill" style="height: 16%;"></div>
+                <span class="hist-axis-label">&lt; ¥3k</span>
+              </div>
+              <!-- 柱 2 -->
+              <div class="hist-bar-col">
+                <span class="hist-pop">182 件 (老款机身)</span>
+                <div class="hist-fill" style="height: 32%;"></div>
+                <span class="hist-axis-label">3k-5k</span>
+              </div>
+              <!-- 柱 3 -->
+              <div class="hist-bar-col">
+                <span class="hist-pop">420 件 (战损成色)</span>
+                <div class="hist-fill" style="height: 54%;"></div>
+                <span class="hist-axis-label">5k-7k</span>
+              </div>
+              <!-- 柱 4: 核心黄金带 (高亮黄色) -->
+              <div class="hist-bar-col">
+                <span class="hist-pop">890 件 (主流个人自用热点)</span>
+                <div class="hist-fill highlight" style="height: 96%;"></div>
+                <span class="hist-axis-label">7k-9k (热点)</span>
+              </div>
+              <!-- 柱 5 -->
+              <div class="hist-bar-col">
+                <span class="hist-pop">610 件 (箱说全/低快门)</span>
+                <div class="hist-fill" style="height: 72%;"></div>
+                <span class="hist-axis-label">9k-11k</span>
+              </div>
+              <!-- 柱 6 -->
+              <div class="hist-bar-col">
+                <span class="hist-pop">210 件 (高配带镜头)</span>
+                <div class="hist-fill" style="height: 38%;"></div>
+                <span class="hist-axis-label">11k-14k</span>
+              </div>
+              <!-- 柱 7 -->
+              <div class="hist-bar-col">
+                <span class="hist-pop">90 件 (全新或大师镜头套机)</span>
+                <div class="hist-fill" style="height: 20%;"></div>
+                <span class="hist-axis-label">14k+</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 价格区间建议三卡片 -->
+      <div style="margin-bottom: 8px;">
+        <span style="font-size: 13px; font-weight: 500; color: var(--text-main);">定价策略建议区间</span>
+      </div>
+      <div class="tier-cards-grid">
+        <div class="tier-card">
+          <div class="tier-card-head">
+            <span>快速周转档位</span>
+            <span class="pill">周期 &lt; 3 天</span>
+          </div>
+          <div class="tier-price-val">¥7,400 - ¥7,800</div>
+          <div class="tier-desc">适合快速回笼资金、单机身略有使用痕迹的货品。价格处于市场前 20% 优势位，曝光即能引流大量想要数。</div>
+        </div>
+
+        <div class="tier-card featured">
+          <div class="tier-card-head">
+            <span>推荐核心利润带</span>
+            <span class="pill pill-yellow">综合收益最优</span>
+          </div>
+          <div class="tier-price-val">¥8,500 - ¥8,950</div>
+          <div class="tier-desc">包含原装包装箱、两块电池及充电器。溢价支撑稳固，平均 5-7 天内可平稳出货，单台毛利综合最优。</div>
+        </div>
+
+        <div class="tier-card">
+          <div class="tier-card-head">
+            <span>高端精品溢价位</span>
+            <span class="pill">毛利率 &gt; 22%</span>
+          </div>
+          <div class="tier-price-val">¥9,600 - ¥10,200</div>
+          <div class="tier-desc">针对快门 &lt; 1,000 次且附带原厂保修发票商品，配合顺丰包邮与官方验机报告出具，直击高净值买家痛点。</div>
+        </div>
+      </div>
+
+      <!-- 商机与风险双栏 -->
+      <div class="insights-grid">
+        <!-- 商机洞察 -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="card-title">高转化商机洞察</span>
+              <span class="card-caption">基于询价转化率算法归纳</span>
+            </div>
+            <span class="pill pill-green">3 条建议</span>
+          </div>
+          <div class="card-body">
+            <div class="insight-row">
+              <span class="insight-status-dot green"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">“赠送保护贴膜与原厂电池”带来 26% 转化率提升</span>
+                <span class="insight-body">买家在此类高单价 3C 类目中极度关注耗材成本，赠送百元以内小配件可显著减少反复还价阻力。</span>
+              </div>
+            </div>
+            <div class="insight-row">
+              <span class="insight-status-dot green"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">晚间 20:30 - 22:45 为询价黄金期</span>
+                <span class="insight-body">数据表明该时段消息响应速度在 2 分钟以内的卖家，当晚支付定金或全款概率提高 40%。</span>
+              </div>
+            </div>
+            <div class="insight-row">
+              <span class="insight-status-dot green"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">同城当面验机需求近两周上升 31%</span>
+                <span class="insight-body">支持一二线核心商圈线下验机交易能有效打消买家顾虑，降低远途退货运费纠纷。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 风险预警 -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="card-title">运营合规与风控预警</span>
+              <span class="card-caption">规避平台算法惩罚与恶意纠纷</span>
+            </div>
+            <span class="pill pill-red">合规防控</span>
+          </div>
+          <div class="card-body">
+            <div class="insight-row">
+              <span class="insight-status-dot red"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">警惕低价引流号批量发布翻新机刷单</span>
+                <span class="insight-body">市场出现定价低于 ¥6,000 的虚假货源，多引导站外第三方交易，建议在采集规则中直接设黑名单过滤。</span>
+              </div>
+            </div>
+            <div class="insight-row">
+              <span class="insight-status-dot red"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">降价幅度超 18% 容易触发平台巡检限流</span>
+                <span class="insight-body">单次调价过猛可能被平台算法识别为“异常抛售”或“非正常号”，建议采用单次 ¥100 - ¥200 阶梯渐进下调。</span>
+              </div>
+            </div>
+            <div class="insight-row">
+              <span class="insight-status-dot red"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">CMOS 感光元件灰尘争议多发</span>
+                <span class="insight-body">发货前必须录制白墙小光圈 F22 测试视频并归档保存，防止恶意买家收货后无理要求补偿折价。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. 商品库视图 -->
+    <section class="view-panel" id="view-inventory" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">商品资产库</h1>
+          <span class="view-sub">全量采集、规格解析、价格跟踪与多维表格自动同步</span>
+        </div>
+        <div class="view-tools">
+          <button class="btn btn-brand" onclick="showToast('已加入批量同步飞书队列 (6 件商品)')">批量同步飞书</button>
+        </div>
+      </div>
+
+      <!-- 商品表格容器卡片 -->
+      <div class="card">
+        <!-- 工具栏与筛选区 -->
+        <div class="toolbar-row">
+          <div class="toolbar-left">
+            <input type="text" class="input-text" id="product-search" placeholder="搜索标题、卖家、地区..." aria-label="搜索商品">
+
+            <select class="select-dropdown" id="cat-filter" aria-label="品类筛选">
+              <option value="all">全品类 (全部)</option>
+              <option value="camera" selected>微单相机机身</option>
+              <option value="lens">单反/微单镜头</option>
+              <option value="accessory">三脚架/稳定器</option>
+              <option value="drone">航拍无人机</option>
+            </select>
+
+            <select class="select-dropdown" id="ship-filter" aria-label="包邮筛选">
+              <option value="all">运费政策 (全部)</option>
+              <option value="free">仅看包邮</option>
+              <option value="pay">买家自理/自提</option>
+            </select>
+
+            <button class="btn" id="reset-filter-btn">重置筛选</button>
+          </div>
+
+          <div class="toolbar-right">
+            <span style="font-size: 11.5px; color: var(--text-muted);">行距密度:</span>
+            <div class="period-switch" role="group">
+              <button class="period-btn active" id="density-normal-btn">默认</button>
+              <button class="period-btn" id="density-compact-btn">紧凑</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 商品数据表格 -->
+        <div class="table-responsive">
+          <table class="seline-table" id="product-table">
+            <thead>
+              <tr>
+                <th style="width: 38px; text-align: center;"><input type="checkbox" id="check-all" aria-label="全选"></th>
+                <th style="width: 58px;">图片</th>
+                <th>商品标题 / SKU 标识</th>
+                <th class="sortable" id="sort-price-th" title="点击按价格排序">价格 <span style="font-size: 10px;">↕</span></th>
+                <th class="sortable" id="sort-wants-th" title="点击按想要数排序">想要数 <span style="font-size: 10px;">↕</span></th>
+                <th>卖家 / 信誉</th>
+                <th>地区</th>
+                <th>包邮状态</th>
+                <th>采集时间</th>
+                <th style="width: 100px; text-align: right;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="product-tbody">
+              <!-- 行 1 -->
+              <tr data-cat="camera" data-shipping="free" data-price="8850" data-wants="182">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <!-- 内联 SVG 相机微缩图 -->
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none">
+                      <rect x="3" y="8" width="26" height="18" rx="3" stroke="#F5C400" stroke-width="2"/>
+                      <circle cx="16" cy="17" r="5" stroke="#F5C400" stroke-width="2"/>
+                      <rect x="8" y="5" width="6" height="3" rx="1" fill="#F5C400"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <a href="javascript:void(0)" class="product-name" title="Sony A7M4 国行单机 极少用 快门3200 箱说全">Sony A7M4 国行单机 极少用 快门3200 箱说全</a>
+                    <span class="product-sku">ID: FO-884029-CN · 99新</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥8,850.00</span></td>
+                <td><strong>182</strong> 人想要</td>
+                <td>
+                  <div>摄影小陈_自用</div>
+                  <span class="pill pill-green" style="font-size: 10px; padding: 0 5px;">极好信用</span>
+                </td>
+                <td>上海 · 浦东</td>
+                <td><span class="pill pill-yellow">顺丰包邮</span></td>
+                <td>10-05 14:12</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="showToast('已查看商品 ID: FO-884029-CN 详情')">详情</button>
+                  <button class="action-btn" onclick="showToast('已生成发布草稿')">发布</button>
+                </td>
+              </tr>
+
+              <!-- 行 2 -->
+              <tr data-cat="camera" data-shipping="free" data-price="9200" data-wants="245">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none">
+                      <rect x="3" y="8" width="26" height="18" rx="3" stroke="#F5C400" stroke-width="2"/>
+                      <circle cx="16" cy="17" r="5" stroke="#F5C400" stroke-width="2"/>
+                      <rect x="8" y="5" width="6" height="3" rx="1" fill="#F5C400"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <a href="javascript:void(0)" class="product-name" title="富士 X-T5 碳晶灰机身 官方延保中 诚心出">富士 X-T5 碳晶灰机身 官方延保中 诚心出</a>
+                    <span class="product-sku">ID: FO-884030-FJ · 95新</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥9,200.00</span></td>
+                <td><strong>245</strong> 人想要</td>
+                <td>
+                  <div>日落街角Lens</div>
+                  <span class="pill pill-green" style="font-size: 10px; padding: 0 5px;">优秀信用</span>
+                </td>
+                <td>浙江 · 杭州</td>
+                <td><span class="pill pill-yellow">包邮</span></td>
+                <td>10-05 13:58</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="showToast('已查看商品 ID: FO-884030-FJ 详情')">详情</button>
+                  <button class="action-btn" onclick="showToast('已生成发布草稿')">发布</button>
+                </td>
+              </tr>
+
+              <!-- 行 3 -->
+              <tr data-cat="lens" data-shipping="pay" data-price="6350" data-wants="89">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <!-- 内联 SVG 镜头微缩图 -->
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none">
+                      <rect x="8" y="6" width="16" height="20" rx="3" stroke="var(--text-secondary)" stroke-width="2"/>
+                      <circle cx="16" cy="16" r="4" stroke="#F5C400" stroke-width="2"/>
+                      <line x1="8" y1="11" x2="24" y2="11" stroke="var(--border-line)" stroke-width="1.5"/>
+                      <line x1="8" y1="21" x2="24" y2="21" stroke="var(--border-line)" stroke-width="1.5"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <a href="javascript:void(0)" class="product-name" title="适马 24-70mm F2.8 DG DN 二代 E口 镜片通透">适马 24-70mm F2.8 DG DN 二代 E口 镜片通透</a>
+                    <span class="product-sku">ID: FO-884031-SG · 98新</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥6,350.00</span></td>
+                <td><strong>89</strong> 人想要</td>
+                <td>
+                  <div>器材党退烧小李</div>
+                  <span class="pill" style="font-size: 10px; padding: 0 5px;">良好信用</span>
+                </td>
+                <td>北京 · 朝阳</td>
+                <td><span class="pill">买家付运费</span></td>
+                <td>10-05 13:20</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="showToast('已查看商品 ID: FO-884031-SG 详情')">详情</button>
+                  <button class="action-btn" onclick="showToast('已生成发布草稿')">发布</button>
+                </td>
+              </tr>
+
+              <!-- 行 4 -->
+              <tr data-cat="camera" data-shipping="free" data-price="11800" data-wants="312">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none">
+                      <rect x="3" y="8" width="26" height="18" rx="3" stroke="#F5C400" stroke-width="2"/>
+                      <circle cx="16" cy="17" r="5" stroke="#F5C400" stroke-width="2"/>
+                      <rect x="8" y="5" width="6" height="3" rx="1" fill="#F5C400"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <a href="javascript:void(0)" class="product-name" title="佳能 EOS R6 Mark II 单机身 个人自用退坑">佳能 EOS R6 Mark II 单机身 个人自用退坑</a>
+                    <span class="product-sku">ID: FO-884032-CN · 99新</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥11,800.00</span></td>
+                <td><strong>312</strong> 人想要</td>
+                <td>
+                  <div>光影实验室</div>
+                  <span class="pill pill-green" style="font-size: 10px; padding: 0 5px;">极好信用</span>
+                </td>
+                <td>广东 · 深圳</td>
+                <td><span class="pill pill-yellow">顺丰包邮</span></td>
+                <td>10-05 12:44</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="showToast('已查看商品 ID: FO-884032-CN 详情')">详情</button>
+                  <button class="action-btn" onclick="showToast('已生成发布草稿')">发布</button>
+                </td>
+              </tr>
+
+              <!-- 行 5 -->
+              <tr data-cat="accessory" data-shipping="free" data-price="890" data-wants="64">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <!-- 内联 SVG 配件微缩图 -->
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none">
+                      <line x1="16" y1="5" x2="16" y2="18" stroke="#F5C400" stroke-width="2"/>
+                      <line x1="16" y1="18" x2="9" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                      <line x1="16" y1="18" x2="23" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                      <circle cx="16" cy="5" r="3" fill="#F5C400"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <a href="javascript:void(0)" class="product-name" title="马小路 XT-15 碳纤维轻便三脚架 带原装云台">马小路 XT-15 碳纤维轻便三脚架 带原装云台</a>
+                    <span class="product-sku">ID: FO-884033-ML · 95新</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥890.00</span></td>
+                <td><strong>64</strong> 人想要</td>
+                <td>
+                  <div>风光老张_Trip</div>
+                  <span class="pill pill-green" style="font-size: 10px; padding: 0 5px;">优秀信用</span>
+                </td>
+                <td>四川 · 成都</td>
+                <td><span class="pill pill-yellow">包邮</span></td>
+                <td>10-05 11:05</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="showToast('已查看商品 ID: FO-884033-ML 详情')">详情</button>
+                  <button class="action-btn" onclick="showToast('已生成发布草稿')">发布</button>
+                </td>
+              </tr>
+
+              <!-- 行 6 -->
+              <tr data-cat="drone" data-shipping="pay" data-price="4600" data-wants="142">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <!-- 内联 SVG 无人机微缩图 -->
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none">
+                      <circle cx="16" cy="16" r="4" fill="#F5C400"/>
+                      <line x1="8" y1="8" x2="24" y2="24" stroke="var(--text-secondary)" stroke-width="1.8"/>
+                      <line x1="24" y1="8" x2="8" y2="24" stroke="var(--text-secondary)" stroke-width="1.8"/>
+                      <circle cx="8" cy="8" r="3" stroke="#F5C400" stroke-width="1.5"/>
+                      <circle cx="24" cy="8" r="3" stroke="#F5C400" stroke-width="1.5"/>
+                      <circle cx="8" cy="24" r="3" stroke="#F5C400" stroke-width="1.5"/>
+                      <circle cx="24" cy="24" r="3" stroke="#F5C400" stroke-width="1.5"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <a href="javascript:void(0)" class="product-name" title="大疆 DJI Mini 4 Pro 畅飞续航套装 带屏遥控器">大疆 DJI Mini 4 Pro 畅飞续航套装 带屏遥控器</a>
+                    <span class="product-sku">ID: FO-884034-DJ · 99新</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥4,600.00</span></td>
+                <td><strong>142</strong> 人想要</td>
+                <td>
+                  <div>SkyWalker_07</div>
+                  <span class="pill pill-green" style="font-size: 10px; padding: 0 5px;">极好信用</span>
+                </td>
+                <td>江苏 · 南京</td>
+                <td><span class="pill">自提免运</span></td>
+                <td>10-05 10:48</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" onclick="showToast('已查看商品 ID: FO-884034-DJ 详情')">详情</button>
+                  <button class="action-btn" onclick="showToast('已生成发布草稿')">发布</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 表格底部分页与批量操作 -->
+        <div class="table-footer">
+          <div>
+            <span id="selected-count-label">已选择 0 项</span> · 共 6 条展示结果
+          </div>
+          <div class="page-controls">
+            <button class="page-btn active">1</button>
+            <button class="page-btn">2</button>
+            <button class="page-btn">3</button>
+            <span style="padding: 0 4px;">...</span>
+            <button class="page-btn">8</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. 采集任务 (轻量占位页) -->
+    <section class="view-panel" id="view-tasks" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">采集任务中心</h1>
+          <span class="view-sub">关键词规则引擎、定时爬虫与分布式数据流管理</span>
+        </div>
+        <button class="btn btn-brand" onclick="showToast('已打开新建采集任务向导')">+ 新建采集任务</button>
+      </div>
+      <div class="view-placeholder">
+        <span class="placeholder-pill">管道调度就绪</span>
+        <h2 class="placeholder-title">4 个并发任务处于健康监听通道</h2>
+        <p class="placeholder-desc">包含关键词爬取、验机报告比对及飞书实时写入管道。您可在总览面板中查看最近流水或在此新建调度批次。</p>
+        <button class="btn" onclick="switchTab('overview')">返回运营总览</button>
+      </div>
+    </section>
+
+    <!-- 5. 聊天中心 (轻量占位页) -->
+    <section class="view-panel" id="view-chat" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">聊天与询价中心</h1>
+          <span class="view-sub">多账号私信聚合、自动报价应答与买家意向分级</span>
+        </div>
+        <button class="btn" onclick="showToast('已同步最新买家未读私信')">刷新未读消息</button>
+      </div>
+      <div class="view-placeholder">
+        <span class="placeholder-pill">18 条待处理未读</span>
+        <h2 class="placeholder-title">买家咨询消息实时聚合通道</h2>
+        <p class="placeholder-desc">涵盖议价、验机成色咨询及同城自提核验。支持规则匹配与一键转入成交意向池。</p>
+        <button class="btn btn-brand" onclick="switchTab('inventory')">转到商品库核对报价</button>
+      </div>
+    </section>
+
+    <!-- 6. 发布中心 (轻量占位页) -->
+    <section class="view-panel" id="view-publish" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">商品发布中心</h1>
+          <span class="view-sub">一键生成闲鱼刊登文案、标签生成与批量上架</span>
+        </div>
+        <button class="btn btn-brand" onclick="showToast('草稿箱包含 2 件待发布')">查看待发布草稿 (2)</button>
+      </div>
+      <div class="view-placeholder">
+        <span class="placeholder-pill">智能上架模块</span>
+        <h2 class="placeholder-title">智能改写文案与多账号矩阵分发</h2>
+        <p class="placeholder-desc">基于商品库资产一键萃取高频标签与成色说明，配合防算法限流阶梯上架策略。</p>
+        <button class="btn" onclick="switchTab('inventory')">前往商品库选择商品</button>
+      </div>
+    </section>
+
+    <!-- 7. 设置 (轻量占位页) -->
+    <section class="view-panel" id="view-settings" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">系统与对接设置</h1>
+          <span class="view-sub">协议认证 Cookie、飞书多维表格 AppToken 与风控策略参数</span>
+        </div>
+        <button class="btn btn-brand" onclick="showToast('配置已持久化保存')">保存当前配置</button>
+      </div>
+      <div class="view-placeholder">
+        <span class="placeholder-pill">环境参数正常</span>
+        <h2 class="placeholder-title">FishOps Workbench 运行参数与网关协议</h2>
+        <p class="placeholder-desc">当前节点连接至本地桌面工作站，心跳频率 30 秒，飞书开放平台 Webhook 配置已激活。</p>
+        <button class="btn" onclick="switchTab('overview')">返回运营总览</button>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 原生 Dialog 结构化 AI 分析报告弹窗 -->
+  <dialog class="seline-dialog" id="report-dialog">
+    <div class="dialog-header">
+      <span class="dialog-title">结构化品类诊断与定价建议报告</span>
+      <button class="btn btn-icon-only" onclick="document.getElementById('report-dialog').close()" style="border: none; background: transparent; font-size: 15px;">×</button>
+    </div>
+    <div class="dialog-body">
+      <div>
+        <strong style="color: var(--text-main);">一、宏观供需与价格带分布</strong>
+        <p style="margin-top: 4px;">本期采样共 2,450 条有效标的，剔除极低价配件刷单与高溢价非标藏品后，核心出货区间高度聚拢于 ¥7,000 至 ¥9,000 区间，占总流通盘的 36.3%。</p>
+      </div>
+
+      <div>
+        <strong style="color: var(--text-main);">二、买家决策痛点与抗阻因素</strong>
+        <p style="margin-top: 4px;">调研表明，二手高单价微单相机的退货主要由“CMOS 划痕或感光元件微尘”、“快门次数与描述不符”引起。标明“支持同城自提当面验机”或附带“官方验机报告”的商品，平均沟通轮次减少 2.4 轮。</p>
+      </div>
+
+      <div>
+        <strong style="color: var(--text-main);">三、推荐定价与刊登策略</strong>
+        <ul style="padding-left: 18px; margin-top: 4px;">
+          <li>标准单机身 (快门 &lt; 5,000)：定位于 ¥8,500 - ¥8,800，标配顺丰包邮。</li>
+          <li>套机 (带 24-70mm 或 28-75mm 镜头)：定位于 ¥11,000 - ¥12,500，凸显配件打包优惠。</li>
+          <li>调价动作：建议单次降幅在 ¥100 以内，每隔 48 小时微调一次，以维持“降价提醒”推荐权重。</li>
+        </ul>
+      </div>
+
+      <div>
+        <strong style="color: var(--text-main);">四、合规与反欺诈防范</strong>
+        <p style="margin-top: 4px;">对要求加微信发送详细验机视频的买家保持警惕，严禁脱离闲鱼平台担保交易，发货前务必对机身序列号与小光圈 F22 测试白墙录像留底。</p>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn" onclick="document.getElementById('report-dialog').close()">关闭</button>
+      <button class="btn btn-brand" onclick="showToast('已复制 AI 摘要至剪贴板'); document.getElementById('report-dialog').close();">复制建议</button>
+    </div>
+  </dialog>
+
+  <!-- 刷新反馈 Toast 浮层 -->
+  <div class="toast-notice" id="toast-notice">
+    <span style="color: var(--brand-yellow);">●</span>
+    <span id="toast-text">已成功刷新实时数据</span>
+  </div>
+
+  <!-- 原生 JavaScript 交互逻辑 -->
+  <script>
+    // 1. 视图 Tab 切换
+    const tabs = document.querySelectorAll('.tab-item');
+    const panels = document.querySelectorAll('.view-panel');
+
+    function switchTab(viewId) {
+      tabs.forEach(tab => {
+        if (tab.getAttribute('data-view') === viewId) {
+          tab.classList.add('active');
+        } else {
+          tab.classList.remove('active');
+        }
+      });
+
+      panels.forEach(panel => {
+        if (panel.id === 'view-' + viewId) {
+          panel.style.display = 'block';
+        } else {
+          panel.style.display = 'none';
+        }
+      });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const viewId = tab.getAttribute('data-view');
+        switchTab(viewId);
+      });
+    });
+
+    // 2. 浅色 / 深色主题切换 (默认浅色)
+    const themeBtn = document.getElementById('theme-toggle-btn');
+    const themeIconSvg = document.getElementById('theme-icon-svg');
+    let isDark = false;
+
+    themeBtn.addEventListener('click', () => {
+      isDark = !isDark;
+      if (isDark) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        themeIconSvg.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>';
+        showToast('已切换至深色分析桌面');
+      } else {
+        document.documentElement.setAttribute('data-theme', 'light');
+        themeIconSvg.innerHTML = '<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>';
+        showToast('已切换至浅色分析桌面');
+      }
+    });
+
+    // 3. 刷新按钮动画与 Toast 状态反馈
+    const refreshBtn = document.getElementById('refresh-btn');
+    const toastNotice = document.getElementById('toast-notice');
+    const toastText = document.getElementById('toast-text');
+    let toastTimeout = null;
+
+    function showToast(msg) {
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastText.textContent = msg;
+      toastNotice.classList.add('show');
+      toastTimeout = setTimeout(() => {
+        toastNotice.classList.remove('show');
+      }, 2000);
+    }
+
+    refreshBtn.addEventListener('click', () => {
+      refreshBtn.style.transform = 'rotate(180deg)';
+      refreshBtn.style.transition = 'transform 0.3s ease';
+      setTimeout(() => {
+        refreshBtn.style.transform = 'rotate(0deg)';
+      }, 300);
+      showToast('已同步最新采集与会话数据 (耗时 124ms)');
+    });
+
+    // 4. 分析报告 Dialog 打开
+    const openReportBtn = document.getElementById('open-report-btn');
+    const reportDialog = document.getElementById('report-dialog');
+    if (openReportBtn && reportDialog) {
+      openReportBtn.addEventListener('click', () => {
+        reportDialog.showModal();
+      });
+    }
+
+    // 5. 商品库搜索与品类/包邮筛选
+    const searchInput = document.getElementById('product-search');
+    const catFilter = document.getElementById('cat-filter');
+    const shipFilter = document.getElementById('ship-filter');
+    const resetFilterBtn = document.getElementById('reset-filter-btn');
+    const productRows = document.querySelectorAll('#product-tbody tr');
+
+    function filterProducts() {
+      const term = (searchInput ? searchInput.value.trim().toLowerCase() : '');
+      const cat = catFilter ? catFilter.value : 'all';
+      const ship = shipFilter ? shipFilter.value : 'all';
+
+      productRows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        const rowCat = row.getAttribute('data-cat');
+        const rowShip = row.getAttribute('data-shipping');
+
+        const matchTerm = !term || text.includes(term);
+        const matchCat = (cat === 'all' || rowCat === cat);
+        const matchShip = (ship === 'all' || rowShip === ship);
+
+        if (matchTerm && matchCat && matchShip) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      });
+    }
+
+    if (searchInput) searchInput.addEventListener('input', filterProducts);
+    if (catFilter) catFilter.addEventListener('change', filterProducts);
+    if (shipFilter) shipFilter.addEventListener('change', filterProducts);
+    if (resetFilterBtn) {
+      resetFilterBtn.addEventListener('click', () => {
+        if (searchInput) searchInput.value = '';
+        if (catFilter) catFilter.value = 'all';
+        if (shipFilter) shipFilter.value = 'all';
+        filterProducts();
+        showToast('已重置所有商品筛选条件');
+      });
+    }
+
+    // 6. 表格行距密度切换 (默认 vs 紧凑)
+    const productTable = document.getElementById('product-table');
+    const densityNormalBtn = document.getElementById('density-normal-btn');
+    const densityCompactBtn = document.getElementById('density-compact-btn');
+
+    if (densityNormalBtn && densityCompactBtn && productTable) {
+      densityNormalBtn.addEventListener('click', () => {
+        productTable.classList.remove('density-compact');
+        densityNormalBtn.classList.add('active');
+        densityCompactBtn.classList.remove('active');
+      });
+      densityCompactBtn.addEventListener('click', () => {
+        productTable.classList.add('density-compact');
+        densityCompactBtn.classList.add('active');
+        densityNormalBtn.classList.remove('active');
+      });
+    }
+
+    // 7. 排序逻辑 (按价格与想要数)
+    const sortPriceTh = document.getElementById('sort-price-th');
+    const sortWantsTh = document.getElementById('sort-wants-th');
+    let priceAsc = true;
+    let wantsAsc = false;
+
+    function sortRows(attr, asc) {
+      const tbody = document.getElementById('product-tbody');
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        const valA = parseFloat(a.getAttribute(attr)) || 0;
+        const valB = parseFloat(b.getAttribute(attr)) || 0;
+        return asc ? valA - valB : valB - valA;
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    }
+
+    if (sortPriceTh) {
+      sortPriceTh.addEventListener('click', () => {
+        priceAsc = !priceAsc;
+        sortRows('data-price', priceAsc);
+        showToast('已按价格 ' + (priceAsc ? '升序' : '降序') + ' 排列');
+      });
+    }
+
+    if (sortWantsTh) {
+      sortWantsTh.addEventListener('click', () => {
+        wantsAsc = !wantsAsc;
+        sortRows('data-wants', wantsAsc);
+        showToast('已按想要数 ' + (wantsAsc ? '升序' : '降序') + ' 排列');
+      });
+    }
+
+    // 8. 复选框全选联动
+    const checkAll = document.getElementById('check-all');
+    const rowChecks = document.querySelectorAll('.row-check');
+    const selectedCountLabel = document.getElementById('selected-count-label');
+
+    function updateSelectedCount() {
+      let count = 0;
+      rowChecks.forEach(ck => {
+        if (ck.checked) count++;
+      });
+      if (selectedCountLabel) {
+        selectedCountLabel.textContent = '已选择 ' + count + ' 项';
+      }
+    }
+
+    if (checkAll) {
+      checkAll.addEventListener('change', () => {
+        rowChecks.forEach(ck => {
+          ck.checked = checkAll.checked;
+        });
+        updateSelectedCount();
+      });
+    }
+
+    rowChecks.forEach(ck => {
+      ck.addEventListener('change', () => {
+        updateSelectedCount();
+        if (checkAll) {
+          checkAll.checked = Array.from(rowChecks).every(c => c.checked);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

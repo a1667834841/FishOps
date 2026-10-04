@@ -80,6 +80,138 @@ test('FeishuDataSource: 租户访问令牌缓存与过期刷新', async () => {
   assert.equal(authCallCount, 2)
 })
 
+test('FeishuDataSource: getSchema description 只含目标表 ID，绝不泄露 spreadsheetToken / appId', async () => {
+  const config = {
+    appId: 'cli_app_id_secret',
+    appSecret: 'app-secret-value',
+    spreadsheetToken: 'sheet-token-secret-value',
+    productTableId: 'tbl_product_1',
+  }
+  const mockTransport: HttpTransport = {
+    fetch: async (url) => {
+      if (url.includes('/tenant_access_token/internal')) {
+        return new Response(
+          JSON.stringify({ code: 0, tenant_access_token: 't', expire: 7200 }),
+          { status: 200 },
+        )
+      }
+      if (url.includes('/fields')) {
+        return new Response(
+          JSON.stringify({ code: 0, data: { items: [{ field_name: '商品ID', type: 1 }] } }),
+          { status: 200 },
+        )
+      }
+      return new Response('{}', { status: 200 })
+    },
+  }
+
+  const ds = new FeishuDataSource({ config, transport: mockTransport })
+  const schema = await ds.getSchema()
+  // 固定文案：只暴露目标表 ID，不回显任何凭据。
+  assert.equal(schema.description?.includes('tbl_product_1'), true)
+  assert.equal(schema.description?.includes(config.spreadsheetToken), false)
+  assert.equal(schema.description?.includes(config.appId), false)
+  assert.equal(schema.description?.includes('app='), false)
+})
+
+test('FeishuDataSource: searchRecordsOnce 把 page_size/page_token 放入 query，filter/sort 放入 body（官方签名）', async () => {
+  let capturedUrl = ''
+  let capturedBody = ''
+  const mockTransport: HttpTransport = {
+    fetch: async (url, init) => {
+      if (url.includes('/tenant_access_token/internal')) {
+        return new Response(
+          JSON.stringify({ code: 0, tenant_access_token: 't', expire: 7200 }),
+          { status: 200 },
+        )
+      }
+      capturedUrl = url
+      capturedBody = (init?.body as string) ?? ''
+      return new Response(JSON.stringify({ code: 0, data: { has_more: false, items: [] } }), {
+        status: 200,
+      })
+    },
+  }
+  const ds = new FeishuDataSource({
+    config: { appId: 'a', appSecret: 'b', spreadsheetToken: 's', productTableId: 'tbl_product_1' },
+    transport: mockTransport,
+  })
+
+  await ds.searchRecordsOnce('tbl_product_1', {
+    pageSize: 20,
+    pageToken: 'tok_1',
+    keyword: '手机',
+    order: 'priceAsc',
+  })
+
+  const query = new URL(capturedUrl).searchParams
+  assert.equal(query.get('page_size'), '20')
+  assert.equal(query.get('page_token'), 'tok_1')
+  const body = JSON.parse(capturedBody) as Record<string, unknown>
+  // page_size / page_token 绝不得出现在 body（否则分页失效）。
+  assert.equal(body['page_size'], undefined)
+  assert.equal(body['page_token'], undefined)
+  assert.ok(body['filter'])
+  assert.ok(Array.isArray(body['sort']))
+})
+
+test('FeishuDataSource: order 映射为真实字段 sort（采集时间 / 想要人数）', async () => {
+  const bodies: string[] = []
+  const mockTransport: HttpTransport = {
+    fetch: async (url, init) => {
+      if (url.includes('/tenant_access_token/internal')) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: 't', expire: 7200 }), {
+          status: 200,
+        })
+      }
+      bodies.push((init?.body as string) ?? '')
+      return new Response(JSON.stringify({ code: 0, data: { has_more: false, items: [] } }), {
+        status: 200,
+      })
+    },
+  }
+  const ds = new FeishuDataSource({
+    config: { appId: 'a', appSecret: 'b', spreadsheetToken: 's', productTableId: 'tbl_product_1' },
+    transport: mockTransport,
+  })
+
+  await ds.searchRecordsOnce('tbl_product_1', { pageSize: 20, order: 'captureTimeDesc' })
+  await ds.searchRecordsOnce('tbl_product_1', { pageSize: 20, order: 'captureTimeAsc' })
+  await ds.searchRecordsOnce('tbl_product_1', { pageSize: 20, order: 'wantCntDesc' })
+
+  const sortOf = (index: number): { field_name: string; desc: boolean } =>
+    (JSON.parse(bodies[index]!) as { sort: Array<{ field_name: string; desc: boolean }> }).sort[0]!
+  assert.deepEqual(sortOf(0), { field_name: '采集时间', desc: true })
+  assert.deepEqual(sortOf(1), { field_name: '采集时间', desc: false })
+  assert.deepEqual(sortOf(2), { field_name: '想要人数', desc: true })
+})
+
+test('FeishuDataSource: searchRecordsOnce 返回条数超过 pageSize 时抛 INVALID_RESPONSE（拒绝假分页）', async () => {
+  const items = Array.from({ length: 3 }, (_, i) => ({ record_id: `rec_${i}`, fields: {} }))
+  const mockTransport: HttpTransport = {
+    fetch: async (url) => {
+      if (url.includes('/tenant_access_token/internal')) {
+        return new Response(
+          JSON.stringify({ code: 0, tenant_access_token: 't', expire: 7200 }),
+          { status: 200 },
+        )
+      }
+      return new Response(JSON.stringify({ code: 0, data: { has_more: false, items } }), {
+        status: 200,
+      })
+    },
+  }
+  const ds = new FeishuDataSource({
+    config: { appId: 'a', appSecret: 'b', spreadsheetToken: 's', productTableId: 'tbl_product_1' },
+    transport: mockTransport,
+  })
+
+  await assert.rejects(
+    () => ds.searchRecordsOnce('tbl_product_1', { pageSize: 1 }),
+    (err: unknown) => err instanceof FeishuError && err.category === 'INVALID_RESPONSE',
+  )
+})
+
 test('FeishuDataSource: 分页查询 records 与条数限制', async () => {
   let requestedPageTokens: string[] = []
 
@@ -210,6 +342,32 @@ test('FeishuDataSource: 批量创建记录自动分批（<= 500 条）', async (
   assert.deepEqual(batchSizes, [500, 500, 200])
 })
 
+test('FeishuDataSource: 兼容代理返回 items、id 与 record_ids 的批量响应', async () => {
+  const mockTransport: HttpTransport = {
+    fetch: async (url, init) => {
+      if (url.includes('/tenant_access_token/internal')) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: 't', expire: 7200 }), { status: 200 })
+      }
+      if (url.includes('/records/batch_create')) {
+        const body = JSON.parse((init?.body as string) || '{}')
+        if (body.records.length === 1) {
+          return new Response(JSON.stringify({ code: 0, data: { items: [{ id: 'rec_item' }] } }), { status: 200 })
+        }
+        return new Response(JSON.stringify({ code: 0, data: { record_ids: ['rec_a', 'rec_b'] } }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 })
+    },
+  }
+  const ds = new FeishuDataSource({
+    config: { appId: 'app_id', appSecret: 'app_secret', spreadsheetToken: 'sheet_token', productTableId: 'tbl_product_1' },
+    transport: mockTransport,
+  })
+  const one = await ds.batchCreateRecords('tbl_product_1', [{ fields: {} }])
+  assert.deepEqual(one, [{ record_id: 'rec_item' }])
+  const two = await ds.batchCreateRecords('tbl_product_1', [{ fields: {} }, { fields: {} }])
+  assert.deepEqual(two, [{ record_id: 'rec_a' }, { record_id: 'rec_b' }])
+})
+
 test('FeishuDataSource: getTableFields 返回真实字段名与类型（不 fallback）', async () => {
   const mockTransport: HttpTransport = {
     fetch: async (url) => {
@@ -328,10 +486,27 @@ test('FeishuDataSource: 严格去重查询失败抛错，容错版返回空集',
   assert.equal((await ds.getExistingItemKeys('t')).size, 0)
 })
 
-test('FeishuDataSource: convertProductToFeishuRecord 与字段配置一致（商品详情URL）', () => {
+test('FeishuDataSource: 飞书空表返回 items:null 时视为零条记录', async () => {
+  const mockTransport: HttpTransport = {
+    fetch: async (url) => {
+      if (url.includes('/tenant_access_token/internal')) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: 't', expire: 7200 }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ code: 0, msg: 'success', data: { items: null, has_more: false, total: 0 } }), { status: 200 })
+    },
+  }
+  const ds = new FeishuDataSource({
+    config: { appId: 'a', appSecret: 'b', spreadsheetToken: 's', productTableId: 't' },
+    transport: mockTransport,
+  })
+  assert.deepEqual(await ds.getExistingCaptureKeysStrict('t'), new Set())
+})
+
+test('FeishuDataSource: convertProductToFeishuRecord 写入真实描述与商品详情URL', () => {
   const product = {
     itemId: 'i1',
     title: 't',
+    desc: '真实商品详情',
     price: '¥1',
     priceNumber: 1,
     originalPrice: '',
@@ -350,5 +525,7 @@ test('FeishuDataSource: convertProductToFeishuRecord 与字段配置一致（商
   } as unknown as Product
   const record = FeishuDataSource.convertProductToFeishuRecord(product)
   assert.deepEqual(record.fields['商品详情URL'], { link: product.detailUrl })
+  assert.equal(record.fields['商品描述'], product.desc)
+  assert.equal(record.fields['商品标题'], product.title)
   assert.equal(record.fields['详情页URL'], undefined)
 })

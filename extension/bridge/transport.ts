@@ -118,7 +118,10 @@ export class PostMessageTransport implements Transport {
     { resolve: (response: ResponseEnvelope) => void; reject: (error: unknown) => void; timer: number }
   >()
 
-  constructor(private readonly timeoutMs = 8000) {
+  private readonly timeoutMs: number
+
+  constructor(timeoutMs = 8000) {
+    this.timeoutMs = timeoutMs
     window.addEventListener('message', this.onWindowMessage)
   }
 

@@ -9,7 +9,7 @@
  *    没有则用 `chrome.tabs.create({ url, active: false })` 后台创建（**不抢焦点**），
  *    并等待页面加载完成（`tabs.onUpdated` + bounded timeout）。
  * 2. {@link RuntimeSession.ensureChatRuntimeReady}：在 tab 就绪后等待页面 MAIN world host
- *    就绪（`probeHost`，即 platform.ping）、WebSocket 变为 open（best-effort），
+ *    就绪（`probeHost`，即 platform.ping）、聊天 WebSocket 变为 open，
  *    并获取当前用户 ID（`fetchUserId`，带 TTL / 退避，由注入方实现）。
  * 3. 处理 tab 关闭 / 加载超时 / 跳转到非 goofish（登录页、验证码页），
  *    返回结构化 `host-unavailable` / `unauthorized` / `captcha`，**不无限重试**。
@@ -49,6 +49,8 @@ export interface RuntimeTabsApi {
   query(queryInfo: { active?: boolean; windowId?: number }): Promise<RuntimeTabLike[]>
   create(createProperties: { url: string; active: boolean }): Promise<RuntimeTabLike>
   get(tabId: number): Promise<RuntimeTabLike>
+  /** 重载已有聊天页，让 document_start 监听与页面登录握手重新启动。 */
+  reload?(tabId: number): Promise<void>
   onUpdated: {
     addListener(
       listener: (tabId: number, changeInfo: RuntimeTabChangeInfo, tab: RuntimeTabLike) => void,
@@ -125,6 +127,8 @@ export interface RuntimeSessionDeps {
   probeHost: (tabId: number) => Promise<void>
   /** 获取当前用户 ID；失败返回结构化类别，不抛错。 */
   fetchUserId: (force: boolean) => Promise<RuntimeUserOutcome>
+  /** 读取页面 transport 的真实连接状态；null 表示 host 或连接尚未捕获。 */
+  probeChatSocket?: (tabId: number) => Promise<RuntimeSocketStatus | null>
   /** 后台 tab 打开地址，默认 {@link DEFAULT_GOOFISH_IM_URL}。 */
   goofishImUrl?: string
   /** 等待 tab 加载完成的超时（毫秒）。 */
@@ -260,6 +264,10 @@ export function createRuntimeSession(deps: RuntimeSessionDeps): RuntimeSession {
   let lastError: { category: RuntimeFailureCategory; message: string } | undefined
   /** 进行中的 tab 准备 promise（并发去重，限制并发创建）。 */
   let tabInFlight: Promise<EnsureTabResult> | null = null
+  /** 按用途与用户 ID 刷新策略合并并发准备，避免不同就绪条件互相复用结果。 */
+  const readyInFlight = new Map<string, Promise<EnsureReadyResult>>()
+  /** 不同刷新策略的准备请求也共享同一次页面恢复，避免连续重载打断握手。 */
+  const recoveryInFlight = new Map<number, Promise<EnsureTabResult>>()
 
   /** 清空 host 就绪标记（tab / 页面变化后必须重新探测，避免沿用旧值）。 */
   function resetHostState(): void {
@@ -506,18 +514,61 @@ export function createRuntimeSession(deps: RuntimeSessionDeps): RuntimeSession {
     return socketStatus
   }
 
-  /** best-effort 等待 socket open（超时不致命，由发送路径再做最终判定）。 */
-  async function waitForSocketOpen(): Promise<boolean> {
+  /** 有限等待 socket open；聊天同步依赖该连接，平台 API 准备则不依赖。 */
+  async function refreshSocketStatus(tabId: number): Promise<RuntimeSocketStatus | null> {
+    if (!deps.probeChatSocket) return currentSocketStatus()
+    try {
+      const status = await deps.probeChatSocket(tabId)
+      if (currentTabId() !== tabId) return null
+      socketStatus = status ?? 'connecting'
+      return status
+    } catch {
+      // 注入失败时不把旧的 open 当成当前连接，后续由页面恢复流程处理。
+      resetSocketState()
+      return null
+    }
+  }
+
+  async function waitForSocketOpen(tabId: number): Promise<boolean> {
     if (currentSocketStatus() === 'open') return true
     const deadline = now() + socketTimeoutMs
     while (now() < deadline) {
       await sleep(socketPollMs)
+      await refreshSocketStatus(tabId)
       if (currentSocketStatus() === 'open') return true
     }
     return currentSocketStatus() === 'open'
   }
 
-  async function ensureChatRuntimeReady(options: {
+  function recoverChatPage(tabId: number): Promise<EnsureTabResult> {
+    const existing = recoveryInFlight.get(tabId)
+    if (existing) return existing
+    const run = (async (): Promise<EnsureTabResult> => {
+      if (!deps.tabs.reload) return { ok: false, category: 'host-unavailable', message: '无法自动重载闲鱼聊天页' }
+      resetHostState()
+      resetSocketState()
+      readyTabId = null
+      try {
+        await deps.tabs.reload(tabId)
+      } catch (error) {
+        return { ok: false, category: 'host-unavailable', message: `重载闲鱼聊天页失败: ${messageOf(error)}` }
+      }
+      const loaded = await waitForTabComplete(tabId)
+      if (!loaded.ok) return loaded
+      readyTabId = tabId
+      const host = await waitForHost(tabId)
+      return host.ok
+        ? { ok: true, tabId, created: false }
+        : { ok: false, category: 'host-unavailable', message: host.message }
+    })()
+    const shared = run.finally(() => {
+      if (recoveryInFlight.get(tabId) === shared) recoveryInFlight.delete(tabId)
+    })
+    recoveryInFlight.set(tabId, shared)
+    return shared
+  }
+
+  async function ensureChatRuntimeReadyInternal(options: {
     purpose?: RuntimePurpose
     force?: boolean
   } = {}): Promise<EnsureReadyResult> {
@@ -536,7 +587,19 @@ export function createRuntimeSession(deps: RuntimeSessionDeps): RuntimeSession {
       }
     }
 
-    const host = await waitForHost(tab.tabId)
+    const needsSocket = options.purpose !== 'platform'
+    let recovered = false
+    let host = await waitForHost(tab.tabId)
+    if (!host.ok && needsSocket && deps.tabs.reload) {
+      recovered = true
+      const recovery = await recoverChatPage(tab.tabId)
+      if (!recovery.ok) {
+        lastError = { category: recovery.category, message: recovery.message }
+        return { ok: false, ...lastError, tabId: tab.tabId, platformReady: false,
+          socketStatus: currentSocketStatus(), socketReady: false, userIdReady: false }
+      }
+      host = { ok: true }
+    }
     if (!host.ok) {
       lastError = { category: 'host-unavailable', message: host.message }
       return {
@@ -552,7 +615,6 @@ export function createRuntimeSession(deps: RuntimeSessionDeps): RuntimeSession {
     }
 
     // host 已就绪：platformReady 为真。socket 与 userId 仍需分别判定，不能因 host 成功而推断。
-    const socketReady = await waitForSocketOpen()
     const user = await deps.fetchUserId(Boolean(options.force))
     if (!user.ok) {
       lastError = { category: user.category, message: user.message }
@@ -563,8 +625,44 @@ export function createRuntimeSession(deps: RuntimeSessionDeps): RuntimeSession {
         tabId: tab.tabId,
         platformReady: true,
         socketStatus: currentSocketStatus(),
-        socketReady,
+        socketReady: currentSocketStatus() === 'open',
         userIdReady: false,
+      }
+    }
+
+    const pageStatus = await refreshSocketStatus(tab.tabId)
+    let socketReady = currentSocketStatus() === 'open'
+    if (needsSocket && !socketReady) {
+      // 新页面先等原站初始化。旧页面没有捕获连接时直接恢复，避免只等一个不会再发的 open 事件。
+      if (tab.created || recovered || pageStatus === 'connecting' || !deps.probeChatSocket) {
+        socketReady = await waitForSocketOpen(tab.tabId)
+      }
+      if (!socketReady && !recovered && deps.tabs.reload) {
+        const recovery = await recoverChatPage(tab.tabId)
+        if (!recovery.ok) {
+          lastError = { category: recovery.category, message: recovery.message }
+          return { ok: false, ...lastError, tabId: tab.tabId, platformReady: isHostReady(),
+            socketStatus: currentSocketStatus(), socketReady: false, userIdReady: true }
+        }
+        await refreshSocketStatus(tab.tabId)
+        socketReady = await waitForSocketOpen(tab.tabId)
+      }
+    }
+
+    // 会话同步必须复用真实聊天 WebSocket。把 socket 超时降级为成功会让启动流程
+    // 继续发起必然返回 NO_SOCKET 的同步，并把空缓存误显示成正常空列表。
+    if (options.purpose !== 'platform' && !socketReady) {
+      const message = `聊天 WebSocket 尚未建立（当前状态：${currentSocketStatus()}），请稍后重试`
+      lastError = { category: 'host-unavailable', message }
+      return {
+        ok: false,
+        category: 'host-unavailable',
+        message,
+        tabId: tab.tabId,
+        platformReady: true,
+        socketStatus: currentSocketStatus(),
+        socketReady: false,
+        userIdReady: true,
       }
     }
 
@@ -578,6 +676,26 @@ export function createRuntimeSession(deps: RuntimeSessionDeps): RuntimeSession {
       socketReady,
       userIdReady: true,
     }
+  }
+
+  function ensureChatRuntimeReady(options: {
+    purpose?: RuntimePurpose
+    force?: boolean
+  } = {}): Promise<EnsureReadyResult> {
+    // 同用途、同刷新策略的并发 prepare 共用一次探测；chat 与 platform 的 socket
+    // 要求不同，必须分开，避免 platform 的成功结果绕过 chat 的 socket 检查。
+    // 完成后清空，后续调用（含失败重试）会重新走完整流程，不会长期缓存失败结果。
+    const purpose = options.purpose ?? 'chat'
+    const key = `${purpose}:${Boolean(options.force)}`
+    const existing = readyInFlight.get(key)
+    if (existing) return existing
+    const run = ensureChatRuntimeReadyInternal(options)
+    let shared: Promise<EnsureReadyResult>
+    shared = run.finally(() => {
+      if (readyInFlight.get(key) === shared) readyInFlight.delete(key)
+    })
+    readyInFlight.set(key, shared)
+    return shared
   }
 
   return {

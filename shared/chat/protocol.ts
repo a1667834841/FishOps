@@ -23,6 +23,8 @@ export const LWP_ROUTES = {
   listConversations: '/r/Conversation/listNewestPagination',
   /** 指定会话的消息历史（分页）。 */
   listMessages: '/r/MessageManager/listUserMessages',
+  /** 清除单个会话截至指定服务端消息的未读红点。 */
+  clearRedPoint: '/r/Conversation/clearRedPoint',
 } as const
 
 /** 首次请求使用的分页游标：JavaScript 安全最大整数。 */

@@ -74,3 +74,31 @@ test('默认 sleep 真实等待（用极小间隔快速验证）', async () => {
   await limiter.acquire()
   assert.ok(Date.now() - start >= 4, '应至少等待约 5ms')
 })
+
+test('随机增量：实际间隔 = 最小间隔 + [0, jitterMs]', async () => {
+  const clock = makeClock()
+  const limiter = createRateLimiter({
+    minIntervalMs: 500,
+    jitterMs: 500,
+    random: () => 0.5, // floor(0.5 * 501) = 250
+    now: clock.now,
+    sleep: clock.sleep,
+  })
+  await limiter.acquire()
+  await limiter.acquire()
+  assert.deepEqual(clock.sleeps, [750])
+})
+
+test('随机增量：random=0 时退化为固定最小间隔', async () => {
+  const clock = makeClock()
+  const limiter = createRateLimiter({
+    minIntervalMs: 1500,
+    jitterMs: 500,
+    random: () => 0,
+    now: clock.now,
+    sleep: clock.sleep,
+  })
+  await limiter.acquire()
+  await limiter.acquire()
+  assert.deepEqual(clock.sleeps, [1500])
+})

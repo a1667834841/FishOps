@@ -52,6 +52,17 @@ export interface UpsertResult {
   updated: number
 }
 
+/** 消息写入选项。 */
+export interface UpsertMessagesOptions {
+  /**
+   * 本批是否为「已同步的权威历史」快照。
+   *
+   * 只有历史同步批次才可作为剔除本地 `pendingEcho` 回显的时间边界：
+   * 实时单条入站消息可能与本地发送无关，若拿它当边界会误删尚未被历史证实的回显。
+   */
+  authoritativeHistory?: boolean
+}
+
 /** 查询选项。 */
 export interface QueryOptions {
   /** 返回顺序：`asc` 为时间升序（默认，符合聊天时间线），`desc` 为降序。 */
@@ -101,10 +112,13 @@ export class ChatStore {
   }
 
   /** 批量 upsert 消息，返回新增/覆盖统计。 */
-  upsertMessages(messages: readonly ChatMessage[]): UpsertResult {
+  upsertMessages(messages: readonly ChatMessage[], options: UpsertMessagesOptions = {}): UpsertResult {
     const changed: ChatMessage[] = []
     const result = this.applyMessages(messages, changed)
     if (changed.length > 0) this.enqueueFlush(() => this.persistence.saveMessages(changed))
+    // 仅当本批是「已同步的权威历史」时才以它为边界剔除已被覆盖的本地回显；
+    // 实时单条入站消息不能当边界，否则会误删尚未被历史证实的本地发送回显。
+    if (options.authoritativeHistory === true) this.pruneCoveredEchoes(messages)
     return result
   }
 
@@ -216,9 +230,45 @@ export class ChatStore {
       }
       const stored = { ...message, id: key }
       bucket.set(key, stored)
-      changedOut?.push(stored)
+      // 本地确认回显仅内存暂存，不持久化：权威历史 / 回声才是持久真相，
+      // 避免 service worker 重启后回显与权威消息并存重复。
+      if (stored.pendingEcho !== true) changedOut?.push(stored)
     }
     return { added, updated }
+  }
+
+  /**
+   * 剔除被权威历史时间边界覆盖的本地确认回显（`pendingEcho`）。
+   *
+   * 只在 {@link upsertMessages} 的 `authoritativeHistory` 批次上调用（历史同步）。
+   * 规则（确定性，不做内容 / 模糊匹配）：
+   * - 仅本批权威消息（非 `pendingEcho`）参与边界计算，按会话取最大 `createAt` 作为上界；
+   * - 仅删除 `pendingEcho` 且 `createAt <= 上界` 的回显：即「已确认发送且比历史边界早」；
+   * - 晚于上界的回显（历史尚未同步到的新消息）一律保留，不误删。
+   *
+   * 回显本就不持久化，因此这里仅删除内存条目。返回剔除条数（诊断 / 测试用）。
+   */
+  private pruneCoveredEchoes(authoritative: readonly ChatMessage[]): number {
+    const boundaries = new Map<string, number>()
+    for (const message of authoritative) {
+      if (message.pendingEcho === true) continue
+      const current = boundaries.get(message.sessionId)
+      if (current === undefined || message.createAt > current) boundaries.set(message.sessionId, message.createAt)
+    }
+    if (boundaries.size === 0) return 0
+
+    let removed = 0
+    for (const [sessionId, boundary] of boundaries) {
+      const bucket = this.messagesBySession.get(sessionId)
+      if (!bucket) continue
+      for (const [key, message] of bucket) {
+        if (message.pendingEcho === true && message.createAt <= boundary) {
+          bucket.delete(key)
+          removed += 1
+        }
+      }
+    }
+    return removed
   }
 
   private applyConversations(conversations: readonly Conversation[], changedOut?: Conversation[]): UpsertResult {

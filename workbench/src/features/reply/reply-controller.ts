@@ -9,7 +9,7 @@
  *
  * 安全约束（均有单测）：
  * - 加载页面、选择会话、生成建议都不会发送任何消息；发送只发生在用户显式调用 `applySuggestion` /
- *   `sendMessage` 时，且必须先 `setSendEnabled(true)`；切换会话会重新关闭发送；
+ *   `sendMessage` 时；
  * - 发送进行中重复调用会被忽略（防重复点击 / 重复发送）；
  * - 把配置切到「自动回复」或在自动模式下打开引擎，必须携带 `confirmedAuto: true`，否则不发出命令；
  * - 建议 / 发送结果带会话 ID，切换会话后旧响应一律丢弃，不会显示在新会话下；
@@ -85,8 +85,6 @@ export interface ReplyState {
   save: SaveState
   /** 当前选中的会话（建议 / 发送都绑定到它）。 */
   sessionId: string | null
-  /** 发送开关：每次切换会话都会重置为 false，需用户手动启用。 */
-  sendEnabled: boolean
   suggestion: SuggestionState
   send: SendState
   realtimeError: string | null
@@ -152,7 +150,6 @@ export function createInitialReplyState(availability: ReplyState['availability']
     status: { phase: 'idle', data: null, error: null },
     save: { phase: 'idle', scope: null, error: null, needsAutoConfirm: false, savedAt: null },
     sessionId: null,
-    sendEnabled: false,
     suggestion: { phase: 'idle', sessionId: null, result: null, error: null },
     send: { phase: 'idle', kind: null, sessionId: null, error: null, uncertain: false, sentAt: null },
     realtimeError: null,
@@ -216,7 +213,7 @@ export class ReplyController extends StateStore<ReplyState> {
   // ---------------- 会话绑定 ----------------
 
   /**
-   * 切换当前会话：丢弃旧会话的建议与发送结果，并重新关闭发送开关。
+   * 切换当前会话：丢弃旧会话的建议与发送结果。
    * 发送进行中切换会话时不取消已发出的命令，但其结果不会显示在新会话下。
    */
   setSession(sessionId: string | null): void {
@@ -225,17 +222,9 @@ export class ReplyController extends StateStore<ReplyState> {
     this.suggestionSeq++
     this.patch({
       sessionId,
-      sendEnabled: false,
       suggestion: { phase: 'idle', sessionId: null, result: null, error: null },
       send: { phase: 'idle', kind: null, sessionId: null, error: null, uncertain: false, sentAt: null },
     })
-  }
-
-  /** 用户手动启用 / 关闭发送。 */
-  setSendEnabled(enabled: boolean): void {
-    if (this.disposed) return
-    if (enabled && (!this.api || !this.state.sessionId)) return
-    this.patch({ sendEnabled: enabled })
   }
 
   // ---------------- 建议（不发送） ----------------
@@ -303,8 +292,8 @@ export class ReplyController extends StateStore<ReplyState> {
   ): Promise<boolean> {
     const api = this.api
     const sessionId = this.state.sessionId
-    // 没有用户启用发送开关、没有会话或正在发送时一律不发命令。
-    if (this.disposed || !api || !sessionId || !this.state.sendEnabled || this.state.send.phase === 'running') return false
+    // 只有显式发送操作才能到达这里；缺少会话或正在发送时不发命令。
+    if (this.disposed || !api || !sessionId || this.state.send.phase === 'running') return false
 
     const text = content.trim()
     const limit = Math.min(this.state.config.global?.maxContentLength ?? MAX_SEND_CONTENT_LENGTH, MAX_SEND_CONTENT_LENGTH)

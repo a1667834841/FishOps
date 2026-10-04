@@ -91,10 +91,13 @@ interface HarnessOptions {
   initial?: RuntimeTabLike[]
   probeHost?: (tabId: number) => Promise<void>
   fetchUserId?: (force: boolean) => Promise<RuntimeUserOutcome>
+  probeChatSocket?: (tabId: number) => Promise<'connecting' | 'open' | 'closed' | 'error' | null>
+  reload?: (tabId: number) => Promise<void>
 }
 
 function harness(options: HarnessOptions = {}) {
   const tabs = createFakeTabs(options.initial ?? [])
+  if (options.reload) tabs.api.reload = options.reload
   const clock = createClock()
   const timers = new Map<number, () => void>()
   let timerSeq = 0
@@ -104,6 +107,7 @@ function harness(options: HarnessOptions = {}) {
     tabs: tabs.api,
     probeHost: options.probeHost ?? (async () => {}),
     fetchUserId: options.fetchUserId ?? (async () => ({ ok: true, userId: 'user-1' })),
+    ...(options.probeChatSocket ? { probeChatSocket: options.probeChatSocket } : {}),
     goofishImUrl: DEFAULT_GOOFISH_IM_URL,
     loadTimeoutMs: 1000,
     hostTimeoutMs: 2000,
@@ -235,12 +239,14 @@ test('resolveTabId：只复用不创建；无 goofish tab 时返回 null', async
   assert.equal(await existing.session.resolveTabId(), 5)
 })
 
-test('ensureChatRuntimeReady：host + 用户 ID 就绪即成功（socket 超时降级不致命）', async () => {
+test('ensureChatRuntimeReady：聊天 socket 未建立时结构化失败，允许调用方稍后重试', async () => {
   const h = harness({ initial: [{ id: 1, url: 'https://www.goofish.com/im', status: 'complete' }] })
   const result = await h.session.ensureChatRuntimeReady({ purpose: 'chat', force: true })
-  assert.equal(result.ok, true)
-  assert.equal(result.ok && result.userIdReady, true)
-  assert.equal(result.ok && result.socketReady, false)
+  assert.equal(result.ok, false)
+  assert.equal(result.ok === false && result.category, 'host-unavailable')
+  assert.match(result.ok === false ? result.message : '', /WebSocket 尚未建立/)
+  assert.equal(result.ok === false && result.userIdReady, true)
+  assert.equal(result.ok === false && result.socketReady, false)
 })
 
 test('ensureChatRuntimeReady：socket 已 open 时 socketReady=true', async () => {
@@ -249,6 +255,106 @@ test('ensureChatRuntimeReady：socket 已 open 时 socketReady=true', async () =
   const result = await h.session.ensureChatRuntimeReady({ purpose: 'chat' })
   assert.equal(result.ok, true)
   assert.equal(result.ok && result.socketReady, true)
+})
+
+test('自动连接：background 丢失 open 事件时读取页面真实 socket，直接就绪', async () => {
+  const probed: number[] = []
+  let reloads = 0
+  const h = harness({
+    initial: [{ id: 1, url: DEFAULT_GOOFISH_IM_URL, status: 'complete' }],
+    probeChatSocket: async (tabId) => {
+      probed.push(tabId)
+      return 'open'
+    },
+    reload: async () => { reloads += 1 },
+  })
+  const result = await h.session.ensureChatRuntimeReady({ purpose: 'chat' })
+  assert.equal(result.ok, true, '页面连接已建立时不能继续报 connecting')
+  assert.equal(result.socketStatus, 'open')
+  assert.deepEqual(probed, [1])
+  assert.equal(reloads, 0)
+})
+
+test('自动连接：复用页面无 socket 时自动重载一次，等待页面建立连接', async () => {
+  let reloads = 0
+  const h = harness({
+    initial: [{ id: 1, url: DEFAULT_GOOFISH_IM_URL, status: 'complete' }],
+    probeChatSocket: async () => reloads > 0 ? 'open' : null,
+    reload: async (tabId) => {
+      assert.equal(tabId, 1)
+      reloads += 1
+      h.tabs.emitUpdated(tabId, { status: 'loading' })
+      h.tabs.emitUpdated(tabId, { status: 'complete' })
+    },
+  })
+  const results = await Promise.all([
+    h.session.ensureChatRuntimeReady({ purpose: 'chat' }),
+    h.session.ensureChatRuntimeReady({ purpose: 'chat' }),
+  ])
+  for (const result of results) assert.equal(result.ok, true, '打开聊天中心必须自动恢复连接')
+  assert.equal(reloads, 1)
+  assert.equal(h.tabs.created.length, 0)
+})
+
+test('自动连接：重载后仍无连接时停止恢复，返回真实失败', async () => {
+  let reloads = 0
+  const h = harness({
+    initial: [{ id: 1, url: DEFAULT_GOOFISH_IM_URL, status: 'complete' }],
+    probeChatSocket: async () => null,
+    reload: async () => { reloads += 1 },
+  })
+  const result = await h.session.ensureChatRuntimeReady({ purpose: 'chat' })
+  assert.equal(result.ok, false)
+  assert.equal(result.socketReady, false)
+  assert.equal(reloads, 1)
+})
+
+test('自动连接：未登录、验证码或平台用途均不因缺少 socket 重载页面', async () => {
+  for (const category of ['unauthorized', 'captcha', null] as const) {
+    let reloads = 0
+    const h = harness({
+      initial: [{ id: 1, url: DEFAULT_GOOFISH_IM_URL, status: 'complete' }],
+      probeChatSocket: async () => null,
+      fetchUserId: async () => category
+        ? { ok: false, category, message: '需要用户处理' }
+        : { ok: true, userId: 'user-1' },
+      reload: async () => { reloads += 1 },
+    })
+    const result = await h.session.ensureChatRuntimeReady({ purpose: category ? 'chat' : 'platform' })
+    assert.equal(result.ok, category === null)
+    if (!result.ok) assert.equal(result.category, category)
+    assert.equal(reloads, 0)
+  }
+})
+
+test('自动连接：新建聊天页等待自然握手成功，不重载正在启动的页面', async () => {
+  let probes = 0
+  let reloads = 0
+  const h = harness({
+    probeChatSocket: async () => ++probes >= 3 ? 'open' : null,
+    reload: async () => { reloads += 1 },
+  })
+  const pending = h.session.ensureChatRuntimeReady({ purpose: 'chat' })
+  await waitFor(() => h.tabs.created.length === 1)
+  h.tabs.emitUpdated(100, { status: 'complete' })
+  const result = await pending
+  assert.equal(result.ok, true)
+  assert.equal(reloads, 0)
+})
+
+test('自动连接：扩展更新后旧页面没有 host，自动重载并恢复监听', async () => {
+  let reloads = 0
+  const h = harness({
+    initial: [{ id: 1, url: DEFAULT_GOOFISH_IM_URL, status: 'complete' }],
+    probeHost: async () => {
+      if (reloads === 0) throw new Error('旧页面未安装 host')
+    },
+    probeChatSocket: async () => reloads > 0 ? 'open' : null,
+    reload: async () => { reloads += 1 },
+  })
+  const result = await h.session.ensureChatRuntimeReady({ purpose: 'chat' })
+  assert.equal(result.ok, true)
+  assert.equal(reloads, 1)
 })
 
 test('ensureChatRuntimeReady：host 未就绪 → host-unavailable', async () => {
@@ -340,9 +446,10 @@ test('ensureChatRuntimeReady：并发准备共享同一运行时会话，只创�
   })
   const all = Promise.all([
     h.session.ensureChatRuntimeReady({ purpose: 'chat', force: true }),
-    h.session.ensureChatRuntimeReady({ purpose: 'platform', force: true }),
+    h.session.ensureChatRuntimeReady({ purpose: 'chat', force: true }),
     h.session.ensureChatRuntimeReady({ purpose: 'chat', force: true }),
   ])
+  h.session.noteSocketStatus('open')
   await waitFor(() => h.tabs.created.length === 1)
   assert.equal(h.tabs.created.length, 1)
 
@@ -351,13 +458,128 @@ test('ensureChatRuntimeReady：并发准备共享同一运行时会话，只创�
   for (const result of results) assert.equal(result.ok, true)
 })
 
+test('并发准备只执行一次：host 探测 / 用户解析各只跑一次，不创建重复 tab', async () => {
+  let probes = 0
+  let fetches = 0
+  const h = harness({
+    initial: [{ id: 1, url: 'https://www.goofish.com/', active: true, status: 'complete' }],
+    probeHost: async () => {
+      probes += 1
+    },
+    fetchUserId: async () => {
+      fetches += 1
+      return { ok: true, userId: 'user-1' }
+    },
+  })
+  const all = Promise.all([
+    h.session.ensureChatRuntimeReady({ purpose: 'chat', force: true }),
+    h.session.ensureChatRuntimeReady({ purpose: 'chat', force: true }),
+    h.session.ensureChatRuntimeReady({ purpose: 'chat', force: true }),
+  ])
+  h.session.noteSocketStatus('open')
+  await waitFor(() => h.tabs.created.length === 1)
+  h.tabs.emitUpdated(100, { status: 'complete' })
+  const results = await all
+
+  for (const result of results) assert.equal(result.ok, true)
+  // 关键：并发 prepare 共享同一次就绪流程，host / 用户探测各只执行一次。
+  assert.equal(probes, 1)
+  assert.equal(fetches, 1)
+  assert.equal(h.tabs.created.length, 1)
+})
+
+test('并发 chat / platform 准备分别遵守各自的 socket 就绪要求', async () => {
+  const h = harness({ initial: [{ id: 1, url: 'https://www.goofish.com/im', status: 'complete' }] })
+  const [chat, platform] = await Promise.all([
+    h.session.ensureChatRuntimeReady({ purpose: 'chat' }),
+    h.session.ensureChatRuntimeReady({ purpose: 'platform' }),
+  ])
+
+  assert.equal(chat.ok, false)
+  assert.equal(chat.ok === false && chat.socketReady, false)
+  assert.equal(platform.ok, true)
+  assert.equal(platform.ok && platform.socketReady, false)
+})
+
+test('socket open 不重复连接：socket 已上报 open 时 prepare 直接就绪，不重复探测 / 不改写 socket 状态', async () => {
+  let probes = 0
+  let fetches = 0
+  const h = harness({
+    initial: [{ id: 1, url: 'https://www.goofish.com/im', status: 'complete' }],
+    probeHost: async () => {
+      probes += 1
+    },
+    fetchUserId: async () => {
+      fetches += 1
+      return { ok: true, userId: 'user-1' }
+    },
+  })
+  h.session.noteSocketStatus('open')
+  const results = await Promise.all([
+    h.session.ensureChatRuntimeReady({ purpose: 'chat' }),
+    h.session.ensureChatRuntimeReady({ purpose: 'chat' }),
+  ])
+
+  for (const result of results) {
+    assert.equal(result.ok, true)
+    assert.equal(result.ok && result.socketReady, true)
+    assert.equal(result.ok && result.socketStatus, 'open')
+  }
+  // 已 open：不重置 socket，也不重复探测 / 解析用户。
+  assert.equal(h.session.getStatus().socketStatus, 'open')
+  assert.equal(probes, 1)
+  assert.equal(fetches, 1)
+  // 复用已有 /im：不创建新 tab。
+  assert.equal(h.tabs.created.length, 0)
+})
+
+test('结构化失败：host 未就绪时不谎报 platformReady / socketReady，且透传真实 socket 状态', async () => {
+  const h = harness({
+    initial: [{ id: 1, url: 'https://www.goofish.com/im', status: 'complete' }],
+    probeHost: async () => {
+      throw new Error('页面未安装 host')
+    },
+  })
+  h.session.noteSocketStatus('closed')
+  const result = await h.session.ensureChatRuntimeReady({ purpose: 'chat' })
+  assert.equal(result.ok, false)
+  assert.equal(result.ok === false ? result.category : '', 'host-unavailable')
+  assert.equal(result.ok === false ? result.platformReady : true, false)
+  assert.equal(result.ok === false ? result.socketReady : true, false)
+  assert.equal(result.ok === false ? result.socketStatus : '', 'closed')
+  assert.equal(result.ok === false ? result.userIdReady : true, false)
+})
+
+test('结构化失败：用户解析失败按类别透传（unauthorized / captcha），host 就绪不被推翻', async () => {
+  for (const category of ['unauthorized', 'captcha'] as const) {
+    const h = harness({
+      initial: [{ id: 1, url: 'https://www.goofish.com/im', status: 'complete' }],
+      fetchUserId: async () => ({ ok: false, category, message: `需要处理：${category}` }),
+    })
+    const result = await h.session.ensureChatRuntimeReady({ purpose: 'chat', force: true })
+    assert.equal(result.ok, false)
+    assert.equal(result.ok === false ? result.category : '', category)
+    // host 探测已成功，platformReady 应为真（不因用户失败而回退）。
+    assert.equal(result.ok === false ? result.platformReady : false, true)
+    assert.equal(result.ok === false ? result.userIdReady : true, false)
+  }
+})
+
 test('prepare：区分 platformReady 与 socketReady，socket 未 open 不报 socketReady', async () => {
   const h = harness({ initial: [{ id: 1, url: 'https://www.goofish.com/im', status: 'complete' }] })
   const result = await h.session.ensureChatRuntimeReady({ purpose: 'chat' })
+  assert.equal(result.ok, false)
+  assert.equal(result.ok === false && result.platformReady, true)
+  assert.equal(result.ok === false && result.socketReady, false)
+  assert.equal(result.ok === false && result.socketStatus, 'connecting')
+})
+
+test('平台用途不依赖聊天 socket，可以在 socket 未 open 时准备成功', async () => {
+  const h = harness({ initial: [{ id: 1, url: 'https://www.goofish.com/im', status: 'complete' }] })
+  const result = await h.session.ensureChatRuntimeReady({ purpose: 'platform' })
   assert.equal(result.ok, true)
   assert.equal(result.ok && result.platformReady, true)
   assert.equal(result.ok && result.socketReady, false)
-  assert.equal(result.ok && result.socketStatus, 'connecting')
 })
 
 test('prepare：socket 真实上报 open 后 socketReady 才为 true', async () => {
@@ -391,7 +613,7 @@ test('hostReady：初始 false；真实 probe 成功后 true；ensureTab 不乐�
   // 仅等待 tab 加载完成不等于 host 就绪。
   assert.equal(h.session.getStatus().hostReady, false)
 
-  const prepared = await h.session.ensureChatRuntimeReady({ purpose: 'chat' })
+  const prepared = await h.session.ensureChatRuntimeReady({ purpose: 'platform' })
   assert.equal(prepared.ok, true)
   assert.equal(h.session.getStatus().hostReady, true)
   // 再次复用同一个 tab 时不得把已确认的 host 就绪重置为 false。
@@ -518,10 +740,10 @@ test('hostReady：仅真实 probe 置 true；host 就绪不推断 socket', async
   assert.equal(h.session.getStatus().hostReady, false)
 
   const result = await h.session.ensureChatRuntimeReady({ purpose: 'chat' })
-  assert.equal(result.ok, true)
-  assert.equal(result.ok && result.platformReady, true)
+  assert.equal(result.ok, false)
+  assert.equal(result.ok === false && result.platformReady, true)
   // host 就绪不等于 socket 就绪。
-  assert.equal(result.ok && result.socketReady, false)
+  assert.equal(result.ok === false && result.socketReady, false)
   assert.deepEqual(probeCalls, [1])
   assert.equal(h.session.getStatus().hostReady, true)
 })

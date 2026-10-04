@@ -13,6 +13,7 @@ import {
   applyContentRule,
   applyPriceRule,
   buildPublishItem,
+  resolveShipping,
   validateAndFilterImages,
 } from '../../../../shared/publish/rules'
 import { PublishError } from '../../../../shared/types/publish'
@@ -181,4 +182,55 @@ test('buildPublishItem: 完整组合与 override 手动覆盖', () => {
   assert.equal(item.priceInCent, 19990)
   assert.equal(item.confirmationStatus, 'unconfirmed')
   assert.ok(item.mainImage.startsWith('https://'))
+})
+
+// ============================ 配送（邮费）规则 ============================
+
+test('配送规则: 包邮来源映射邮费 0', () => {
+  const shipping = resolveShipping({ freeShip: '是' })
+  assert.equal(shipping.status, 'free')
+  assert.equal(shipping.postFee, 0)
+  assert.equal(shipping.freeShip, true)
+})
+
+test('配送规则: 不包邮来源缺费用时标记 unspecified 并给出可行动提示（绝不伪造收费）', () => {
+  const shipping = resolveShipping({ freeShip: '否' })
+  assert.equal(shipping.status, 'unspecified')
+  assert.equal(shipping.postFee, undefined)
+  assert.ok((shipping.actionable ?? '').length > 0)
+})
+
+test('配送规则: 显式 postFee=0 视为包邮，>0 视为收费', () => {
+  assert.equal(resolveShipping({ freeShip: '否' }, { postFee: 0 }).status, 'free')
+  const paid = resolveShipping({ freeShip: '否' }, { postFee: 12.5 })
+  assert.equal(paid.status, 'paid')
+  assert.equal(paid.postFee, 12.5)
+})
+
+test('配送规则: 显式 freeShip=false 但未给金额时标记 unspecified', () => {
+  const shipping = resolveShipping({ freeShip: '是' }, { freeShip: false })
+  assert.equal(shipping.status, 'unspecified')
+})
+
+test('配送规则: 来源未提供包邮信息时保守按包邮处理（不产生收费）', () => {
+  const shipping = resolveShipping({ freeShip: '' })
+  assert.equal(shipping.status, 'free')
+  assert.equal(shipping.postFee, 0)
+})
+
+test('buildPublishItem: 写入配送与所在地字段，不伪造收费', () => {
+  const freeItem = buildPublishItem(makeMockProduct({ freeShip: '是' }), undefined, {
+    location: '外滩',
+  })
+  assert.equal(freeItem.shippingStatus, 'free')
+  assert.equal(freeItem.postFee, 0)
+  assert.equal(freeItem.location, '外滩')
+
+  const paidItem = buildPublishItem(makeMockProduct({ freeShip: '否' }), undefined, { postFee: 8 })
+  assert.equal(paidItem.shippingStatus, 'paid')
+  assert.equal(paidItem.postFee, 8)
+
+  const missingItem = buildPublishItem(makeMockProduct({ freeShip: '否' }))
+  assert.equal(missingItem.shippingStatus, 'unspecified')
+  assert.equal(missingItem.postFee, undefined)
 })

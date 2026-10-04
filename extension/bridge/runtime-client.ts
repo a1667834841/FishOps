@@ -1,5 +1,6 @@
 import {
   createCommand,
+  traceCommandCall,
   genRequestId,
   type CommandPayloadMap,
   type CommandResultMap,
@@ -47,7 +48,9 @@ export class RuntimeClient {
   /** 发送命令并等待结果；失败或超时抛出 BridgeError。 */
   async call<T extends CommandType>(type: T, payload: CommandPayloadMap[T]): Promise<CommandResultMap[T]> {
     const command = createCommand(type, payload)
-    const response = await this.withTimeout(this.transport.call(command), `命令 ${type} 超时`)
+    const response = await traceCommandCall('client', command, () =>
+      this.withTimeout(this.transport.call(command), `命令 ${type} 超时`),
+    )
     if (!response.ok) {
       throw new BridgeError(response.error?.code ?? 'INTERNAL', response.error?.message ?? '未知错误')
     }

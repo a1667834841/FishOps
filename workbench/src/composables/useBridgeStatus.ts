@@ -4,7 +4,7 @@ import { readonly, ref } from 'vue'
  * Bridge 连接状态的共享出口。
  * BridgeDemo（开发诊断）是唯一的写入方，顶部栏、设置页等只读展示。
  */
-export type BridgeState = 'unavailable' | 'idle' | 'checking' | 'online' | 'error'
+export type BridgeState = 'unavailable' | 'idle' | 'checking' | 'online' | 'error' | 'unauthorized' | 'captcha'
 
 export interface BridgeStatusInfo {
   state: BridgeState

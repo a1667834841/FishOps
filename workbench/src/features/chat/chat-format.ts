@@ -191,3 +191,24 @@ export function derivePeer(conversation: Conversation | null, messages: readonly
   }
   return { name: null, userId: null }
 }
+
+/**
+ * 对方头像 URL：优先会话字段，其次最近一条对方消息的发送者头像。
+ * 只放行通过 https 校验的地址；拿不到时返回 null，由界面回退字母头像。
+ */
+export function peerAvatarUrl(conversation: Conversation | null, messages: readonly ChatMessage[]): string | null {
+  const fromConversation = safeHttpsUrl(conversation?.peerAvatarUrl)
+  if (fromConversation) return fromConversation
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.direction !== 'in') continue
+    const url = safeHttpsUrl(message.senderAvatarUrl)
+    if (url) return url
+  }
+  return null
+}
+
+/** 单条消息发送者头像 URL；仅 https 且经验证，缺失 / 非法返回 null。 */
+export function messageAvatarUrl(message: ChatMessage): string | null {
+  return safeHttpsUrl(message.senderAvatarUrl)
+}

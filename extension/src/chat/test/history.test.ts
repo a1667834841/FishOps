@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { INITIAL_CURSOR, type LwpRequest, type LwpResponse } from '../../../../shared/chat/index'
-import { ChatHistoryClient, ChatHistoryError, type ChatTransport } from '../history'
+import { ChatHistoryClient, ChatHistoryError, parseConversationItem, type ChatTransport } from '../history'
 
 const b64 = (text: string): string => Buffer.from(text, 'utf-8').toString('base64')
 
@@ -170,4 +170,95 @@ test('自动分页 listAllMessages：跨页拼接并按 id 去重', async () => 
   const all = await client.listAllMessages('123', 5)
   assert.equal(all.length, 2)
   assert.deepEqual(all.map((m) => m.messageId).sort(), ['m1', 'm2'])
+})
+
+test('会话头像：从 userInfo/ownerInfo.logo 提取，忽略商品 itemMainPic', () => {
+  // 真实头像字段 logo 位于 userInfo / ownerInfo 内（见 mtop user.query / session.sync）。
+  const avatar = 'https://img.alicdn.com/bao/uploaded/i2/O1CN01FdtcnZ1N8xK86vifa_!!0-mtopupload.jpg'
+  const viaUserInfo = parseConversationItem({
+    singleChatUserConversation: {
+      cid: '123@goofish',
+      modifyTime: 1000,
+      // 商品主图：绝不能当头像。
+      extension: { itemMainPic: 'https://img.alicdn.com/bao/uploaded/i3/x-0-fleamarket.jpg' },
+      userInfo: { userId: '999', nick: '买家', logo: avatar },
+    },
+  })
+  assert.equal(viaUserInfo?.peerAvatarUrl, avatar)
+
+  const viaOwnerInfo = parseConversationItem({
+    singleChatUserConversation: { cid: '123@goofish', modifyTime: 1000, ownerInfo: { logo: avatar } },
+  })
+  assert.equal(viaOwnerInfo?.peerAvatarUrl, avatar)
+})
+
+test('会话头像：无真实头像字段时保持 undefined（界面回退字母头像）', () => {
+  const conv = parseConversationItem({
+    singleChatUserConversation: {
+      cid: '123@goofish',
+      modifyTime: 1000,
+      extension: { itemMainPic: 'https://img.alicdn.com/bao/uploaded/i3/x-0-xy_item.jpg' },
+    },
+  })
+  assert.equal(conv?.peerAvatarUrl, undefined)
+})
+
+test('setMyUserId：后置解析出当前用户后，历史方向按新 ID 判定（in → out）', async () => {
+  const transport = new FakeTransport(() => ({
+    code: 200,
+    body: { userMessageModels: [msgModel('m1', 1000, '我发的', 'me')], nextCursor: 0 },
+  }))
+  // 构造时没有 myUserId：方向未知，诚实按 in 处理，不猜。
+  const client = new ChatHistoryClient({ transport })
+  const before = await client.listMessageHistory('123')
+  assert.equal(before.messages[0].direction, 'in')
+
+  // 后置获得当前用户 ID：同一客户端后续解析立即生效。
+  client.setMyUserId('me')
+  const after = await client.listMessageHistory('123')
+  assert.equal(after.messages[0].direction, 'out')
+})
+
+test('会话解析：peerUserId 明确等于当前用户时，不把自己当作对方', () => {
+  const item = {
+    singleChatUserConversation: {
+      cid: '111@goofish',
+      modifyTime: 1000,
+      lastMessage: {
+        message: {
+          cid: '111@goofish',
+          createAt: 1000,
+          content: { custom: { summary: 'hi' } },
+          extension: { reminderTitle: '我自己', reminderUrl: 'https://x?peerUserId=me' },
+        },
+      },
+    },
+  }
+  const conv = parseConversationItem(item, 'me')
+  assert.equal(conv?.peerUserId, undefined, 'peerUserId 等于自己时不可当作对方')
+  assert.equal(conv?.peerUserName, '', '不展示自己昵称作为对方')
+
+  // 未提供 myUserId（无法判定）时，保持原有解析口径，不误删。
+  const unknown = parseConversationItem(item)
+  assert.equal(unknown?.peerUserId, 'me')
+})
+
+test('会话解析：peerUserId 不等于自己时正常保留', () => {
+  const item = {
+    singleChatUserConversation: {
+      cid: '111@goofish',
+      modifyTime: 1000,
+      lastMessage: {
+        message: {
+          cid: '111@goofish',
+          createAt: 1000,
+          content: { custom: { summary: 'hi' } },
+          extension: { reminderTitle: '买家', reminderUrl: 'https://x?peerUserId=peer' },
+        },
+      },
+    },
+  }
+  const conv = parseConversationItem(item, 'me')
+  assert.equal(conv?.peerUserId, 'peer')
+  assert.equal(conv?.peerUserName, '买家')
 })

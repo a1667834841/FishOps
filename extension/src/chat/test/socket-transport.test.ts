@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createLwpRequest, LWP_ROUTES, type LwpResponse } from '../../../../shared/chat/index'
+import { ChatReadSocketTransport, createChatReadRequest } from '../read-transport'
 import {
   ChatSocketTransport,
   ChatSocketTransportError,
@@ -22,6 +23,47 @@ class FakeSocket implements WebSocketLike {
 
 const listMessages = (mid: string) =>
   createLwpRequest(LWP_ROUTES.listMessages, ['123@goofish', false, 0, 20, false], mid)
+
+test('CHAT_MARK_READ request 使用 clearRedPoint 的嵌套列表协议 body', () => {
+  assert.deepEqual(createChatReadRequest('123', 'server-message', 'read-1'), {
+    lwp: '/r/Conversation/clearRedPoint',
+    headers: { mid: 'read-1' },
+    body: [[{ cid: '123@goofish', messageId: 'server-message' }]],
+  })
+})
+
+test('已读 transport 独立发送并按 mid 关联 code 200 响应', async () => {
+  const socket = new FakeSocket()
+  const transport = new ChatReadSocketTransport({ getSocket: () => socket, midFactory: () => 'read-id' })
+  const pending = transport.markRead('123', 'server-mid')
+  assert.deepEqual(JSON.parse(socket.sent[0]), {
+    lwp: '/r/Conversation/clearRedPoint',
+    headers: { mid: 'read-id' },
+    body: [[{ cid: '123@goofish', messageId: 'server-mid' }]],
+  })
+  assert.equal(transport.handleMessage(JSON.stringify({ code: 200, headers: { mid: 'read-id' }, body: {} })), true)
+  assert.equal((await pending).code, 200)
+  transport.dispose()
+})
+
+test('已读 transport 只接受有效服务器消息 ID 和平台 200', async () => {
+  const socket = new FakeSocket()
+  const transport = new ChatReadSocketTransport({ getSocket: () => socket, midFactory: () => 'read-id' })
+  await assert.rejects(() => transport.markRead('123', 'uuid:local'))
+  const pending = transport.markRead('123', 'server-id')
+  transport.handleMessage(JSON.stringify({ code: 403, headers: { mid: 'read-id' } }))
+  assert.equal((await pending).code, 403)
+  transport.dispose()
+})
+
+test('已读写路由不混入只读 socket transport 白名单', async () => {
+  const socket = new FakeSocket()
+  const transport = new ChatSocketTransport({ getSocket: () => socket })
+  const request = createLwpRequest('/r/Conversation/clearRedPoint', [[{ cid: 'abc@goofish', messageId: 'server-mid' }]], 'read-mid')
+  await assert.rejects(() => transport.send(request), (error: unknown) =>
+    error instanceof ChatSocketTransportError && error.code === 'ROUTE_NOT_ALLOWED')
+  assert.equal(socket.sent.length, 0)
+})
 
 test('白名单路由：发送标准信封并按 headers.mid 关联响应', async () => {
   const socket = new FakeSocket()

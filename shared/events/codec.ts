@@ -18,6 +18,7 @@ import type {
   CommandPayloadMap,
   CommandType,
   ChatGetMessagesPayload,
+  ChatMarkReadPayload,
   ChatSocketEventPayload,
   ChatSyncConversationsPayload,
   ChatSyncHistoryPayload,
@@ -44,13 +45,13 @@ import type {
   AnalysisResultGetPayload,
   PublishCancelPayload,
   PublishConfirmStatusPayload,
-  PublishCreatePayload,
   PublishFillFormPayload,
   PublishGetPayload,
   PublishListPayload,
   PublishPausePayload,
   PublishResumePayload,
   PublishSubmitPayload,
+  ProductCatalogQueryCommandPayload as ProductCatalogQueryPayload,
 } from './commands'
 import type { MigrateLegacyConfigPayload, LegacyConfigTransfer } from '../types/legacy-migration'
 import { LEGACY_TRANSFER_LIMITS, LEGACY_TRANSFER_SECTIONS } from '../types/legacy-migration'
@@ -72,6 +73,23 @@ import {
 } from '../types/feishu-write'
 import { FEISHU_SCHEMA_RECONCILE_MAX_PREVIEW_ID_LENGTH } from '../types/feishu-schema-reconcile'
 import { CHAT_SOCKET_MAX_RAW_LENGTH } from './commands'
+import type {
+  FeishuProductGetPayload,
+  FeishuProductsPagePayload,
+} from '../types/feishu-products'
+import type { PublishCreatePayload } from '../types/publish'
+import {
+  FEISHU_PRODUCTS_KEYWORD_MAX_LENGTH,
+  FEISHU_PRODUCTS_MAX_PAGE_SIZE,
+  FEISHU_PRODUCTS_ORDERS,
+  FEISHU_PRODUCTS_PAGE_TOKEN_MAX_LENGTH,
+  FEISHU_PRODUCTS_RECORD_ID_MAX_LENGTH,
+} from '../types/feishu-products'
+import {
+  PRODUCT_CATALOG_CURSOR_MAX_LENGTH,
+  PRODUCT_CATALOG_KEYWORD_MAX_LENGTH,
+  PRODUCT_CATALOG_MAX_PAGE_SIZE,
+} from '../types/product-catalog'
 import {
   isChatAiPauseSetPayload,
   isChatApplyReplyPayload,
@@ -285,6 +303,17 @@ export function isChatSyncHistoryPayload(value: unknown): value is ChatSyncHisto
   return isOptionalPositiveNumber(value['pages']) && isOptionalPositiveNumber(value['count'])
 }
 
+/** 校验 CHAT_MARK_READ 负载；限制长度并拒绝空白/非服务端 ID。 */
+export function isChatMarkReadPayload(value: unknown): value is ChatMarkReadPayload {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 1 &&
+    Object.keys(value)[0] === 'sessionId' &&
+    typeof value['sessionId'] === 'string' &&
+    /^[^@\s]{1,128}$/.test(value['sessionId'])
+  )
+}
+
 /** 校验 CHAT_SYNC_CONVERSATIONS 负载。 */
 export function isChatSyncConversationsPayload(value: unknown): value is ChatSyncConversationsPayload {
   if (!isRecord(value)) return false
@@ -371,6 +400,7 @@ export function isCaptureCreatePayload(value: unknown): value is CaptureCreatePa
   if (!isOptionalPositiveInt(value['pages'], 1)) return false
   if (!isOptionalPositiveInt(value['rowsPerPage'], 1)) return false
   if (!isOptionalNonNegativeNumber(value['minIntervalMs'])) return false
+  if (!isOptionalNonNegativeNumber(value['intervalJitterMs'])) return false
   if (value['fetchDetail'] !== undefined && typeof value['fetchDetail'] !== 'boolean') return false
   if (value['filter'] !== undefined && !isCaptureFilter(value['filter'])) return false
   return true
@@ -787,15 +817,253 @@ export function isAnalysisResultGetPayload(value: unknown): value is AnalysisRes
   return isRecord(value) && typeof value['id'] === 'string' && value['id'].trim().length > 0
 }
 
+// ---- 飞书商品库分页浏览 / 单条读取（P7）负载校验 ----
+
+/**
+ * 校验 FEISHU_PRODUCTS_PAGE 负载。
+ *
+ * 严格键白名单：仅允许 `pageSize` / `pageToken` / `keyword` / `order`。命令**不接受** tableId，
+ * 目标表固定为已配置商品表；`pageSize` 必须为 1..上限的整数（缺省由后台使用默认 20）。
+ */
+/**
+ * 校验 FEISHU_PRODUCTS_PAGE 负载。
+ *
+ * 严格键白名单：仅允许 `pageSize` / `pageToken` / `targetTableId` / `keyword` / `order`。命令**不接受**任意
+ * tableId，实际查询表固定为已配置商品表；`targetTableId` 仅作绑定断言。
+ * `pageSize` 必须为 1..上限的整数（缺省由后台使用默认 20）；
+ * **携带 `pageToken` 时必须同时提供 `targetTableId`**（防跨表游标）。
+ */
+export function isFeishuProductsPagePayload(value: unknown): value is FeishuProductsPagePayload {
+  if (!isRecord(value)) return false
+  if (
+    !Object.keys(value).every(
+      (key) =>
+        key === 'pageSize' ||
+        key === 'pageToken' ||
+        key === 'targetTableId' ||
+        key === 'keyword' ||
+        key === 'order',
+    )
+  ) {
+    return false
+  }
+
+  const pageSize = value['pageSize']
+  if (
+    pageSize !== undefined &&
+    !(
+      typeof pageSize === 'number' &&
+      Number.isInteger(pageSize) &&
+      pageSize >= 1 &&
+      pageSize <= FEISHU_PRODUCTS_MAX_PAGE_SIZE
+    )
+  ) {
+    return false
+  }
+
+  const pageToken = value['pageToken']
+  if (
+    pageToken !== undefined &&
+    !(
+      typeof pageToken === 'string' &&
+      pageToken.trim().length > 0 &&
+      pageToken.length <= FEISHU_PRODUCTS_PAGE_TOKEN_MAX_LENGTH
+    )
+  ) {
+    return false
+  }
+
+  const targetTableId = value['targetTableId']
+  if (
+    targetTableId !== undefined &&
+    !(typeof targetTableId === 'string' && targetTableId.trim().length > 0)
+  ) {
+    return false
+  }
+
+  // 携带 pageToken 时必须绑定目标表，防止跨表游标。
+  if (pageToken !== undefined && targetTableId === undefined) return false
+
+  const keyword = value['keyword']
+  if (
+    keyword !== undefined &&
+    !(typeof keyword === 'string' && keyword.length <= FEISHU_PRODUCTS_KEYWORD_MAX_LENGTH)
+  ) {
+    return false
+  }
+
+  const order = value['order']
+  if (
+    order !== undefined &&
+    !(typeof order === 'string' && (FEISHU_PRODUCTS_ORDERS as readonly string[]).includes(order))
+  ) {
+    return false
+  }
+
+  return true
+}
+
+/**
+ * 校验 FEISHU_PRODUCT_GET 负载。
+ *
+ * 严格键白名单：仅允许 `recordId`（非空限长字符串）；命令**不接受** tableId。
+ */
+export function isFeishuProductGetPayload(value: unknown): value is FeishuProductGetPayload {
+  if (!isRecord(value)) return false
+  if (!Object.keys(value).every((key) => key === 'recordId' || key === 'targetTableId')) return false
+  const recordId = value['recordId']
+  if (
+    typeof recordId !== 'string' ||
+    recordId.trim().length === 0 ||
+    recordId.length > FEISHU_PRODUCTS_RECORD_ID_MAX_LENGTH
+  ) {
+    return false
+  }
+  const targetTableId = value['targetTableId']
+  if (
+    targetTableId !== undefined &&
+    !(typeof targetTableId === 'string' && targetTableId.trim().length > 0)
+  ) {
+    return false
+  }
+  return true
+}
+
+// ---- 商品目录统一查询（P7）负载校验 ----
+
+/** 允许的商品目录来源。 */
+const PRODUCT_CATALOG_SOURCE_VALUES: ReadonlySet<string> = new Set(['feishu', 'my_published'])
+
+/**
+ * 校验 PRODUCT_CATALOG_QUERY 负载。
+ *
+ * 严格键白名单：仅允许 `source` / `keyword` / `order` / `pageSize` / `page` / `cursor` / `forceRefresh`。
+ * `source` 必填且仅接受 `feishu` / `my_published`；`pageSize` 为 1..上限整数；`page` 为非负整数；
+ * `cursor` 为非空限长字符串（飞书分页游标）。
+ */
+export function isProductCatalogQueryPayload(value: unknown): value is ProductCatalogQueryPayload {
+  if (!isRecord(value)) return false
+  if (
+    !Object.keys(value).every(
+      (key) =>
+        key === 'source' ||
+        key === 'keyword' ||
+        key === 'order' ||
+        key === 'pageSize' ||
+        key === 'page' ||
+        key === 'cursor' ||
+        key === 'targetTableId' ||
+        key === 'forceRefresh',
+    )
+  ) {
+    return false
+  }
+
+  const source = value['source']
+  if (typeof source !== 'string' || !PRODUCT_CATALOG_SOURCE_VALUES.has(source)) return false
+
+  const keyword = value['keyword']
+  if (
+    keyword !== undefined &&
+    !(typeof keyword === 'string' && keyword.length <= PRODUCT_CATALOG_KEYWORD_MAX_LENGTH)
+  ) {
+    return false
+  }
+
+  const order = value['order']
+  if (order !== undefined && (typeof order !== 'string' || !PRODUCT_ORDERS.has(order))) return false
+
+  const pageSize = value['pageSize']
+  if (
+    pageSize !== undefined &&
+    !(
+      typeof pageSize === 'number' &&
+      Number.isInteger(pageSize) &&
+      pageSize >= 1 &&
+      pageSize <= PRODUCT_CATALOG_MAX_PAGE_SIZE
+    )
+  ) {
+    return false
+  }
+
+  const page = value['page']
+  if (page !== undefined && !(typeof page === 'number' && Number.isInteger(page) && page >= 0)) {
+    return false
+  }
+
+  const cursor = value['cursor']
+  if (
+    cursor !== undefined &&
+    !(
+      typeof cursor === 'string' &&
+      cursor.trim().length > 0 &&
+      cursor.length <= PRODUCT_CATALOG_CURSOR_MAX_LENGTH
+    )
+  ) {
+    return false
+  }
+
+  const targetTableId = value['targetTableId']
+  if (
+    targetTableId !== undefined &&
+    !(typeof targetTableId === 'string' && targetTableId.trim().length > 0)
+  ) {
+    return false
+  }
+  // 携带 cursor（飞书分页游标）时必须绑定目标表，防止跨表游标。
+  if (cursor !== undefined && targetTableId === undefined) return false
+
+  if (value['forceRefresh'] !== undefined && typeof value['forceRefresh'] !== 'boolean') return false
+
+  return true
+}
+
 // ---- 发布中心（P8）负载校验 ----
 
 /** 校验 PUBLISH_CREATE 负载：必须显式提供非空 itemId，可选 rule 和 override。 */
+/**
+ * 校验 PUBLISH_CREATE 负载。
+ *
+ * 两种互斥来源（严格键白名单：仅 itemId / source / recordId / targetTableId / rule / override）：
+ * - 本地：`source` 缺省或 `'my_published'`，必须显式提供非空 `itemId`，不得携带 recordId / targetTableId；
+ * - 飞书：`source === 'feishu'`，必须提供非空 `recordId` 与 `targetTableId`；
+ *   `itemId` 可选（为飞书记录中真实「商品ID」时携带），绝不要求伪造。
+ *
+ * 无论哪种来源，`rule` / `override` 如出现必须为对象，后台仍会再次校验覆盖字段。
+ */
 export function isPublishCreatePayload(value: unknown): value is PublishCreatePayload {
   if (!isRecord(value)) return false
-  if (typeof value['itemId'] !== 'string' || value['itemId'].trim().length === 0) return false
+  if (
+    !Object.keys(value).every(
+      (key) =>
+        key === 'itemId' ||
+        key === 'source' ||
+        key === 'recordId' ||
+        key === 'targetTableId' ||
+        key === 'rule' ||
+        key === 'override',
+    )
+  ) {
+    return false
+  }
   if (value['rule'] !== undefined && !isRecord(value['rule'])) return false
   if (value['override'] !== undefined && !isRecord(value['override'])) return false
-  return true
+
+  const source = value['source']
+  if (source !== undefined && source !== 'my_published' && source !== 'feishu') return false
+
+  const nonEmptyString = (candidate: unknown): candidate is string =>
+    typeof candidate === 'string' && candidate.trim().length > 0
+
+  if (source === 'feishu') {
+    // 飞书来源：必须带 recordId 与 targetTableId；itemId 可选（真实商品ID）。
+    if (value['itemId'] !== undefined && !nonEmptyString(value['itemId'])) return false
+    return nonEmptyString(value['recordId']) && nonEmptyString(value['targetTableId'])
+  }
+
+  // 本地来源：必须带 itemId，不得携带飞书字段。
+  if (value['recordId'] !== undefined || value['targetTableId'] !== undefined) return false
+  return nonEmptyString(value['itemId'])
 }
 
 /** 校验 PUBLISH_LIST 负载。 */

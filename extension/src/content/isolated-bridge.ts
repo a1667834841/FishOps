@@ -17,6 +17,7 @@
  */
 import {
   CommandTypes,
+  startCommandTrace,
   isChatSocketEventPayload,
   isCommandEnvelope,
   isResponseEnvelope,
@@ -58,15 +59,19 @@ window.addEventListener('message', (event: MessageEvent) => {
 })
 
 async function forwardCommand(command: CommandEnvelope): Promise<void> {
+  const finish = startCommandTrace('content', command)
   try {
     const response: unknown = await chrome.runtime.sendMessage(command)
     if (!isResponseEnvelope(response)) {
-      console.warn(LOG_PREFIX, 'background 返回了非法响应', response)
+      finish('error', 'INVALID_MESSAGE')
+      console.warn(LOG_PREFIX, 'background 返回了非法响应')
       return
     }
+    finish(response.ok ? 'success' : 'error', response.error?.code)
     window.postMessage(wrapPageMessage(response), window.location.origin)
-  } catch (error) {
-    console.error(LOG_PREFIX, '转发命令失败', error)
+  } catch {
+    finish('error', 'INTERNAL')
+    console.error(LOG_PREFIX, '转发命令失败')
   }
 }
 

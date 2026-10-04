@@ -27,7 +27,9 @@ export const TERMINAL_STATUSES: ReadonlySet<MachineTaskStatus> = new Set<Machine
 export const ALLOWED_TRANSITIONS: Readonly<Record<MachineTaskStatus, readonly MachineTaskStatus[]>> = {
   pending: ['running', 'cancelled'],
   running: ['paused', 'completed', 'failed', 'cancelled', 'waiting_confirmation'],
-  paused: ['running', 'failed', 'cancelled', 'waiting_confirmation'],
+  // paused → pending：恢复采集时先重新排队（pending），真正出队执行时才转 running；
+  // 保留首次 startedAt，便于前端展示真实执行起点。
+  paused: ['running', 'pending', 'failed', 'cancelled', 'waiting_confirmation'],
   waiting_confirmation: ['completed', 'failed', 'cancelled', 'paused'],
   completed: [],
   failed: [],

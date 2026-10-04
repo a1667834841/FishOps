@@ -1,25 +1,29 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import Callout from '../components/Callout.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PanelCard from '../components/PanelCard.vue'
 import ProgressBar from '../components/ProgressBar.vue'
 import StatusTag from '../components/StatusTag.vue'
 import AppModal from '../components/AppModal.vue'
-import { PhPlus, PhArrowsClockwise, PhX, PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue'
+import { PhPlus, PhArrowsClockwise, PhX, PhCaretLeft, PhCaretRight, PhInfo } from '@phosphor-icons/vue'
 import { useBridgeController } from '../composables/useBridgeController'
 import type { PageId } from '../data/navigation'
 import { formatFullTime, isoTime } from '../features/chat/chat-format'
 import {
-  buildCapturePayload,
+  buildBatchCapturePayloads,
   CAPTURE_LIMITS,
   defaultCaptureForm,
+  formatTaskDuration,
+  formatTaskValidCount,
   paginateTasks,
+  parseKeywordTags,
   toCaptureTaskView,
   type CaptureFormErrors,
   type CaptureFormField,
 } from '../features/capture/capture-format'
 import { CAPTURE_EVENTS, CaptureController, type CaptureState } from '../features/capture/capture-controller'
+import type { CapturePayload } from '../features/contracts'
 
 const emit = defineEmits<{ navigate: [page: PageId]; diagnostics: [] }>()
 
@@ -35,16 +39,60 @@ const selectedAction = computed(() => (selected.value ? (state.value.actions[sel
 const creating = computed(() => state.value.create.phase === 'running')
 const hasActive = computed(() => views.value.some((view) => view.status === 'running' || view.status === 'pending'))
 
-/** 提交按钮仅防重复提交，不因已有 active 任务禁用新建 */
-const submitDisabled = computed(() => !available.value || creating.value)
-const submitLabel = computed(() => (creating.value ? '正在创建…' : '开始采集'))
-
 const form = reactive(defaultCaptureForm())
+const keywordInput = ref('')
+const inputFocused = ref(false)
 const createOpen = ref(false)
 const detailOpen = ref(false)
-const filtersOpen = ref(false)
 const errors = ref<CaptureFormErrors>({})
 const confirmCancelId = ref<string | null>(null)
+
+// 批量提交与失败重试管理
+const isSubmitting = ref(false)
+const failedKeywords = ref<string[]>([])
+const failedPayloadSnapshots = ref<CapturePayload[]>([])
+const failureMessage = ref('')
+
+// 运行中任务耗时每秒刷新
+const nowTick = ref(Date.now())
+let timer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  timer = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 1000)
+})
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+})
+
+// 用户编辑标签或输入时，如果不再与失败词集合匹配，重置重试状态，避免新建误标为重试
+watch(
+  () => [form.keywords?.join(','), keywordInput.value],
+  () => {
+    if (failedPayloadSnapshots.value.length > 0) {
+      const currentTags = (form.keywords ?? []).slice().sort().join(',')
+      const failedTags = failedKeywords.value.slice().sort().join(',')
+      if (currentTags !== failedTags || keywordInput.value.trim() !== '') {
+        failedPayloadSnapshots.value = []
+        failureMessage.value = ''
+      }
+    }
+  },
+)
+
+const isRetryMode = computed(() => {
+  return failedPayloadSnapshots.value.length > 0 && failedKeywords.value.length > 0
+})
+
+/** 提交按钮防重复提交 */
+const submitDisabled = computed(() => !available.value || isSubmitting.value || creating.value)
+const submitLabel = computed(() => {
+  if (isSubmitting.value) return '正在创建任务…'
+  if (isRetryMode.value) {
+    return `重试失败项 (${failedPayloadSnapshots.value.length})`
+  }
+  return '开始采集'
+})
 
 // 流量词建议（suggest）相关状态
 const showSuggestDropdown = ref(false)
@@ -68,35 +116,138 @@ const FIELD_ORDER: readonly CaptureFormField[] = [
   'minWantCnt',
   'minPrice',
   'maxPrice',
+  'baseIntervalSec',
+  'randomIntervalSec',
 ]
 
-/** 关键词输入触发 300ms debounce 查询流量词 */
-function onKeywordInput(): void {
-  if (form.keyword.trim() === '') {
+function focusField(field: CaptureFormField): void {
+  if (field === 'keyword') {
+    document.getElementById('capture-keyword-input')?.focus()
+  } else {
+    document.getElementById(`capture-${field}`)?.focus()
+  }
+}
+
+/** 将当前输入框中的内容解析并追加到关键词标签中 */
+function addCurrentInputTag(explicitText?: string): void {
+  const inputEl = document.getElementById('capture-keyword-input') as HTMLInputElement | null
+  const raw = (explicitText !== undefined ? explicitText : (keywordInput.value || inputEl?.value || '')).trim()
+  if (!raw) return
+  const parsed = parseKeywordTags(raw, form.keywords ?? [])
+  form.keywords = parsed.tags
+  if (parsed.error) {
+    errors.value.keyword = parsed.error
+    // 存在错误时保留当前输入供用户修改，不予清空
+  } else {
+    keywordInput.value = ''
+    if (inputEl) inputEl.value = ''
+    errors.value.keyword = undefined
+  }
+  closeSuggest()
+}
+
+/** 删除指定索引的标签 */
+function removeTag(index: number): void {
+  if (!form.keywords) return
+  form.keywords.splice(index, 1)
+  if (form.keywords.length === 0 && !keywordInput.value.trim()) {
+    errors.value.keyword = '请输入搜索关键词'
+  } else {
+    // 重新对剩余标签校验
+    const parsed = parseKeywordTags([], form.keywords)
+    errors.value.keyword = parsed.error
+  }
+}
+
+/** 输入框键盘事件：退格删除末尾标签，逗号/顿号快捷加入；中文输入中（isComposing）不确认 */
+function onInputKeydown(e: KeyboardEvent): void {
+  if (e.isComposing) return
+  if (e.key === 'Backspace' && !keywordInput.value && form.keywords && form.keywords.length > 0) {
+    form.keywords.pop()
+    return
+  }
+  if (e.key === ',' || e.key === '，' || e.key === '、') {
+    e.preventDefault()
+    addCurrentInputTag()
+  }
+}
+
+function onEnterKeydown(e: KeyboardEvent): void {
+  if (e.isComposing) return
+  addCurrentInputTag()
+}
+
+/** 粘贴处理：保留当前已有输入，支持换行分隔 */
+function onInputPaste(e: ClipboardEvent): void {
+  const text = e.clipboardData?.getData('text') ?? ''
+  if (/[,，、\r\n]/.test(text)) {
+    e.preventDefault()
+    const inputEl = document.getElementById('capture-keyword-input') as HTMLInputElement | null
+    const currentVal = keywordInput.value || inputEl?.value || ''
+    const combined = currentVal ? `${currentVal},${text}` : text
+    const parsed = parseKeywordTags(combined, form.keywords ?? [])
+    form.keywords = parsed.tags
+    if (parsed.error) {
+      errors.value.keyword = parsed.error
+    } else {
+      keywordInput.value = ''
+      if (inputEl) inputEl.value = ''
+      errors.value.keyword = undefined
+    }
+    closeSuggest()
+  }
+}
+
+/** 关键词输入触发 300ms debounce 查询当前输入词的流量词 */
+function onKeywordInput(e?: Event): void {
+  if ((e as unknown as { isComposing?: boolean })?.isComposing) return
+  const target = e?.target as HTMLInputElement | null
+  const currentVal = target ? target.value : keywordInput.value
+  if (/[,，、\r\n]/.test(currentVal)) {
+    addCurrentInputTag(currentVal)
+    return
+  }
+  const trimmed = currentVal.trim()
+  if (!trimmed) {
     controller.clearSuggest()
     showSuggestDropdown.value = false
     return
   }
   showSuggestDropdown.value = true
-  void controller.fetchSuggest(form.keyword, { immediate: false })
+  void controller.fetchSuggest(trimmed, { immediate: false })
 }
 
-/** 显式点击“获取流量词”按钮，立即调用 */
+/** 显式点击“获取流量词”按钮，立即查询当前输入词 */
 function onRequestSuggest(): void {
-  if (!form.keyword.trim() || !available.value) return
+  const trimmed = keywordInput.value.trim()
+  if (!trimmed || !available.value) return
   showSuggestDropdown.value = true
-  void controller.fetchSuggest(form.keyword, { immediate: true })
+  void controller.fetchSuggest(trimmed, { immediate: true })
 }
 
-/** 点击建议词填入关键词，绝不自动创建任务 */
+/** 选中建议词：作为新标签追加，超长或超额显示错误，绝不自动创建任务 */
 function onSelectSuggest(word: string): void {
-  form.keyword = controller.selectSuggestWord(word)
+  const selectedWord = controller.selectSuggestWord(word)
+  const parsed = parseKeywordTags([selectedWord], form.keywords ?? [])
+  form.keywords = parsed.tags
+  if (parsed.error) {
+    errors.value.keyword = parsed.error
+  } else {
+    keywordInput.value = ''
+    errors.value.keyword = undefined
+  }
   showSuggestDropdown.value = false
-  errors.value.keyword = undefined
 }
 
 function closeSuggest(): void {
   showSuggestDropdown.value = false
+}
+
+function onInputBlur(): void {
+  inputFocused.value = false
+  setTimeout(() => {
+    closeSuggest()
+  }, 200)
 }
 
 function prevHistoryPage(): void {
@@ -107,30 +258,89 @@ function nextHistoryPage(): void {
   if (paging.value.hasNext) historyPage.value++
 }
 
+function resetFailedState(): void {
+  failedKeywords.value = []
+  failedPayloadSnapshots.value = []
+  failureMessage.value = ''
+  form.keywords = []
+  errors.value.keyword = undefined
+}
+
+function openTaskDetail(id: string): void {
+  controller.select(id)
+  detailOpen.value = true
+}
+
 async function submit(): Promise<void> {
   if (submitDisabled.value) return
-  const result = buildCapturePayload(form)
-  if (!result.ok) {
-    errors.value = result.errors
-    if (result.errors.minPrice || result.errors.maxPrice || result.errors.minWantCnt) filtersOpen.value = true
-    await nextTick()
-    const first = FIELD_ORDER.find((field) => result.errors[field])
-    if (first) document.getElementById(`capture-${first}`)?.focus()
+
+  // 重试模式：只使用原失败 payload 快照进行重试，不重复发成功项，也不受表单中途修改影响
+  if (isRetryMode.value) {
+    isSubmitting.value = true
+    failureMessage.value = ''
+    const retryPayloads = [...failedPayloadSnapshots.value]
+    const batchResult = await controller.createBatchTasks(retryPayloads)
+    isSubmitting.value = false
+
+    if (batchResult.failures.length === 0) {
+      resetFailedState()
+      createOpen.value = false
+      detailOpen.value = false
+      historyPage.value = 1
+    } else {
+      failedKeywords.value = batchResult.failures.map((f) => f.keyword)
+      failedPayloadSnapshots.value = retryPayloads.filter((p) =>
+        failedKeywords.value.includes(p.keyword),
+      )
+      failureMessage.value = `重试仍有 ${failedKeywords.value.length} 个任务失败：${failedKeywords.value.join('、')}。已保留成功项。`
+    }
     return
   }
+
+  // 新建模式：合并当前已输入词并校验
+  form.keywordInput = keywordInput.value
+  const result = buildBatchCapturePayloads(form)
+  if (!result.ok) {
+    errors.value = result.errors
+    await nextTick()
+    const first = FIELD_ORDER.find((field) => result.errors[field])
+    if (first) focusField(first)
+    return
+  }
+
   errors.value = {}
   closeSuggest()
-  const ok = await controller.createTask(result.payload)
-  if (ok) {
-    // 成功创建后跳到第一页并保持选中新任务
+  keywordInput.value = ''
+  isSubmitting.value = true
+  failureMessage.value = ''
+
+  // 批量依次按词调用 CAPTURE_CREATE 命令
+  const batchResult = await controller.createBatchTasks(result.payloads)
+  isSubmitting.value = false
+
+  if (batchResult.failures.length === 0) {
+    // 全部成功：清空表单关键词，关闭弹窗，不自动打开详情
+    form.keywords = []
+    form.keyword = ''
+    failedKeywords.value = []
+    failedPayloadSnapshots.value = []
     historyPage.value = 1
     createOpen.value = false
-    detailOpen.value = true
+    detailOpen.value = false
+  } else {
+    // 部分或全部失败：保存失败 payload 快照与失败词，表单仅保留失败词供重试
+    failedKeywords.value = batchResult.failures.map((f) => f.keyword)
+    failedPayloadSnapshots.value = result.payloads.filter((p) =>
+      failedKeywords.value.includes(p.keyword),
+    )
+    form.keywords = [...failedKeywords.value]
+    failureMessage.value = `以下 ${failedKeywords.value.length} 个关键词创建失败：${failedKeywords.value.join('、')}。已保留成功任务，点击重试将仅提交失败项。`
+    detailOpen.value = false
   }
 }
 
 function formatTime(timestamp: number | null): string {
-  return timestamp ? formatFullTime(timestamp) : ''
+  return timestamp ? formatFullTime(timestamp) : '—'
 }
 
 async function runAction(kind: 'pause' | 'resume' | 'cancel', taskId: string): Promise<void> {
@@ -159,152 +369,168 @@ const statItems = [
           <button type="button" class="btn btn--primary" :disabled="!available" @click="createOpen = true"><PhPlus :size="18" />新建采集</button>
         </div>
       </div>
-      <AppModal :open="createOpen" title="新建采集" :busy="creating" @close="createOpen = false">
-      <p class="capture-note">请保持已登录的闲鱼页面打开。遇到验证码或登录失效时，任务会暂停并保留进度。</p>
-      <!-- 左栏：新建采集任务 -->
-      <PanelCard>
-        <form class="form" novalidate @submit.prevent="submit">
-          <!-- 关键词与流量词建议 -->
-          <div class="field suggest-field">
-            <div class="field__head">
-              <label class="field__label" for="capture-keyword">搜索关键词</label>
-              <span class="field__hint">输入后约 300ms 自动联想流量词</span>
-            </div>
-            <div class="input-with-button">
-              <input
-                id="capture-keyword"
-                v-model="form.keyword"
-                class="input"
-                type="text"
-                autocomplete="off"
-                role="combobox"
-                aria-autocomplete="list"
-                :aria-expanded="showSuggestDropdown"
-                aria-controls="capture-suggest-list"
-                :maxlength="CAPTURE_LIMITS.keywordMaxLength"
-                :disabled="!available"
-                :aria-invalid="errors.keyword ? 'true' : undefined"
-                :aria-describedby="errors.keyword ? 'capture-keyword-error' : undefined"
-                placeholder="例如：机械键盘、iPhone 15"
-                @input="onKeywordInput"
-                @keydown.esc="closeSuggest"
-              />
-              <button
-                type="button"
-                class="btn btn--sm btn-suggest"
-                :disabled="!available || !form.keyword.trim() || state.suggest.phase === 'loading'"
-                title="立即查询与当前关键词相关的流量词"
-                @click="onRequestSuggest"
+
+      <!-- 新建采集弹窗 -->
+      <AppModal :open="createOpen" title="新建采集" :busy="creating || isSubmitting" @close="createOpen = false">
+        <p class="capture-note">请保持已登录的闲鱼页面打开。遇到验证码或登录失效时，任务会暂停并保留进度。</p>
+        <PanelCard>
+          <form class="form" novalidate @submit.prevent="submit">
+            <!-- 桌面第 1 行：关键词标签输入与流量词建议 -->
+            <div class="field suggest-field">
+              <div class="field__head">
+                <label class="field__label" for="capture-keyword-input">
+                  搜索关键词（最多 {{ CAPTURE_LIMITS.maxKeywords }} 个）
+                </label>
+                <span class="field__hint">回车、逗号、顿号、换行分隔，支持批量添加</span>
+              </div>
+              <div class="tags-input-container" :class="{ 'tags-input-container--focused': inputFocused, 'tags-input-container--error': !!errors.keyword }">
+                <div v-if="form.keywords && form.keywords.length > 0" class="tags-list">
+                  <span v-for="(tag, idx) in form.keywords" :key="tag" class="tag-pill">
+                    <span class="tag-text">{{ tag }}</span>
+                    <button
+                      type="button"
+                      class="tag-remove"
+                      :aria-label="`删除关键词 ${tag}`"
+                      :disabled="!available || isSubmitting"
+                      @click.stop="removeTag(idx)"
+                    >
+                      <PhX :size="12" />
+                    </button>
+                  </span>
+                </div>
+                <div class="input-with-button">
+                  <input
+                    id="capture-keyword-input"
+                    v-model="keywordInput"
+                    class="input tag-input-element"
+                    type="text"
+                    autocomplete="off"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    :aria-expanded="showSuggestDropdown"
+                    aria-controls="capture-suggest-list"
+                    :aria-invalid="errors.keyword ? 'true' : undefined"
+                    :aria-describedby="errors.keyword ? 'capture-keyword-error' : undefined"
+                    :disabled="!available || isSubmitting || (Boolean(form.keywords && form.keywords.length >= CAPTURE_LIMITS.maxKeywords))"
+                    :placeholder="form.keywords && form.keywords.length > 0 ? (form.keywords.length >= CAPTURE_LIMITS.maxKeywords ? '已达20个词上限' : '继续添加关键词…') : '例如：机械键盘、iPhone 15（按回车或逗号分隔）'"
+                    @focus="inputFocused = true"
+                    @blur="onInputBlur"
+                    @input="onKeywordInput"
+                    @keydown.enter.prevent="onEnterKeydown"
+                    @keydown="onInputKeydown"
+                    @paste="onInputPaste"
+                  />
+                  <button
+                    type="button"
+                    class="btn btn--sm btn-suggest"
+                    :disabled="!available || !keywordInput.trim() || state.suggest.phase === 'loading' || isSubmitting"
+                    title="查询当前输入词的流量词建议"
+                    @click="onRequestSuggest"
+                  >
+                    {{ state.suggest.phase === 'loading' ? '查询中…' : '获取流量词' }}
+                  </button>
+                </div>
+              </div>
+              <span v-if="errors.keyword" id="capture-keyword-error" class="field__error" role="alert">{{ errors.keyword }}</span>
+
+              <!-- 流量词建议下拉面板：仅查询当前输入词 -->
+              <div
+                v-if="showSuggestDropdown && keywordInput.trim() !== ''"
+                class="suggest-dropdown"
+                role="region"
+                aria-label="流量词建议"
               >
-                {{ state.suggest.phase === 'loading' ? '查询中…' : '获取流量词' }}
-              </button>
-            </div>
-            <span v-if="errors.keyword" id="capture-keyword-error" class="field__error" role="alert">{{ errors.keyword }}</span>
+                <div class="suggest-dropdown__header">
+                  <span class="suggest-dropdown__title">“{{ keywordInput }}”的闲鱼流量词建议</span>
+                  <button type="button" class="suggest-dropdown__close" aria-label="关闭建议" title="关闭建议" @click="closeSuggest"><PhX :size="16" /></button>
+                </div>
 
-            <!-- 流量词建议下拉面板 -->
-            <div
-              v-if="showSuggestDropdown && form.keyword.trim() !== ''"
-              class="suggest-dropdown"
-              role="region"
-              aria-label="流量词建议"
-            >
-              <div class="suggest-dropdown__header">
-                <span class="suggest-dropdown__title">闲鱼流量词建议</span>
-                <button type="button" class="suggest-dropdown__close" aria-label="关闭建议" title="关闭建议" @click="closeSuggest"><PhX :size="16" /></button>
-              </div>
+                <div v-if="state.suggest.phase === 'loading'" class="suggest-status" role="status">
+                  <span class="suggest-spinner" aria-hidden="true"></span>
+                  <span>正在获取“{{ keywordInput }}”相关的流量词…</span>
+                </div>
 
-              <!-- loading -->
-              <div v-if="state.suggest.phase === 'loading'" class="suggest-status" role="status">
-                <span class="suggest-spinner" aria-hidden="true"></span>
-                <span>正在获取“{{ form.keyword }}”相关的流量词…</span>
-              </div>
+                <div v-else-if="state.suggest.phase === 'error'" class="suggest-error" role="alert">
+                  <span>{{ state.suggest.error?.title || '流量词获取失败' }}</span>
+                  <button type="button" class="btn btn--xs" @click="onRequestSuggest">重试</button>
+                </div>
 
-              <!-- error -->
-              <div v-else-if="state.suggest.phase === 'error'" class="suggest-error" role="alert">
-                <span>{{ state.suggest.error?.title || '流量词获取失败' }}</span>
-                <button type="button" class="btn btn--xs" @click="onRequestSuggest">重试</button>
-              </div>
+                <div v-else-if="state.suggest.phase === 'ok' && state.suggest.words.length === 0" class="suggest-empty">
+                  未找到与“{{ keywordInput }}”相关的流量词
+                </div>
 
-              <!-- empty -->
-              <div v-else-if="state.suggest.phase === 'ok' && state.suggest.words.length === 0" class="suggest-empty">
-                未找到与“{{ form.keyword }}”相关的流量词
-              </div>
-
-              <!-- ok 且有建议词 -->
-              <ul
-                v-else-if="state.suggest.phase === 'ok' && state.suggest.words.length > 0"
-                id="capture-suggest-list"
-                class="suggest-list"
-                role="listbox"
-              >
-                <li
-                  v-for="word in state.suggest.words"
-                  :key="word"
-                  class="suggest-item"
-                  role="option"
-                  tabindex="0"
-                  @click="onSelectSuggest(word)"
-                  @keydown.enter.prevent="onSelectSuggest(word)"
+                <ul
+                  v-else-if="state.suggest.phase === 'ok' && state.suggest.words.length > 0"
+                  id="capture-suggest-list"
+                  class="suggest-list"
+                  role="listbox"
                 >
-                  <span class="suggest-word">{{ word }}</span>
-                  <span class="suggest-tag">填入</span>
-                </li>
-              </ul>
+                  <li
+                    v-for="word in state.suggest.words"
+                    :key="word"
+                    class="suggest-item"
+                    role="option"
+                    tabindex="0"
+                    @click="onSelectSuggest(word)"
+                    @keydown.enter.prevent="onSelectSuggest(word)"
+                  >
+                    <span class="suggest-word">{{ word }}</span>
+                    <span class="suggest-tag">+ 追加标签</span>
+                  </li>
+                </ul>
 
-              <div class="suggest-footer">
-                <span class="suggest-footer__tip">点击建议词仅填入输入框，不会自动创建任务</span>
+                <div class="suggest-footer">
+                  <span class="suggest-footer__tip">点击建议词将作为新标签追加，不会自动创建任务</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="form-grid">
-            <div class="field">
-              <label class="field__label" for="capture-startPage">起始页</label>
-              <input
-                id="capture-startPage"
-                v-model="form.startPage"
-                class="input"
-                inputmode="numeric"
-                :disabled="!available"
-                :aria-invalid="errors.startPage ? 'true' : undefined"
-                :aria-describedby="errors.startPage ? 'capture-startPage-error' : undefined"
-              />
-              <span v-if="errors.startPage" id="capture-startPage-error" class="field__error" role="alert">{{ errors.startPage }}</span>
+            <!-- 桌面第 2 行：分页参数（3个数字字段） -->
+            <div class="form-row form-row--3">
+              <div class="field">
+                <label class="field__label" for="capture-startPage">起始页</label>
+                <input
+                  id="capture-startPage"
+                  v-model="form.startPage"
+                  class="input"
+                  inputmode="numeric"
+                  :disabled="!available || isSubmitting"
+                  :aria-invalid="errors.startPage ? 'true' : undefined"
+                  :aria-describedby="errors.startPage ? 'capture-startPage-error' : undefined"
+                />
+                <span v-if="errors.startPage" id="capture-startPage-error" class="field__error" role="alert">{{ errors.startPage }}</span>
+              </div>
+              <div class="field">
+                <label class="field__label" for="capture-pages">采集页数</label>
+                <input
+                  id="capture-pages"
+                  v-model="form.pages"
+                  class="input"
+                  inputmode="numeric"
+                  :disabled="!available || isSubmitting"
+                  :aria-invalid="errors.pages ? 'true' : undefined"
+                  :aria-describedby="errors.pages ? 'capture-pages-error' : 'capture-pages-hint'"
+                />
+                <span v-if="errors.pages" id="capture-pages-error" class="field__error" role="alert">{{ errors.pages }}</span>
+                <span v-else id="capture-pages-hint" class="field__hint">最多 {{ CAPTURE_LIMITS.maxPages }} 页</span>
+              </div>
+              <div class="field">
+                <label class="field__label" for="capture-rowsPerPage">每页数量</label>
+                <input
+                  id="capture-rowsPerPage"
+                  v-model="form.rowsPerPage"
+                  class="input"
+                  inputmode="numeric"
+                  :disabled="!available || isSubmitting"
+                  :aria-invalid="errors.rowsPerPage ? 'true' : undefined"
+                  :aria-describedby="errors.rowsPerPage ? 'capture-rowsPerPage-error' : undefined"
+                />
+                <span v-if="errors.rowsPerPage" id="capture-rowsPerPage-error" class="field__error" role="alert">{{ errors.rowsPerPage }}</span>
+              </div>
             </div>
-            <div class="field">
-              <label class="field__label" for="capture-pages">采集页数</label>
-              <input
-                id="capture-pages"
-                v-model="form.pages"
-                class="input"
-                inputmode="numeric"
-                :disabled="!available"
-                :aria-invalid="errors.pages ? 'true' : undefined"
-                :aria-describedby="errors.pages ? 'capture-pages-error' : 'capture-pages-hint'"
-              />
-              <span v-if="errors.pages" id="capture-pages-error" class="field__error" role="alert">{{ errors.pages }}</span>
-              <span v-else id="capture-pages-hint" class="field__hint">最多 {{ CAPTURE_LIMITS.maxPages }} 页</span>
-            </div>
-            <div class="field">
-              <label class="field__label" for="capture-rowsPerPage">每页数量</label>
-              <input
-                id="capture-rowsPerPage"
-                v-model="form.rowsPerPage"
-                class="input"
-                inputmode="numeric"
-                :disabled="!available"
-                :aria-invalid="errors.rowsPerPage ? 'true' : undefined"
-                :aria-describedby="errors.rowsPerPage ? 'capture-rowsPerPage-error' : undefined"
-              />
-              <span v-if="errors.rowsPerPage" id="capture-rowsPerPage-error" class="field__error" role="alert">{{ errors.rowsPerPage }}</span>
-            </div>
-          </div>
 
-          <details :open="filtersOpen" @toggle="filtersOpen = ($event.target as HTMLDetailsElement).open">
-          <summary class="filters-summary">过滤条件</summary>
-          <fieldset class="filters">
-            <legend class="filters__legend">过滤条件（留空表示不限制）</legend>
-            <div class="form-grid">
+            <!-- 桌面第 3 行：过滤行顺序调整为 最小想要人数、最低价格、最高价格（3个数字字段常显） -->
+            <div class="form-row form-row--3">
               <div class="field">
                 <label class="field__label" for="capture-minWantCnt">最小想要人数</label>
                 <input
@@ -312,7 +538,8 @@ const statItems = [
                   v-model="form.minWantCnt"
                   class="input"
                   inputmode="numeric"
-                  :disabled="!available"
+                  placeholder="不限"
+                  :disabled="!available || isSubmitting"
                   :aria-invalid="errors.minWantCnt ? 'true' : undefined"
                   :aria-describedby="errors.minWantCnt ? 'capture-minWantCnt-error' : undefined"
                 />
@@ -325,7 +552,8 @@ const statItems = [
                   v-model="form.minPrice"
                   class="input"
                   inputmode="decimal"
-                  :disabled="!available"
+                  placeholder="不限"
+                  :disabled="!available || isSubmitting"
                   :aria-invalid="errors.minPrice ? 'true' : undefined"
                   :aria-describedby="errors.minPrice ? 'capture-minPrice-error' : undefined"
                 />
@@ -338,63 +566,126 @@ const statItems = [
                   v-model="form.maxPrice"
                   class="input"
                   inputmode="decimal"
-                  :disabled="!available"
+                  placeholder="不限"
+                  :disabled="!available || isSubmitting"
                   :aria-invalid="errors.maxPrice ? 'true' : undefined"
                   :aria-describedby="errors.maxPrice ? 'capture-maxPrice-error' : undefined"
                 />
                 <span v-if="errors.maxPrice" id="capture-maxPrice-error" class="field__error" role="alert">{{ errors.maxPrice }}</span>
               </div>
             </div>
-            <label class="check-row">
-              <input v-model="form.onlyFreeShip" type="checkbox" :disabled="!available" />
-              <span>仅包邮商品</span>
-            </label>
-          </fieldset>
-          </details>
 
-          <div class="field">
-            <label class="check-row">
-              <input v-model="form.fetchDetail" type="checkbox" :disabled="!available" aria-describedby="capture-detail-hint" />
-              <span>同时采集商品详情（浏览量、卖家等）</span>
-            </label>
-            <span id="capture-detail-hint" class="field__hint">每个商品会额外发起一次详情请求，耗时相对更长。默认关闭。</span>
-          </div>
+            <!-- 桌面第 4 行：基础间隔与随机增量（非负秒数，默认0.5/0.5，2个数字字段） -->
+            <div class="form-row form-row--2">
+              <div class="field">
+                <label class="field__label" for="capture-baseIntervalSec">基础间隔（秒）</label>
+                <input
+                  id="capture-baseIntervalSec"
+                  v-model="form.baseIntervalSec"
+                  class="input"
+                  inputmode="decimal"
+                  placeholder="默认 0.5"
+                  :disabled="!available || isSubmitting"
+                  :aria-invalid="errors.baseIntervalSec ? 'true' : undefined"
+                  :aria-describedby="errors.baseIntervalSec ? 'capture-baseIntervalSec-error' : 'capture-baseIntervalSec-hint'"
+                />
+                <span v-if="errors.baseIntervalSec" id="capture-baseIntervalSec-error" class="field__error" role="alert">{{ errors.baseIntervalSec }}</span>
+                <span v-else id="capture-baseIntervalSec-hint" class="field__hint">单次请求基础间隔，默认 0.5 秒</span>
+              </div>
+              <div class="field">
+                <label class="field__label" for="capture-randomIntervalSec">随机增量（秒）</label>
+                <input
+                  id="capture-randomIntervalSec"
+                  v-model="form.randomIntervalSec"
+                  class="input"
+                  inputmode="decimal"
+                  placeholder="默认 0.5"
+                  :disabled="!available || isSubmitting"
+                  :aria-invalid="errors.randomIntervalSec ? 'true' : undefined"
+                  :aria-describedby="errors.randomIntervalSec ? 'capture-randomIntervalSec-error' : 'capture-randomIntervalSec-hint'"
+                />
+                <span v-if="errors.randomIntervalSec" id="capture-randomIntervalSec-error" class="field__error" role="alert">{{ errors.randomIntervalSec }}</span>
+                <span v-else id="capture-randomIntervalSec-hint" class="field__hint">单次请求随机浮动上限，默认 0.5 秒</span>
+              </div>
+            </div>
 
-          <Callout v-if="state.create.phase === 'failed' && state.create.error" tone="error" :view="state.create.error" />
-          <Callout v-else-if="state.create.phase === 'ok'" tone="ok">采集任务已创建并加入队列，历史记录已保留。</Callout>
-          <div v-if="hasActive && available" class="subtle-tip">
-            提示：当前有正在进行中的采集任务，后台具备限速队列保护，新任务创建后将有序执行。
-          </div>
+            <!-- 桌面第 5 行：只看包邮、采集详情开关与提交按钮同一行 -->
+            <div class="form-row form-row--bottom">
+              <div class="switches-group">
+                <label class="check-row">
+                  <input v-model="form.onlyFreeShip" type="checkbox" :disabled="!available || isSubmitting" />
+                  <span>仅包邮商品</span>
+                </label>
 
-          <div class="row">
-            <button type="submit" class="btn btn--primary" :disabled="submitDisabled">{{ submitLabel }}</button>
-          </div>
-        </form>
-      </PanelCard>
+                <div class="switch-with-info">
+                  <label class="check-row">
+                    <input v-model="form.fetchDetail" type="checkbox" :disabled="!available || isSubmitting" />
+                    <span>同时采集商品详情</span>
+                  </label>
+                  <div
+                    class="info-tooltip-wrapper"
+                    tabindex="0"
+                    role="note"
+                    aria-label="同时采集商品详情说明"
+                  >
+                    <PhInfo :size="16" class="info-icon" />
+                    <div class="tooltip-bubble" role="tooltip">
+                      关闭只获取商品封面图；开启会额外发起一次详情请求，耗时较长，可获取浏览量、想要数、卖家信息及全量商品图片URL。默认关闭。
+                    </div>
+                  </div>
+                </div>
+              </div>
 
+              <div class="submit-actions-group">
+                <button type="submit" class="btn btn--primary" :disabled="submitDisabled">{{ submitLabel }}</button>
+                <button
+                  v-if="failedKeywords.length > 0"
+                  type="button"
+                  class="btn btn--ghost"
+                  :disabled="submitDisabled"
+                  @click="resetFailedState"
+                >
+                  清空失败项
+                </button>
+              </div>
+            </div>
+
+            <!-- 异常与重试提示 -->
+            <Callout v-if="failureMessage" tone="error">
+              {{ failureMessage }}
+            </Callout>
+            <Callout v-else-if="state.create.phase === 'failed' && state.create.error" tone="error" :view="state.create.error" />
+            <Callout v-else-if="state.create.phase === 'ok' && !createOpen" tone="ok">采集任务已创建并加入队列，历史记录已保留。</Callout>
+            <div v-if="hasActive && available" class="subtle-tip">
+              提示：当前有正在进行中的采集任务，后台具备限速队列保护，新任务创建后将有序执行。
+            </div>
+          </form>
+        </PanelCard>
       </AppModal>
-      <!-- 任务列表 -->
+
+      <!-- 任务列表区域 -->
       <div class="history-column">
-        <!-- 任务历史列表卡片 -->
         <PanelCard title="任务列表" flush>
           <template #actions>
-            <StatusTag v-if="state.tasks.phase === 'ready'" mono>已加载 {{ views.length }} 条</StatusTag>
+            <StatusTag v-if="state.tasks.phase === 'ready'" mono>共 {{ views.length }} 条</StatusTag>
             <button
               type="button"
               class="btn btn--sm"
-              :disabled="!available || state.tasks.phase === 'loading' || state.tasks.refreshing"
+              :disabled="!available || state.tasks.refreshing"
               @click="controller.refresh()"
             >
-              {{ state.tasks.refreshing ? '刷新中…' : '刷新列表' }}
+              {{ state.tasks.refreshing ? '正在刷新…' : '刷新列表' }}
             </button>
           </template>
 
           <div v-if="!available" class="blank">
             <EmptyState title="未连接扩展" description="从扩展内页打开工作台后可查看采集任务。" />
           </div>
+
           <div v-else-if="state.tasks.phase === 'idle' || state.tasks.phase === 'loading'" class="blank" role="status">
-            <p class="muted">正在读取任务历史…</p>
+            <p class="muted">正在加载任务历史…</p>
           </div>
+
           <div v-else-if="state.tasks.phase === 'error'" class="blank">
             <Callout tone="error" :view="state.tasks.error">
               <template #actions>
@@ -402,36 +693,84 @@ const statItems = [
               </template>
             </Callout>
           </div>
+
           <div v-else-if="views.length === 0" class="blank">
             <EmptyState
-              title="暂无采集历史"
-              description="点击右上角「新建采集」创建任务。"
+              title="暂无采集任务"
+              description="点击右上角「新建采集」发起第一次采集。"
             />
           </div>
 
           <div v-else class="history-content">
-            <ul class="list" aria-label="采集任务历史列表">
-              <li v-for="view in pagedViews" :key="view.id">
-                <button
-                  type="button"
-                  class="list__row"
-                  :class="{ 'list__row--active': view.id === state.selectedId }"
-                  :aria-current="view.id === state.selectedId ? 'true' : undefined"
-                  @click="controller.select(view.id); detailOpen = true"
-                >
-                  <span class="list__main">
-                    <span class="list__keyword">{{ view.keyword || '（无关键词）' }}</span>
-                    <span class="list__time">{{ formatTime(view.createdAt) }}</span>
-                  </span>
-                  <span class="list__side">
-                    <span class="mono">{{ view.progress }}%</span>
-                    <StatusTag :tone="view.tone" :dot="view.status === 'running'" :pulse="view.status === 'running'">
-                      {{ view.statusLabel }}
-                    </StatusTag>
-                  </span>
-                </button>
-              </li>
-            </ul>
+            <!-- 任务列表表格：明确显示关键词、成功入库商品数量、耗时、状态，未启动/旧字段显示—，运行任务耗时每秒更新，行点击可打开详情，键盘可达 -->
+            <div class="tasks-table-wrapper">
+              <table class="tasks-table" aria-label="采集任务列表">
+                <thead>
+                  <tr>
+                    <th scope="col" class="th-keyword">关键词</th>
+                    <th scope="col" class="th-status">状态</th>
+                    <th scope="col" class="th-progress">进度</th>
+                    <th scope="col" class="th-valid">成功入库</th>
+                    <th scope="col" class="th-duration">耗时</th>
+                    <th scope="col" class="th-time">创建时间</th>
+                    <th scope="col" class="th-actions">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="view in pagedViews"
+                    :key="view.id"
+                    class="task-row"
+                    :class="{ 'task-row--active': view.id === state.selectedId }"
+                    tabindex="0"
+                    role="button"
+                    :aria-label="`查看任务详情：${view.keyword || '无关键词'}`"
+                    @click="openTaskDetail(view.id)"
+                    @keydown.enter.prevent="openTaskDetail(view.id)"
+                    @keydown.space.prevent="openTaskDetail(view.id)"
+                  >
+                    <td class="td-keyword">
+                      <div class="keyword-cell">
+                        <span class="keyword-text" :title="view.keyword">{{ view.keyword || '—' }}</span>
+                        <span v-if="view.fetchDetail" class="detail-badge" title="同时采集详情">含详情</span>
+                      </div>
+                    </td>
+                    <td class="td-status">
+                      <StatusTag :tone="view.tone" :dot="view.status === 'running'" :pulse="view.status === 'running'">
+                        {{ view.statusLabel }}
+                      </StatusTag>
+                    </td>
+                    <td class="td-progress">
+                      <div class="progress-cell">
+                        <span class="mono">{{ view.progress }}%</span>
+                        <span v-if="view.pagesCompleted !== null && view.totalPages !== null" class="progress-sub muted">
+                          ({{ view.pagesCompleted }}/{{ view.totalPages }}页)
+                        </span>
+                      </div>
+                    </td>
+                    <td class="td-valid mono">
+                      {{ formatTaskValidCount(view) }}
+                    </td>
+                    <td class="td-duration mono">
+                      {{ formatTaskDuration(view, nowTick) }}
+                    </td>
+                    <td class="td-time muted">
+                      {{ formatTime(view.createdAt) }}
+                    </td>
+                    <td class="td-actions">
+                      <button
+                        type="button"
+                        class="btn btn--xs"
+                        title="查看任务详情"
+                        @click.stop="openTaskDetail(view.id)"
+                      >
+                        查看详情
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
             <!-- 分页与加载更多栏 -->
             <div class="pagination-bar">
@@ -473,123 +812,126 @@ const statItems = [
           </div>
         </PanelCard>
 
-        <!-- 选中任务详情卡片 -->
+        <!-- 选中任务详情弹窗：保留查看详情与控制操作 -->
         <AppModal :open="detailOpen" title="采集详情" @close="detailOpen = false">
-        <PanelCard>
-          <div v-if="!available" class="blank">
-            <p class="muted">未连接扩展，详情不可用。</p>
-          </div>
-          <div v-else-if="!selected" class="blank">
-            <EmptyState
-              title="未选择任务"
-              description="请在上方历史列表中点击选择任意一条任务查看其实时进度与详细统计。"
-            />
-          </div>
-          <div v-else class="task">
-            <Callout v-if="state.tasks.error" tone="warn" :view="state.tasks.error" />
-
-            <div class="task__head">
-              <div class="task__title">
-                <h3 class="task__keyword">{{ selected.keyword || '（无关键词）' }}</h3>
-                <StatusTag :tone="selected.tone" :dot="selected.status === 'running'" :pulse="selected.status === 'running'">
-                  {{ selected.statusLabel }}
-                </StatusTag>
-                <StatusTag v-if="selected.fetchDetail">含详情</StatusTag>
-              </div>
-              <p class="muted">
-                任务 ID: <code class="mono">{{ selected.id }}</code> ·
-                创建于 <time :datetime="isoTime(selected.createdAt)">{{ formatTime(selected.createdAt) }}</time>
-                <template v-if="selected.endedAt"> · 结束于 <time :datetime="isoTime(selected.endedAt)">{{ formatTime(selected.endedAt) }}</time></template>
-              </p>
+          <PanelCard>
+            <div v-if="!available" class="blank">
+              <p class="muted">未连接扩展，详情不可用。</p>
             </div>
-
-            <!-- 进度条与断点 -->
-            <div class="task__progress">
-              <ProgressBar
-                :value="selected.progress"
-                :label="`采集进度 ${selected.progress}%`"
-                :tone="selected.status === 'failed' ? 'error' : selected.status === 'completed' ? 'ok' : selected.status === 'paused' ? 'warn' : 'accent'"
+            <div v-else-if="!selected" class="blank">
+              <EmptyState
+                title="未选择任务"
+                description="在左侧历史列表中点击任一条目以查看断点和统计。"
               />
-              <p class="task__meta">
-                <span class="mono">{{ selected.progress }}%</span>
-                <span v-if="selected.pagesCompleted !== null && selected.totalPages !== null">
-                  已完成 {{ selected.pagesCompleted }} / {{ selected.totalPages }} 页
-                </span>
-                <span v-else>页数进度：后台尚未上报</span>
-                <span v-if="selected.nextPage !== null && selected.status !== 'completed'">
-                  下一待采集页：第 {{ selected.nextPage }} 页
-                </span>
-              </p>
             </div>
-
-            <!-- 统计网格（如实展示） -->
-            <dl v-if="selected.stats" class="stats">
-              <div v-for="item in statItems" :key="item.key" class="stats__item">
-                <dt>{{ item.label }}</dt>
-                <dd class="mono">{{ selected.stats[item.key] }}</dd>
+            <div v-else class="task">
+              <Callout v-if="state.tasks.error" tone="warn" :view="state.tasks.error" />
+              <div class="task__head">
+                <div class="task__title">
+                  <h3 class="task__keyword">{{ selected.keyword || '（无关键词）' }}</h3>
+                  <StatusTag :tone="selected.tone" :dot="selected.status === 'running'" :pulse="selected.status === 'running'">
+                    {{ selected.statusLabel }}
+                  </StatusTag>
+                  <StatusTag v-if="selected.fetchDetail" tone="info">含详情</StatusTag>
+                </div>
+                <p class="muted">
+                  任务 ID <code class="mono">{{ selected.id }}</code> · 创建于
+                  <time :datetime="isoTime(selected.createdAt)">{{ formatTime(selected.createdAt) }}</time>
+                  <template v-if="selected.endedAt">
+                    · 结束于 <time :datetime="isoTime(selected.endedAt)">{{ formatTime(selected.endedAt) }}</time>
+                  </template>
+                </p>
               </div>
-            </dl>
-            <p v-else class="muted">统计：后台尚未上报（首页采集完成后呈现）。</p>
 
-            <!-- 异常与提示说明 -->
-            <Callout v-if="selected.problem" :tone="selected.status === 'failed' ? 'error' : 'warn'" :view="selected.problem" />
-            <p v-if="selected.note" class="muted">{{ selected.note }}</p>
-            <p v-if="selected.status === 'paused' && !selected.problem" class="muted">
-              任务已暂停，断点已保留；点击「恢复采集」会从下一页继续执行。
-            </p>
-            <p v-if="selected.status === 'completed'" class="muted">
-              采集完成，商品已入库。
-              <button type="button" class="link" @click="emit('navigate', 'products')">前往商品库查看</button>
-            </p>
+              <!-- 进度与断点页数 -->
+              <div class="task__progress">
+                <ProgressBar
+                  :value="selected.progress"
+                  label="采集任务进度"
+                  :tone="selected.tone === 'ok' ? 'ok' : selected.tone === 'error' ? 'error' : selected.tone === 'warn' ? 'warn' : 'accent'"
+                />
+                <p class="task__meta">
+                  进度 <span class="mono">{{ selected.progress }}%</span>
+                  <span v-if="selected.pagesCompleted !== null && selected.totalPages !== null">
+                    · 已完成 <span class="mono">{{ selected.pagesCompleted }} / {{ selected.totalPages }}</span> 页
+                  </span>
+                  <span v-else>· 尚未获取页数</span>
+                  <span v-if="selected.nextPage !== null && selected.status !== 'completed'">
+                    · 断点页 <span class="mono">{{ selected.nextPage }}</span>
+                  </span>
+                </p>
+              </div>
 
-            <Callout v-if="selectedAction?.phase === 'failed' && selectedAction.error" tone="error" :view="selectedAction.error" />
+              <!-- 统计网格 -->
+              <dl v-if="selected.stats" class="stats">
+                <div v-for="item in statItems" :key="item.key" class="stats__item">
+                  <dt>{{ item.label }}</dt>
+                  <dd class="mono">{{ selected.stats[item.key] }}</dd>
+                </div>
+              </dl>
+              <p v-else class="muted">暂无结果统计</p>
 
-            <!-- 操作按钮栏 -->
-            <div v-if="selected.canPause || selected.canResume || selected.canCancel" class="row">
-              <button
-                v-if="selected.canPause"
-                type="button"
-                class="btn"
-                :disabled="selectedAction?.phase === 'running'"
-                @click="runAction('pause', selected.id)"
-              >
-                {{ selectedAction?.phase === 'running' && selectedAction.kind === 'pause' ? '暂停中…' : '暂停' }}
-              </button>
-              <button
-                v-if="selected.canResume"
-                type="button"
-                class="btn btn--primary"
-                :disabled="selectedAction?.phase === 'running'"
-                @click="runAction('resume', selected.id)"
-              >
-                {{ selectedAction?.phase === 'running' && selectedAction.kind === 'resume' ? '恢复中…' : '恢复采集' }}
-              </button>
-              <template v-if="selected.canCancel">
+              <!-- 问题说明（失败或暂停原因） -->
+              <Callout v-if="selected.problem" :tone="selected.status === 'failed' ? 'error' : 'warn'" :view="selected.problem" />
+              <p v-if="selected.note" class="muted">{{ selected.note }}</p>
+              <p v-if="selected.status === 'paused' && !selected.problem" class="muted">
+                任务已暂停，断点已保存。在闲鱼页面完成操作后点击「恢复」即可续跑。
+              </p>
+              <p v-if="selected.status === 'completed'" class="muted">
+                本轮采集已完成。可在
+                <button type="button" class="link" @click="emit('navigate', 'products')">商品库</button>
+                中查看。
+              </p>
+
+              <!-- 任务操作失败提示 -->
+              <Callout v-if="selectedAction?.phase === 'failed' && selectedAction.error" tone="error" :view="selectedAction.error" />
+
+              <!-- 操作按钮 -->
+              <div v-if="selected.canPause || selected.canResume || selected.canCancel" class="row">
                 <button
-                  v-if="confirmCancelId !== selected.id"
+                  v-if="selected.canPause"
                   type="button"
                   class="btn"
                   :disabled="selectedAction?.phase === 'running'"
-                  @click="confirmCancelId = selected.id"
+                  @click="runAction('pause', selected.id)"
                 >
-                  取消任务
+                  {{ selectedAction?.phase === 'running' ? '正在暂停…' : '暂停采集' }}
                 </button>
-                <template v-else>
-                  <span class="muted">取消后不可恢复，确认取消？</span>
+                <button
+                  v-if="selected.canResume"
+                  type="button"
+                  class="btn btn--primary"
+                  :disabled="selectedAction?.phase === 'running'"
+                  @click="runAction('resume', selected.id)"
+                >
+                  {{ selectedAction?.phase === 'running' ? '正在恢复…' : '恢复采集' }}
+                </button>
+                <template v-if="selected.canCancel">
                   <button
+                    v-if="confirmCancelId !== selected.id"
                     type="button"
-                    class="btn btn--danger"
+                    class="btn btn--ghost"
                     :disabled="selectedAction?.phase === 'running'"
-                    @click="runAction('cancel', selected.id)"
+                    @click="confirmCancelId = selected.id"
                   >
-                    {{ selectedAction?.phase === 'running' && selectedAction.kind === 'cancel' ? '取消中…' : '确认取消' }}
+                    取消任务
                   </button>
-                  <button type="button" class="btn btn--ghost" @click="confirmCancelId = null">返回</button>
+                  <template v-else>
+                    <span class="muted">确定取消该任务？</span>
+                    <button
+                      type="button"
+                      class="btn btn--danger"
+                      :disabled="selectedAction?.phase === 'running'"
+                      @click="runAction('cancel', selected.id)"
+                    >
+                      确认取消
+                    </button>
+                    <button type="button" class="btn btn--ghost" @click="confirmCancelId = null">返回</button>
+                  </template>
                 </template>
-              </template>
+              </div>
             </div>
-          </div>
-        </PanelCard>
+          </PanelCard>
         </AppModal>
       </div>
     </div>
@@ -598,7 +940,6 @@ const statItems = [
 
 <style scoped>
 .capture-note { margin-bottom: 16px; font-size: 13px; color: var(--text-muted); }
-.filters-summary { cursor: pointer; padding: 6px 0; color: var(--text-muted); font-size: 13px; }
 
 .layout {
   display: grid;
@@ -620,24 +961,43 @@ const statItems = [
   gap: 14px;
 }
 
-.filters {
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-control);
-  padding: 10px 14px 12px;
-  margin: 0;
+/* 桌面五行布局与栅格自适应 */
+.form-row--3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.form-row--2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.form-row--bottom {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  padding-top: 4px;
+}
+
+.switches-group {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.submit-actions-group {
+  display: flex;
+  align-items: center;
   gap: 10px;
 }
 
-.filters__legend {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  padding: 0 4px;
-}
-
-/* 关键词与流量词输入群组 */
+/* 关键词与标签输入群组 */
 .suggest-field {
   position: relative;
 }
@@ -646,7 +1006,76 @@ const statItems = [
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+.tags-input-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  padding: 8px 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tags-input-container--focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.tags-input-container--error {
+  border-color: var(--danger, #ef4444);
+}
+
+.tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.tag-text {
+  word-break: break-all;
+}
+
+.tag-remove {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  border-radius: 2px;
+}
+
+.tag-remove:hover {
+  color: var(--danger, #ef4444);
+}
+
+.tag-input-element {
+  border: none !important;
+  box-shadow: none !important;
+  padding-left: 2px !important;
+  background: transparent !important;
+}
+
+.tag-input-element:focus {
+  outline: none !important;
 }
 
 .input-with-button {
@@ -661,6 +1090,59 @@ const statItems = [
 
 .btn-suggest {
   flex-shrink: 0;
+}
+
+/* 详情开关与悬浮/键盘 Tooltip */
+.switch-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.info-tooltip-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+  color: var(--text-muted);
+  outline: none;
+  border-radius: 50%;
+  padding: 2px;
+}
+
+.info-tooltip-wrapper:hover,
+.info-tooltip-wrapper:focus-visible {
+  color: var(--accent-text);
+}
+
+.info-tooltip-wrapper .tooltip-bubble {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-raised, #222);
+  color: var(--text-inverse, #fff);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  width: 260px;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  z-index: 50;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.info-tooltip-wrapper:hover .tooltip-bubble,
+.info-tooltip-wrapper:focus .tooltip-bubble,
+.info-tooltip-wrapper:focus-visible .tooltip-bubble {
+  opacity: 1;
+  visibility: visible;
 }
 
 /* 流量词下拉建议面板 */
@@ -682,29 +1164,27 @@ const statItems = [
 
 .suggest-dropdown__header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
   background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border);
 }
 
 .suggest-dropdown__title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .suggest-dropdown__close {
   background: transparent;
   border: none;
-  font-size: 12px;
   cursor: pointer;
   color: var(--text-muted);
-  padding: 2px 4px;
-  border-radius: 4px;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 3px;
 }
 
 .suggest-dropdown__close:hover {
@@ -715,17 +1195,18 @@ const statItems = [
 .suggest-status,
 .suggest-empty,
 .suggest-error {
-  padding: 12px 14px;
-  font-size: 12.5px;
+  padding: 16px;
+  font-size: 13px;
   color: var(--text-muted);
+  text-align: center;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
 }
 
 .suggest-error {
-  color: var(--error);
-  justify-content: space-between;
+  color: var(--danger, #ef4444);
 }
 
 .suggest-spinner {
@@ -734,37 +1215,35 @@ const statItems = [
   border: 2px solid var(--border);
   border-top-color: var(--accent);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: suggest-spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+@keyframes suggest-spin {
+  to { transform: rotate(360deg); }
 }
 
 .suggest-list {
   list-style: none;
-  margin: 0;
   padding: 4px 0;
+  margin: 0;
   overflow-y: auto;
-  max-height: 180px;
+  max-height: 200px;
 }
 
 .suggest-item {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: 7px 12px;
+  align-items: center;
+  padding: 8px 14px;
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  outline: none;
+  transition: background-color 0.12s ease;
 }
 
 .suggest-item:hover,
 .suggest-item:focus-visible {
-  background: var(--surface-sunken);
-  outline: none;
+  background: var(--accent-soft);
 }
 
 .suggest-word {
@@ -775,15 +1254,16 @@ const statItems = [
 .suggest-tag {
   font-size: 11px;
   color: var(--accent-text);
-  background: var(--accent-soft);
-  padding: 2px 6px;
-  border-radius: 4px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 3px;
 }
 
 .suggest-footer {
   padding: 6px 12px;
-  border-top: 1px solid var(--border);
   background: var(--surface-sunken);
+  border-top: 1px solid var(--border);
 }
 
 .suggest-footer__tip {
@@ -795,20 +1275,23 @@ const statItems = [
   font-size: 12px;
   color: var(--text-muted);
   background: var(--surface-sunken);
-  border: 1px solid var(--border);
+  padding: 8px 12px;
   border-radius: var(--radius-control);
-  padding: 6px 10px;
+  border: 1px solid var(--border);
 }
 
 .blank {
-  padding: 18px 14px;
+  padding: 24px 16px;
+  text-align: center;
 }
 
 .muted {
-  font-size: 12.5px;
   color: var(--text-muted);
+  font-size: 12px;
+  margin: 0;
 }
 
+/* 详情弹窗 */
 .task {
   display: flex;
   flex-direction: column;
@@ -829,8 +1312,9 @@ const statItems = [
 }
 
 .task__keyword {
-  font-size: 15px;
-  font-weight: 650;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .task__progress {
@@ -840,12 +1324,9 @@ const statItems = [
 }
 
 .task__meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
+  margin: 0;
   font-size: 12px;
   color: var(--text-muted);
-  flex-wrap: wrap;
 }
 
 .stats {
@@ -894,127 +1375,142 @@ const statItems = [
   flex-direction: column;
 }
 
-.list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.list > li + li {
-  border-top: 1px solid var(--border);
-}
-
-.list__row {
+/* 列表表格 */
+.tasks-table-wrapper {
   width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 18px;
-  background: transparent;
-  border: none;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 0.12s ease;
+  overflow-x: auto;
 }
 
-.list__row:hover {
+.tasks-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+.tasks-table th {
+  padding: 10px 14px;
+  color: var(--text-muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  white-space: nowrap;
+}
+
+.tasks-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.task-row {
+  transition: background-color 0.12s ease;
+  cursor: pointer;
+  outline: none;
+}
+
+.task-row:hover {
   background: var(--surface-sunken);
 }
 
-.list__row--active,
-.list__row--active:hover {
-  background: var(--accent-soft);
-  position: relative;
-}
-
-.list__row--active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--accent);
-}
-
-.list__row:focus-visible {
-  outline: 2px solid var(--focus);
+.task-row:focus-visible {
+  outline: 2px solid var(--focus, #3b82f6);
   outline-offset: -2px;
 }
 
-.list__main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+.task-row--active {
+  background: var(--accent-soft);
 }
 
-.list__keyword {
+.keyword-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.keyword-text {
   font-weight: 600;
-  font-size: 13.5px;
+  color: var(--text);
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.list__time {
-  font-size: 11.5px;
+.detail-badge {
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.list__side {
+.progress-cell {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: none;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.progress-sub {
+  font-size: 11px;
 }
 
 .pagination-bar {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: 8px 18px;
+  align-items: center;
+  padding: 10px 16px;
   border-top: 1px solid var(--border);
-  background: var(--surface-sunken);
   font-size: 12px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .pagination-info {
-  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .pagination-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 8px;
 }
-.pagination-actions .input { width: auto; min-height: 28px; font-size: 12px; }
+
+.pagination-actions .input {
+  font-size: 12px;
+  padding: 2px 6px;
+  height: 28px;
+}
 
 .btn--xs {
-  min-height: 24px;
-  padding: 0 8px;
-  font-size: 11.5px;
+  font-size: 11px;
+  padding: 3px 8px;
+  height: 26px;
 }
 
-@media (max-width: 1099px) {
-  .layout {
+/* 窄屏自适应断点：数字字段换行 */
+@media (max-width: 680px) {
+  .form-row--3 {
     grid-template-columns: 1fr;
   }
-}
-
-@media (max-width: 599px) {
-  .stats {
-    grid-template-columns: repeat(2, 1fr);
+  .form-row--2 {
+    grid-template-columns: 1fr;
   }
-  .list__row {
-    padding: 10px 14px;
+  .form-row--bottom {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .submit-actions-group {
+    justify-content: flex-end;
   }
   .pagination-bar {
     flex-direction: column;
-    gap: 8px;
-    align-items: flex-start;
+    align-items: stretch;
   }
 }
 </style>

@@ -334,6 +334,64 @@ export class CaptureController extends StateStore<CaptureState> {
     }
   }
 
+  /**
+   * 批量创建采集任务：按词依次调用现有 CAPTURE_CREATE 命令。
+   * 成功即进入列表，防重复提交；部分失败时保留已成功任务，并汇总失败项供重试。
+   */
+  async createBatchTasks(payloads: readonly CapturePayload[]): Promise<{
+    successes: Task[]
+    failures: Array<{ keyword: string; error: ErrorView }>
+  }> {
+    const api = this.api
+    if (this.disposed || !api || this.state.create.phase === 'running' || payloads.length === 0) {
+      return { successes: [], failures: [] }
+    }
+    this.patch({ create: { phase: 'running', error: null, createdId: null } })
+    const successes: Task[] = []
+    const failures: Array<{ keyword: string; error: ErrorView }> = []
+
+    for (const payload of payloads) {
+      if (this.disposed) break
+      try {
+        const result = await api.call(CommandTypes.CAPTURE_CREATE, payload)
+        if (!isRecord(result) || !isTask(result.task)) throw new Error(BAD_SHAPE)
+        this.upsertTask(result.task)
+        this.userSelected = true
+        this.patch({ selectedId: result.task.id })
+        successes.push(result.task)
+      } catch (error) {
+        failures.push({
+          keyword: payload.keyword,
+          error: toErrorView(error),
+        })
+      }
+    }
+
+    if (this.disposed) return { successes, failures }
+
+    if (failures.length === 0) {
+      const lastId = successes[successes.length - 1]?.id ?? null
+      this.patch({
+        create: { phase: 'ok', error: null, createdId: lastId },
+      })
+    } else {
+      const failedWords = failures.map((f) => f.keyword).join('、')
+      const firstError = failures[0].error
+      const summaryError: ErrorView = {
+        title: failures.length === payloads.length ? '全部任务创建失败' : '部分任务创建失败',
+        detail: `失败关键词：${failedWords}。${firstError.detail || firstError.title}`,
+        code: firstError.code,
+        kind: 'platform',
+        hint: '已成功的任务已进入列表，可直接点击“重试失败项”重新提交。',
+      }
+      this.patch({
+        create: { phase: 'failed', error: summaryError, createdId: null },
+      })
+    }
+
+    return { successes, failures }
+  }
+
   /** 暂停 / 恢复 / 取消。同一任务有操作进行中时忽略。 */
   async act(kind: TaskActionKind, taskId: string): Promise<boolean> {
     const api = this.api

@@ -50,6 +50,19 @@ test('buildMtopRequest：URL 参数、签名与请求体与旧实现一致', () 
   assert.ok(plan.url.startsWith(MTOP_API_CONFIG.detail.baseUrl + '?'))
 })
 
+test('buildMtopRequest：myOnSaleItems 使用真实接口与 spm 埋点参数，签名只针对 body data', () => {
+  const data = { needGroupInfo: true, pageNumber: 1, userId: 'u1', pageSize: 20, defaultGroup: true }
+  const plan = buildMtopRequest('myOnSaleItems', data, { token: 'tok', timestamp: '1700000000000' })
+
+  assert.equal(plan.urlParams.api, 'mtop.idle.web.xyh.item.list')
+  assert.equal(plan.urlParams.spm_cnt, 'a21ybx.personal.0.0')
+  assert.equal(plan.urlParams.spm_pre, 'a21ybx.home.nav.1')
+  assert.ok(plan.url.startsWith(MTOP_API_CONFIG.myOnSaleItems.baseUrl + '?'))
+  // 额外 URL 参数不影响签名（签名只对 body data）。
+  assert.equal(plan.sign.signString, `tok&1700000000000&34839810&${JSON.stringify(data)}`)
+  assert.equal(plan.body, 'data=' + encodeURIComponent(JSON.stringify(data)))
+})
+
 test('buildMtopRequest：URL 参数顺序与旧实现一致', () => {
   const plan = buildMtopRequest('search', { keyword: 'k' }, { token: 'tok', timestamp: '1' })
   const keys = [...new URL(plan.url).searchParams.keys()]

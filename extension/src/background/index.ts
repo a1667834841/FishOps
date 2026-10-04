@@ -1,3 +1,5 @@
+import { createDailyCaptureFeishuSync } from './capture-feishu-sync'
+import { captureDate } from '../../../shared/data-source/feishu-daily-tables'
 /**
  * MV3 background service worker 入口。
  *
@@ -8,6 +10,7 @@
  */
 import {
   createCommand,
+  startCommandTrace,
   createErrorResponse,
   createEvent,
   createResponse,
@@ -43,6 +46,12 @@ import { createMyUserIdResolver, type MyUserIdResolver } from './my-user-id'
 import { SessionChatPersistence } from '../chat/session-persistence'
 import { createBackgroundChatTransport, createChromeChatExecutor, type ChatScriptingApi } from '../chat/background-transport'
 import {
+  createBackgroundChatReadTransport,
+  createChromeChatReadExecutor,
+  type ChatReadScriptingApi,
+} from '../chat/background-read-transport'
+import { probeChatSocketInPage } from '../chat/socket-readiness'
+import {
   createChromeScriptExecutor,
   createPlatformHostClient,
   type ScriptingApi,
@@ -54,9 +63,15 @@ import { createProductRepository } from '../capture/repository'
 import type { CapturePlatform } from '../capture/controller'
 import { createAnalysisRuntime, type AnalysisRuntime } from './analysis-runtime'
 import { createFeishuWriteRuntime, type FeishuWriteRuntime } from './feishu-write-runtime'
-import { createFeishuSchemaRuntime, type FeishuSchemaRuntime } from './feishu-schema-runtime'
+import { createFeishuProductsRuntime, type FeishuProductsRuntime } from './feishu-products-runtime'
+import { createProductCatalogRuntime, type ProductCatalogRuntime } from './product-catalog-runtime'
 import { createReplyRuntime, type ReplyRuntime } from './reply-runtime'
 import { createPublishRuntime, type PublishRuntime } from './publish-runtime'
+import { createPublishedItemsReader } from './published-items-reader'
+import { installDirectPublishApiListener } from './direct-publish-api'
+
+// 独立发布通道仅接受扩展内页，不改变已有发布中心的命令和确认流程。
+installDirectPublishApiListener()
 import { ChatMessageSender } from '../chat/send-client'
 import { createBackgroundSendTransport, createChromeSendExecutor, type SendScriptingApi } from '../chat/send-background'
 import { AiChatService } from '../chat/ai-service'
@@ -271,6 +286,14 @@ function getRuntimeSession(): RuntimeSession | null {
       if (raw === undefined || raw === null) throw new Error('页面平台 host 未就绪')
     },
     fetchUserId: (force) => getMyUserIdResolver().get({ force }),
+    probeChatSocket: async (tabId) => {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: probeChatSocketInPage,
+      })
+      return results[0]?.result ?? null
+    },
   })
   tabs.onRemoved?.addListener((tabId) => session.handleTabRemoved(tabId))
   runtimeSession = session
@@ -295,15 +318,31 @@ function resolveChatTabId(): Promise<number | null> {
  * 1. 先解析 myUserId（`platform.currentUserId`，带超时与缓存）供方向判断；
  * 2. 再创建 runtime 并 await `init()` —— **init 完成前不返回实例**，
  *    调用方因此不会在缓存载入前 ingest 实时数据（避免旧缓存覆盖新帧）；
- * 3. init 失败时丢弃实例、清空 promise，并把错误抛出（不吞），下次调用可重建重试。
+ * 3. init 失败时丢弃实例、清空 promise，并把错误抛出（不吞），下次调用可重建重试；
+ * 4. 每次返回前都尝试把「当前可靠用户 ID」同步给运行时（修正首次组装时未就绪导致的
+ *    方向全 `in`）；命中 resolver 缓存时零成本，失败走退避窗口，不额外发请求。
  *
  * 不在此处校验 chrome.scripting：`CHAT_STATUS/LIST/GET` 只读本地 store，无需 MAIN world；
  * 仅 `CHAT_SYNC_*` 会触发 transport，缺失 scripting 时由 transport 返回结构化错误。
  */
 function getChatRuntime(): Promise<ChatRuntime> {
-  if (chatRuntime) return Promise.resolve(chatRuntime)
-  if (!chatRuntimePromise) chatRuntimePromise = createChatRuntimeInstance()
-  return chatRuntimePromise
+  const pending = chatRuntime ? Promise.resolve(chatRuntime) : (chatRuntimePromise ??= createChatRuntimeInstance())
+  return pending.then(async (runtime) => {
+    await syncChatRuntimeUserId(runtime)
+    return runtime
+  })
+}
+
+/**
+ * 把当前解析到的可靠登录用户 ID 同步给聊天运行时（含已缓存消息方向重新归一）。
+ *
+ * 只依赖 myUserId resolver 的缓存 / 退避，不额外发请求：成功缓存内直接命中，失败退避窗口内
+ * 立即返回失败。因此可安全地在每次取运行时前调用。**未拿到有效 ID 时保持原样，不猜方向。**
+ */
+async function syncChatRuntimeUserId(runtime: ChatRuntime): Promise<void> {
+  const outcome = await getMyUserIdResolver().get()
+  if (!outcome.ok) return
+  runtime.setMyUserId(outcome.userId)
 }
 
 async function createChatRuntimeInstance(): Promise<ChatRuntime> {
@@ -318,8 +357,15 @@ async function createChatRuntimeInstance(): Promise<ChatRuntime> {
     },
     resolveTabId: resolveChatTabId,
   })
+  // 已读独立写 transport：复用同一 goofish tab 解析，但走独立且仅含 clearRedPoint 的写路由白名单。
+  // 环境缺 chrome.scripting 时不注入，adapter 对 CHAT_MARK_READ 回 READ_UNAVAILABLE（不伪报成功）。
+  const readScripting = chrome.scripting as unknown as ChatReadScriptingApi | undefined
+  const readTransport = readScripting
+    ? createBackgroundChatReadTransport(createChromeChatReadExecutor(readScripting, resolveChatTabId))
+    : undefined
   const runtime = createChatRuntime({
     transport,
+    ...(readTransport === undefined ? {} : { readTransport }),
     persistence: new SessionChatPersistence(chrome.storage.session),
     ...(myUserId === undefined ? {} : { myUserId }),
   })
@@ -395,6 +441,9 @@ const capturePlatform: CapturePlatform = {
       pageNumber: params.pageNumber,
       rowsPerPage: params.rowsPerPage,
       ...(params.searchFilter === undefined ? {} : { searchFilter: params.searchFilter }),
+      // 采集搜索专用间隔：透传到 platform 调用链，替换全局固定 1500ms；非采集调用不携带。
+      ...(params.minIntervalMs === undefined ? {} : { minIntervalMs: params.minIntervalMs }),
+      ...(params.intervalJitterMs === undefined ? {} : { intervalJitterMs: params.intervalJitterMs }),
     })
   },
   detail: async (itemId) => {
@@ -423,6 +472,13 @@ function requirePlatform(): PlatformRouterDeps {
   return platform
 }
 
+/** 采集与飞书写入共用仓储，保证 IndexedDB 回退到内存时仍可读取已采集商品。 */
+let capturedProductRepository: ReturnType<typeof createProductRepository> | null = null
+const syncDailyCapturedProducts = createDailyCaptureFeishuSync({ feishuConfigStore: { load: () => getFeishuConfigStore().load(), save: (config) => getFeishuConfigStore().save(config), hasConfig: () => getFeishuConfigStore().hasConfig() } })
+function getCapturedProductRepository(): ReturnType<typeof createProductRepository> {
+  return capturedProductRepository ??= createProductRepository()
+}
+
 /** 单例采集运行时（init 成功后才赋值）。 */
 let captureRuntime: CaptureRuntime | null = null
 /** 进行中的组装 promise（并发去重）；init 失败时置空以便下次重建重试。 */
@@ -438,7 +494,8 @@ function getCaptureRuntime(): Promise<CaptureRuntime> {
 async function createCaptureRuntimeInstance(): Promise<CaptureRuntime> {
   const runtime = createCaptureRuntime({
     platform: capturePlatform,
-    repository: createProductRepository(),
+    repository: getCapturedProductRepository(),
+    syncProducts: (_itemIds, shouldContinue, products) => syncDailyCapturedProducts(products, shouldContinue),
     getCurrentUserId: resolveMyUserId,
     onEvent: (event) => {
       broadcast(event.type as EventType, event.payload)
@@ -507,7 +564,7 @@ function getFeishuWriteRuntime(): Promise<FeishuWriteRuntime> {
     try {
       feishuWriteRuntime = createFeishuWriteRuntime({
         feishuConfigStore: getFeishuConfigStore(),
-        repository: createProductRepository(),
+        repository: getCapturedProductRepository(),
       })
       feishuWriteRuntimePromise = Promise.resolve(feishuWriteRuntime)
       console.info('[FishOps:Background] 飞书商品写入层已接线（预览只读 / 执行需 confirm / 只写已配置商品表）')
@@ -519,25 +576,85 @@ function getFeishuWriteRuntime(): Promise<FeishuWriteRuntime> {
   return feishuWriteRuntimePromise
 }
 
-// ---- 飞书表字段同步（P7 后台）：惰性组装 ----
+// ---- 商品目录统一查询（P7 商品库）：惰性组装 ----
 
-/** 单例飞书表字段同步运行时。 */
-let feishuSchemaRuntime: FeishuSchemaRuntime | null = null
-let feishuSchemaRuntimePromise: Promise<FeishuSchemaRuntime> | null = null
+/** 单例商品目录运行时。 */
+let productCatalogRuntime: ProductCatalogRuntime | null = null
+let productCatalogRuntimePromise: Promise<ProductCatalogRuntime> | null = null
 
-function getFeishuSchemaRuntime(): Promise<FeishuSchemaRuntime> {
-  if (feishuSchemaRuntime) return Promise.resolve(feishuSchemaRuntime)
-  if (!feishuSchemaRuntimePromise) {
+function getProductCatalogRuntime(): Promise<ProductCatalogRuntime> {
+  if (productCatalogRuntime) return Promise.resolve(productCatalogRuntime)
+  if (!productCatalogRuntimePromise) {
     try {
-      feishuSchemaRuntime = createFeishuSchemaRuntime({ feishuConfigStore: getFeishuConfigStore() })
-      feishuSchemaRuntimePromise = Promise.resolve(feishuSchemaRuntime)
-      console.info('[FishOps:Background] 飞书字段同步层已接线（并集目标 / 预览只读 / 执行需 confirm / 不删字段）')
+      productCatalogRuntime = createProductCatalogRuntime({
+        platform: {
+          isAvailable: () => getPlatformRouterDeps() !== null,
+          currentUserId: async () => {
+            const platform = requirePlatform()
+            const result = (await platform.call(PlatformMethods.CURRENT_USER_ID, {})) as {
+              userId?: unknown
+            }
+            return typeof result?.userId === 'string' && result.userId.length > 0 ? result.userId : null
+          },
+          listOnSaleItems: async () => {
+            const platform = requirePlatform()
+            const result = (await platform.call(PlatformMethods.PUBLISHED_ITEMS, {})) as {
+              accountId?: unknown
+              items?: unknown
+            }
+            const accountId = typeof result?.accountId === 'string' ? result.accountId : ''
+            if (!accountId) throw new Error('官方在售读取未返回账号 ID')
+            const items = Array.isArray(result?.items)
+              ? result.items.filter(
+                  (item): item is Record<string, unknown> => typeof item === 'object' && item !== null,
+                )
+              : []
+            return { accountId, items }
+          },
+          detail: async (itemId) => {
+            const platform = requirePlatform()
+            return platform.call(PlatformMethods.DETAIL, { itemId })
+          },
+        },
+        feishu: {
+          cacheIdentity: async () => {
+            const config = await getFeishuConfigStore().load()
+            return config ? JSON.stringify([config, captureDate(Date.now())]) : null
+          },
+          page: (payload) => getFeishuProductsRuntime().then((runtime) => runtime.dailyPage(payload)),
+        },
+      })
+      productCatalogRuntimePromise = Promise.resolve(productCatalogRuntime)
+      console.info('[FishOps:Background] 商品目录层已接线（feishu / my_published 统一查询）')
     } catch (error) {
-      feishuSchemaRuntimePromise = null
+      productCatalogRuntimePromise = null
       return Promise.reject(error)
     }
   }
-  return feishuSchemaRuntimePromise
+  return productCatalogRuntimePromise
+}
+
+// ---- 飞书商品库分页浏览 / 单条读取（P7 商品库）：惰性组装 ----
+
+/** 单例飞书商品库运行时。 */
+let feishuProductsRuntime: FeishuProductsRuntime | null = null
+let feishuProductsRuntimePromise: Promise<FeishuProductsRuntime> | null = null
+
+function getFeishuProductsRuntime(): Promise<FeishuProductsRuntime> {
+  if (feishuProductsRuntime) return Promise.resolve(feishuProductsRuntime)
+  if (!feishuProductsRuntimePromise) {
+    try {
+      feishuProductsRuntime = createFeishuProductsRuntime({
+        feishuConfigStore: getFeishuConfigStore(),
+      })
+      feishuProductsRuntimePromise = Promise.resolve(feishuProductsRuntime)
+      console.info('[FishOps:Background] 飞书商品库分页层已接线（真实单次分页 / 只读已配置商品表 / 不返回密钥）')
+    } catch (error) {
+      feishuProductsRuntimePromise = null
+      return Promise.reject(error)
+    }
+  }
+  return feishuProductsRuntimePromise
 }
 
 // ---- 发布中心（P8）：惰性组装 ----
@@ -560,6 +677,7 @@ function getPublishRuntime(): Promise<PublishRuntime> {
 async function createPublishRuntimeInstance(): Promise<PublishRuntime> {
   const tabs = typeof chrome !== 'undefined' && chrome.tabs ? chrome.tabs : undefined
   const scripting = typeof chrome !== 'undefined' && chrome.scripting ? chrome.scripting : undefined
+  const cookies = typeof chrome !== 'undefined' && chrome.cookies ? chrome.cookies : undefined
 
   // 发布任务历史必须跨扩展 reload 保留：waiting_confirmation 断点若落在 chrome.storage.session，
   // 会在扩展 reload / 更新时被官方语义清空，导致 PUBLISH_LIST total=0。
@@ -571,6 +689,13 @@ async function createPublishRuntimeInstance(): Promise<PublishRuntime> {
     tasks,
     tabs: tabs as any,
     scripting: scripting as any,
+    // 飞书素材发布闭环：读取已配置商品表（真实 getRecord → 映射 Product）；密钥仅用于请求层。
+    feishuConfigStore: getFeishuConfigStore(),
+    // 官方「我的商品库」只读读取器：提交结果以官方在售商品数 +1 / 新 itemId 为唯一成功证据。
+    // 缺 cookies 能力时不接线：此时后台只能判 unknown，绝不报告 success。
+    ...(cookies
+      ? { publishedItems: createPublishedItemsReader({ cookies: cookies as never }) }
+      : {}),
     onEvent: (event) => {
       broadcast(event.type as EventType, event.payload)
     },
@@ -651,11 +776,15 @@ async function createReplyRuntimeInstance(): Promise<ReplyRuntime> {
     }),
   })
   const ai = new AiChatService({ loadProvider: () => configStore.loadAiProvider() })
+  // 复用 P5 ChatRuntime 的同一 store 实例：发送成功后由 P6 写入本地缓存（并 emit INGESTED / 会话更新），
+  // UI 无需再同步历史即可读到；getMessages 也只读同一缓存，保证读写一致。
+  const chatRuntime = await getChatRuntime()
   const runtime = createReplyRuntime({
     configStore,
     sender,
     ai,
     getMessages: readChatMessages,
+    sentMessageStore: chatRuntime.getStore(),
     ...(myUserId === undefined ? {} : { myUserId }),
     // 显式发送前准备后台运行时（tab + host + socket + 用户 ID）；自动模式 / 实时消息不经过此处。
     ensureReady: () => ensureChatRuntimePrepared({ force: true }),
@@ -859,6 +988,12 @@ async function ensureChatRuntimePrepared(options: {
 
   const result = await session.ensureChatRuntimeReady(options)
   if (result.ok) {
+    if (result.socketReady) {
+      // 页面快照确认 open 后同步缓存与订阅者，补偿 service worker 重启时丢失的状态事件。
+      const runtime = await getChatRuntime()
+      runtime.ingestSocketEvent({ event: 'open', at: Date.now() })
+      flushChatEvents()
+    }
     broadcastRuntimeStatus(result.tabCreated ? 'tab-created' : 'prepare-ok')
     return {
       ok: true,
@@ -947,6 +1082,19 @@ async function bootstrap(): Promise<void> {
 /** 向订阅了该事件的 Port 广播事件，返回投递数量。 */
 function broadcast(type: EventType, payload: unknown): number {
   const event = createEvent(type, payload)
+  if (type === EventTypes.TASK_CHANGED && payload && typeof payload === 'object') {
+    const task = (payload as { task?: { type?: unknown; status?: unknown; result?: unknown } }).task
+    const result = task?.result
+    const confirmedPublish =
+      task?.type === 'publish' &&
+      task.status === 'completed' &&
+      result !== null &&
+      typeof result === 'object' &&
+      (result as { confirmationStatus?: unknown }).confirmationStatus === 'confirmed'
+    if ((task?.type === 'capture' && task.status === 'completed') || confirmedPublish) {
+      refreshProductCatalogCaches(task?.type === 'capture' ? 'all' : 'my_published')
+    }
+  }
   let delivered = 0
   for (const [port, events] of subscribers) {
     if (!events.has(type)) continue
@@ -958,6 +1106,13 @@ function broadcast(type: EventType, payload: unknown): number {
     }
   }
   return delivered
+}
+
+/** 后台异步刷新商品库缓存，不要求 Workbench 页面保持打开。 */
+function refreshProductCatalogCaches(source: 'feishu' | 'my_published' | 'all'): void {
+  void getProductCatalogRuntime()
+    .then((runtime) => runtime.refreshCaches(source))
+    .catch((error: unknown) => console.warn('[FishOps:Background] 商品目录缓存刷新失败', error))
 }
 
 // ---- 事件长连接：Workbench 通过 chrome.runtime.connect 建立 ----
@@ -1001,17 +1156,23 @@ chrome.runtime.onConnect.addListener((port) => {
 // ---- 命令通道：Workbench 通过 chrome.runtime.sendMessage 发起 ----
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isCommandEnvelope(message)) return false
+  const finishTrace = startCommandTrace('background', message)
 
   // 聊天实时上报：只允许 goofish 页面的 content script，且需等 init 完成后按序 ingest，
   // 故保持端口打开（返回 true）并异步响应。
   if (message.type === CommandTypes.CHAT_SOCKET_EVENT) {
     // 非本扩展来源（其它扩展 / 外部页面）直接忽略，不响应，避免暴露扩展存在。
-    if (sender.id !== chrome.runtime.id) return false
+    if (sender.id !== chrome.runtime.id) {
+      finishTrace('rejected', 'INVALID_MESSAGE')
+      return false
+    }
     handleChatSocketEvent(message, sender)
       .then((accepted) => {
+        finishTrace(accepted ? 'success' : 'rejected')
         sendResponse(createResponse(message.requestId, message.type, { accepted }))
       })
       .catch((error: unknown) => {
+        finishTrace('error', 'INTERNAL')
         // init 失败或 ingest 出错：不吞错误，回 accepted=false 并记录。
         console.error('[FishOps:Background] 处理聊天实时事件失败', error)
         sendResponse(createResponse(message.requestId, message.type, { accepted: false }))
@@ -1021,7 +1182,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // 普通 Workbench 命令：只接受本扩展内页来源（chrome-extension://<本扩展 ID>/...），
   // 拒绝 content script 与外部页面（它们的 sender.id 同样是本扩展，光靠 id 校验不够）。
-  if (!isExtensionPageSender(sender, chrome.runtime.id)) return false
+  if (!isExtensionPageSender(sender, chrome.runtime.id)) {
+    finishTrace('rejected', 'INVALID_MESSAGE')
+    return false
+  }
 
   handleCommand(message, {
     now: () => Date.now(),
@@ -1070,7 +1234,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     feishuWrite: {
       handleCommand: (command) =>
         getFeishuWriteRuntime().then(
-          (runtime) => runtime.handleCommand(command),
+          async (runtime) => {
+            const response = await runtime.handleCommand(command)
+            const result = response.result as { createdCount?: unknown } | undefined
+            if (command.type === CommandTypes.FEISHU_PRODUCT_WRITE_EXECUTE && response.ok && Number(result?.createdCount) > 0) {
+              refreshProductCatalogCaches('feishu')
+            }
+            return response
+          },
           () =>
             createErrorResponse(command.requestId, command.type, {
               code: 'INTERNAL',
@@ -1079,14 +1250,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }),
         ),
     },
-    feishuSchema: {
+    feishuProducts: {
       handleCommand: (command) =>
-        getFeishuSchemaRuntime().then(
+        getFeishuProductsRuntime().then(
           (runtime) => runtime.handleCommand(command),
           () =>
             createErrorResponse(command.requestId, command.type, {
               code: 'INTERNAL',
-              message: '飞书字段同步层初始化失败',
+              message: '飞书商品库层初始化失败',
+            }),
+        ),
+    },
+    productCatalog: {
+      handleCommand: (command) =>
+        getProductCatalogRuntime().then(
+          (runtime) => runtime.handleCommand(command),
+          () =>
+            createErrorResponse(command.requestId, command.type, {
+              code: 'INTERNAL',
+              message: '商品目录层初始化失败',
             }),
         ),
     },
@@ -1152,11 +1334,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     },
   })
     .then((response) => {
+      finishTrace(response.ok ? 'success' : 'error', response.error?.code)
       flushChatEvents()
       flushReplyEvents()
       sendResponse(response)
     })
     .catch((error: unknown) => {
+      finishTrace('error', 'INTERNAL')
       console.error('[FishOps:Background] 处理命令失败', error)
       // 兜底：绝不 sendResponse(undefined)（客户端会判为 INVALID_MESSAGE）；
       // 统一回一个结构合法的 INTERNAL 响应，保证端口正常关闭。

@@ -239,7 +239,7 @@ export function createConfigRuntime(deps: ConfigRuntimeDeps): ConfigRuntime {
 
   /**
    * 保存飞书配置（PATCH 合并）。
-   * 合并后必需字段（appId / appSecret / spreadsheetToken / productTableId）不完整时返回 null，
+   * 合并后必需字段（appId / appSecret / spreadsheetToken）不完整时返回 null，
    * 由调用方回结构化错误，绝不写入半成品。
    */
   async function saveFeishu(patch: FeishuConfigSetPayload): Promise<FeishuConfigStatus | null> {
@@ -253,7 +253,7 @@ export function createConfigRuntime(deps: ConfigRuntimeDeps): ConfigRuntime {
     )
     const productTableId = patchString(current?.productTableId ?? '', 'productTableId' in patch, patch.productTableId)
     const sellerTableId = patchString(current?.sellerTableId ?? '', 'sellerTableId' in patch, patch.sellerTableId)
-    if (!appId || !appSecret || !spreadsheetToken || !productTableId) return null
+    if (!appId || !appSecret || !spreadsheetToken) return null
 
     const config: FeishuConfig = {
       appId,
@@ -301,7 +301,7 @@ export function createConfigRuntime(deps: ConfigRuntimeDeps): ConfigRuntime {
         try {
           const status = await saveFeishu(command.payload)
           if (!status) {
-            return invalid(command, '飞书配置不完整：需提供 appId / appSecret / spreadsheetToken / productTableId')
+            return invalid(command, '飞书配置不完整：需提供 appId / appSecret / spreadsheetToken')
           }
           return createResponse(command.requestId, command.type, status)
         } catch {

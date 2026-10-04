@@ -13,6 +13,7 @@
     "build": "npm run build:background && npm run build:content-isolated && npm run build:content-main && npm run build:content-platform && npm run build:content-chat",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:background": "node --import ./src/background/__tests__/register.mjs --test src/background/__tests__/*.test.ts",
+    "test:platform": "node --import ./src/platform/__tests__/register.mjs --test src/platform/__tests__/*.test.ts",
     "test:chat": "node --import ./src/chat/test/register.mjs --test src/chat/test/*.test.ts",
     "test:capture": "node --import ./src/capture/test/register.mjs --test src/capture/test/*.test.ts",
     "test:capture:smoke": "node ../scripts/capture-smoke.mjs",

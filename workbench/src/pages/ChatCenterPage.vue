@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { PhInfo, PhArrowsClockwise, PhWrench } from '@phosphor-icons/vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { PhArrowsClockwise, PhArrowSquareOut, PhStorefront, PhWrench } from '@phosphor-icons/vue'
 import ReplyComposer from '../components/chat/ReplyComposer.vue'
-import ReplyRulesPanel from '../components/chat/ReplyRulesPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PanelCard from '../components/PanelCard.vue'
 import StatusTag from '../components/StatusTag.vue'
+import { getAppBootstrapController } from '../composables/useAppBootstrap'
 import { useBridgeController } from '../composables/useBridgeController'
 import { useChatCenter } from '../composables/useChatCenter'
 import type { PageId } from '../data/navigation'
+import type { ChatMessage, Conversation } from '../features/chat/types'
 import type { SyncState } from '../features/chat/chat-center-controller'
 import {
   deriveItemContext,
@@ -16,24 +17,40 @@ import {
   formatFullTime,
   formatShortTime,
   isoTime,
+  messageAvatarUrl,
   messageDisplayText,
   messageKindLabel,
+  peerAvatarUrl,
   safeHttpsUrl,
-  socketStatusView,
 } from '../features/chat/chat-format'
 import { REPLY_EVENTS, ReplyController, type ReplyState } from '../features/reply/reply-controller'
 
 const emit = defineEmits<{ navigate: [page: PageId]; diagnostics: [] }>()
 
 const { state, controller } = useChatCenter()
+const appBootstrap = getAppBootstrapController()
+const bootstrapState = ref(appBootstrap.getState())
+let unsubscribeBootstrapState = (): void => {}
+let unsubscribeSync = (): void => {}
 
 const available = computed(() => state.value.availability === 'ready')
-const socketView = computed(() => socketStatusView(state.value.socketStatus))
+const markReadError = computed(() => state.value.markReadError)
 
 const conversations = computed(() => state.value.conversations)
 const selectedId = computed(() => state.value.selectedId)
 const selectedConversation = computed(
   () => conversations.value.items.find((item) => item.sessionId === selectedId.value) ?? null,
+)
+
+// 准备阶段可能先于聊天 socket 建立而失败；收到后续 open 事件时自动补一次准备与会话同步。
+watch(
+  () => state.value.socketStatus,
+  (status, previous) => {
+    const phase = bootstrapState.value.phase
+    if (status === 'open' && previous !== 'open' && phase !== 'ready' && phase !== 'preparing' && phase !== 'syncing') {
+      void appBootstrap.bootstrap(true)
+    }
+  },
 )
 
 /** 只展示属于当前选中会话的消息，防止切换瞬间出现上一个会话的内容。 */
@@ -44,6 +61,8 @@ const threadMessages = computed(() => {
 
 const itemContext = computed(() => deriveItemContext(selectedConversation.value, threadMessages.value))
 const peer = computed(() => derivePeer(selectedConversation.value, threadMessages.value))
+/** 当前会话头像：会话字段优先，回退到对方消息头像；两者都缺失时为 null，走字母 fallback。 */
+const peerAvatar = computed(() => peerAvatarUrl(selectedConversation.value, threadMessages.value))
 
 /**
  * P6 回复层（规则 / 建议 / 发送）使用独立控制器与独立 Bridge。
@@ -55,11 +74,41 @@ const { state: replyState, controller: replyController } = useBridgeController<R
   create: (api) => new ReplyController({ api }),
 })
 
-/** 会话 / 回复规则两个视图；用 v-show 保留规则草稿，切换标签不会丢失未保存的修改。 */
-const view = ref<'chat' | 'rules'>('chat')
-const contextOpen = ref(false)
+/**
+ * 记录加载失败的头像 URL（以 URL 为键，避免一个会话/消息失败波及其他头像）。
+ * 远程图片可能 404 或被拦截，失败后回退到字母头像，避免展示破损图标。
+ */
+const failedAvatars = ref<Record<string, boolean>>({})
+function markAvatarFailed(url: string | null): void {
+  if (!url) return
+  failedAvatars.value = { ...failedAvatars.value, [url]: true }
+}
 
-// 选择会话时把回复层绑定到该会话：旧会话的建议与发送结果作废，发送重新锁定。
+/** 会话头像：真实 URL 且该 URL 未加载失败时返回 URL，否则返回 null 走字母 fallback。 */
+function conversationAvatar(item: Conversation): string | null {
+  const url = safeHttpsUrl(item.peerAvatarUrl)
+  if (!url || failedAvatars.value[url]) return null
+  return url
+}
+
+/**
+ * 消息头像：仅对方消息展示。优先消息自身 senderAvatarUrl，
+ * 缺失时回退当前会话可信头像（会话字段优先），避免消息无头像时不显示。
+ */
+function bubbleAvatar(message: ChatMessage): string | null {
+  const url = messageAvatarUrl(message) ?? peerAvatar.value
+  if (!url || failedAvatars.value[url]) return null
+  return url
+}
+
+/** 买家栏头像：当前会话头像且未加载失败时展示，否则走字母 fallback。 */
+const contextbarAvatar = computed(() => {
+  const url = peerAvatar.value
+  if (!url || failedAvatars.value[url]) return null
+  return url
+})
+
+// 选择会话时把回复层绑定到该会话：旧会话的建议与发送结果作废。
 watch(selectedId, (id) => replyController.setSession(id), { immediate: true })
 
 // 发送成功后只刷新本地缓存，不向平台发起额外请求。
@@ -70,7 +119,22 @@ watch(
   },
 )
 
-const conversationSync = computed(() => state.value.conversationSync)
+// 自动同步完成后会话页读取最新本地缓存；若应用启动时同步失败，打开会话页时重试。
+onMounted(() => {
+  unsubscribeBootstrapState = appBootstrap.subscribe(() => {
+    bootstrapState.value = appBootstrap.getState()
+  })
+  unsubscribeSync = appBootstrap.onSyncCompleted(() => {
+    void controller.refresh()
+  })
+  if (appBootstrap.getState().phase !== 'ready') void appBootstrap.bootstrap(true)
+})
+
+onBeforeUnmount(() => {
+  unsubscribeSync()
+  unsubscribeBootstrapState()
+})
+
 /** 历史同步结果只在其所属会话下展示，切换会话后不串号。 */
 const historySync = computed<SyncState | null>(() => {
   const sync = state.value.historySync
@@ -119,77 +183,6 @@ watch(
 
 <template>
   <div class="page">
-    <div class="banner">
-      <div class="banner__head">
-        <template v-if="available">
-          <StatusTag :tone="socketView.tone" dot>{{ socketView.label }}</StatusTag>
-          <StatusTag v-if="state.status.data" mono>
-            本地缓存 {{ state.status.data.sessionCount }} 个会话 · {{ state.status.data.messageCount }} 条消息
-          </StatusTag>
-          <StatusTag v-else-if="state.status.phase === 'loading'" mono>正在读取状态…</StatusTag>
-          <StatusTag v-else-if="state.status.phase === 'error'" tone="error">状态读取失败</StatusTag>
-        </template>
-        <StatusTag v-else tone="warn">未连接扩展</StatusTag>
-        <span class="banner__spacer"></span>
-        <div class="row">
-          <button
-            v-if="available"
-            type="button"
-            class="btn btn--icon"
-            title="刷新本地缓存"
-            aria-label="刷新本地缓存"
-            :disabled="conversations.phase === 'loading' || conversations.refreshing"
-            @click="controller.refresh()"
-          >
-            <PhArrowsClockwise :size="18" />
-          </button>
-          <button
-            v-if="available"
-            type="button"
-            class="btn btn--sm btn--primary"
-            :disabled="conversationSync.phase === 'running'"
-            @click="controller.syncConversations()"
-          >
-            {{ conversationSync.phase === 'running' ? '同步会话中…' : '同步会话' }}
-          </button>
-          <button type="button" class="btn btn--icon" title="系统状态" aria-label="查看系统状态" @click="emit('diagnostics')"><PhWrench :size="18" /></button>
-        </div>
-      </div>
-      <details class="banner__text">
-        <summary>同步与发送说明</summary>
-        <p>
-        读取是只读的：「刷新本地缓存」只读取扩展内已有数据，「同步会话」「同步历史」才会通过已打开的闲鱼页面向平台拉取。回复区默认锁定，页面加载不会发送任何消息；只有你点击「启用发送」并点击发送按钮后才会发送，AI 建议也只在你点击「生成建议」时调用。
-        </p>
-      </details>
-      <p
-        v-if="conversationSync.phase !== 'idle'"
-        class="sync"
-        :class="{ 'sync--failed': conversationSync.phase === 'failed', 'sync--ok': conversationSync.phase === 'ok' }"
-        :role="conversationSync.phase === 'failed' ? 'alert' : 'status'"
-      >
-        {{ syncSummary(conversationSync, '会话') }}
-      </p>
-      <p v-if="state.status.phase === 'error' && state.status.error" class="sync sync--failed" role="alert">
-        读取聊天状态失败：{{ state.status.error }}
-      </p>
-      <p v-if="state.realtimeError" class="sync sync--warn" role="status">
-        {{ state.realtimeError }}（可手动点击「刷新本地缓存」）
-      </p>
-    </div>
-
-    <div v-if="available" class="views" role="group" aria-label="聊天中心视图">
-      <button type="button" class="btn btn--sm" :class="{ 'btn--primary': view === 'chat' }" :aria-pressed="view === 'chat'" @click="view = 'chat'">
-        会话与回复
-      </button>
-      <button type="button" class="btn btn--sm" :class="{ 'btn--primary': view === 'rules' }" :aria-pressed="view === 'rules'" @click="view = 'rules'">
-        回复规则
-      </button>
-    </div>
-
-    <button v-if="available && view === 'chat'" type="button" class="btn btn--sm context-toggle" :aria-expanded="contextOpen" @click="contextOpen = !contextOpen"><PhInfo :size="16" />买家与商品</button>
-
-    <ReplyRulesPanel v-if="available" v-show="view === 'rules'" :reply="replyState" :controller="replyController" />
-
     <PanelCard v-if="!available" flush>
       <EmptyState
         mark="!"
@@ -201,12 +194,42 @@ watch(
       </EmptyState>
     </PanelCard>
 
-    <div v-else v-show="view === 'chat'" class="chat" :class="{ 'chat--context-open': contextOpen }">
+    <div v-else class="chat">
       <!-- 会话列表 -->
       <PanelCard title="会话" flush class="chat__col">
         <template #actions>
           <StatusTag v-if="conversations.phase === 'ready'" mono>{{ conversations.items.length }}</StatusTag>
+          <button
+            type="button"
+            class="btn btn--icon"
+            title="同步最近平台记录"
+            aria-label="同步最近平台记录"
+            :disabled="state.recentSyncing || conversations.phase === 'loading' || conversations.refreshing"
+            @click="controller.syncRecent()"
+          >
+            <PhArrowsClockwise :size="18" />
+          </button>
+          <button type="button" class="btn btn--icon" title="系统状态" aria-label="查看系统状态" @click="emit('diagnostics')">
+            <PhWrench :size="18" />
+          </button>
         </template>
+
+        <p v-if="markReadError" class="col-note col-note--error" role="alert">
+          标记会话已读失败：{{ markReadError }}（未清除未读数）
+        </p>
+        <p v-if="state.recentSyncError" class="col-note col-note--error" role="alert">
+          最近平台记录同步失败：{{ state.recentSyncError }}（已保留旧数据）
+        </p>
+        <p v-if="bootstrapState.phase === 'error'" class="col-note col-note--error" role="alert">
+          会话同步失败：{{ bootstrapState.error ?? '未知错误' }}
+          <button
+            type="button"
+            class="btn btn--sm"
+            @click="appBootstrap.bootstrap(true)"
+          >
+            重试同步
+          </button>
+        </p>
 
         <div v-if="conversations.phase === 'idle' || conversations.phase === 'loading'" class="state" role="status">
           <div class="list" aria-hidden="true">
@@ -232,7 +255,7 @@ watch(
         <div v-else-if="conversations.items.length === 0" class="state">
           <EmptyState
             title="本地还没有会话"
-            description="扩展本地缓存里暂无会话。请先在浏览器打开并登录闲鱼，再点击上方「同步会话」；收到新消息时这里也会自动出现。"
+            :description="bootstrapState.phase === 'error' ? '平台会话同步未完成。检查闲鱼聊天页面连接后，可重试同步。' : '扩展本地缓存里暂无会话。启动时会自动同步；收到新消息时这里也会自动出现。'"
           />
         </div>
 
@@ -249,7 +272,18 @@ watch(
                 :aria-current="item.sessionId === selectedId ? 'true' : undefined"
                 @click="controller.selectSession(item.sessionId)"
               >
-                <span class="conv__avatar" aria-hidden="true">{{ displayName(item.sessionId, item.peerUserName).slice(0, 1) }}</span>
+                <span class="conv__avatar" aria-hidden="true">
+                  <img
+                    v-if="conversationAvatar(item)"
+                    :src="conversationAvatar(item) ?? undefined"
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    referrerpolicy="no-referrer"
+                    @error="markAvatarFailed(conversationAvatar(item))"
+                  />
+                  <template v-else>{{ displayName(item.sessionId, item.peerUserName).slice(0, 1) }}</template>
+                </span>
                 <span class="conv__body">
                   <span class="conv__top">
                     <span class="conv__name">{{ displayName(item.sessionId, item.peerUserName) }}</span>
@@ -286,6 +320,50 @@ watch(
         </template>
 
         <div class="thread">
+          <!-- 买家 / 商品紧凑摘要：不再单独占右侧列 -->
+          <div v-if="selectedId" class="contextbar" role="group" aria-label="买家与商品信息">
+            <div class="contextbar__peer">
+              <span class="contextbar__avatar" aria-hidden="true">
+                <img
+                  v-if="contextbarAvatar"
+                  :src="contextbarAvatar ?? undefined"
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  referrerpolicy="no-referrer"
+                  @error="markAvatarFailed(contextbarAvatar)"
+                />
+                <template v-else>{{ (peer.name || '对').slice(0, 1) }}</template>
+              </span>
+              <span class="contextbar__peer-text">
+                <span class="contextbar__name">{{ peer.name ?? '未知买家' }}</span>
+                <span class="contextbar__sub">
+                  <span v-if="peer.userId" class="mono">ID {{ peer.userId }}</span>
+                  <span v-if="selectedConversation" class="mono">未读 {{ selectedConversation.unreadCount }}</span>
+                </span>
+              </span>
+            </div>
+            <div class="contextbar__item">
+              <span class="contextbar__item-label"><PhStorefront :size="15" aria-hidden="true" />关联商品</span>
+              <template v-if="itemContext">
+                <span class="contextbar__item-title" :title="itemContext.itemTitle ?? itemContext.itemId">
+                  {{ itemContext.itemTitle || itemContext.itemId }}
+                </span>
+                <a
+                  v-if="itemContext.url"
+                  class="btn btn--sm contextbar__link"
+                  :href="itemContext.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <PhArrowSquareOut :size="15" aria-hidden="true" />在闲鱼打开商品
+                </a>
+                <span v-else class="contextbar__muted">商品 ID 格式无法识别，未生成链接</span>
+              </template>
+              <span v-else class="contextbar__muted">这个会话没有关联商品信息</span>
+            </div>
+          </div>
+
           <p
             v-if="historySync"
             class="sync sync--inline"
@@ -327,23 +405,37 @@ watch(
                 class="msg"
                 :class="message.direction === 'out' ? 'msg--out' : 'msg--in'"
               >
-                <div class="msg__meta">
-                  <span class="msg__who">{{ message.direction === 'out' ? '我' : message.senderName || '对方' }}</span>
-                  <time v-if="message.createAt > 0" :datetime="isoTime(message.createAt)" :title="formatFullTime(message.createAt)">
-                    {{ formatShortTime(message.createAt) }}
-                  </time>
-                  <StatusTag v-if="message.kind !== 'text'">{{ messageKindLabel(message.kind) }}</StatusTag>
+                <span v-if="message.direction !== 'out'" class="msg__avatar" aria-hidden="true">
+                  <img
+                    v-if="bubbleAvatar(message)"
+                    :src="bubbleAvatar(message) ?? undefined"
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    referrerpolicy="no-referrer"
+                    @error="markAvatarFailed(bubbleAvatar(message))"
+                  />
+                  <template v-else>{{ (message.senderName || '对').slice(0, 1) }}</template>
+                </span>
+                <div class="msg__content">
+                  <div class="msg__meta">
+                    <span class="msg__who">{{ message.direction === 'out' ? '我' : message.senderName || '对方' }}</span>
+                    <time v-if="message.createAt > 0" :datetime="isoTime(message.createAt)" :title="formatFullTime(message.createAt)">
+                      {{ formatShortTime(message.createAt) }}
+                    </time>
+                    <StatusTag v-if="message.kind !== 'text'">{{ messageKindLabel(message.kind) }}</StatusTag>
+                  </div>
+                  <p class="msg__bubble">{{ messageDisplayText(message) }}</p>
+                  <a
+                    v-if="message.kind === 'image' && safeHttpsUrl(message.imageUrl)"
+                    class="msg__link"
+                    :href="safeHttpsUrl(message.imageUrl) ?? undefined"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    在新标签页查看图片
+                  </a>
                 </div>
-                <p class="msg__bubble">{{ messageDisplayText(message) }}</p>
-                <a
-                  v-if="message.kind === 'image' && safeHttpsUrl(message.imageUrl)"
-                  class="msg__link"
-                  :href="safeHttpsUrl(message.imageUrl) ?? undefined"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  在新标签页查看图片
-                </a>
               </li>
             </ol>
           </template>
@@ -357,100 +449,11 @@ watch(
           />
         </div>
       </PanelCard>
-
-      <!-- 买家与商品 -->
-      <PanelCard title="买家与商品" flush class="chat__col chat__context">
-        <div v-if="!selectedId" class="state">
-          <p class="col-note">选择会话后，这里显示该买家的已知信息和关联商品。</p>
-        </div>
-        <div v-else class="context">
-          <section aria-labelledby="ctx-peer">
-            <h3 id="ctx-peer" class="context__h">买家</h3>
-            <dl class="kv">
-              <div>
-                <dt>昵称</dt>
-                <dd>{{ peer.name ?? '未知' }}</dd>
-              </div>
-              <div>
-                <dt>用户 ID</dt>
-                <dd class="mono">{{ peer.userId ?? '未知' }}</dd>
-              </div>
-              <div>
-                <dt>会话 ID</dt>
-                <dd class="mono">{{ selectedId }}</dd>
-              </div>
-              <div v-if="selectedConversation">
-                <dt>未读</dt>
-                <dd>{{ selectedConversation.unreadCount }}</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section aria-labelledby="ctx-item">
-            <h3 id="ctx-item" class="context__h">关联商品</h3>
-            <template v-if="itemContext">
-              <dl class="kv">
-                <div v-if="itemContext.itemTitle">
-                  <dt>标题</dt>
-                  <dd>{{ itemContext.itemTitle }}</dd>
-                </div>
-                <div>
-                  <dt>商品 ID</dt>
-                  <dd class="mono">{{ itemContext.itemId }}</dd>
-                </div>
-              </dl>
-              <a
-                v-if="itemContext.url"
-                class="btn btn--sm context__link"
-                :href="itemContext.url"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                在闲鱼打开商品
-              </a>
-              <p v-else class="col-note col-note--flat">商品 ID 格式无法识别，未生成链接。</p>
-              <p class="col-note col-note--flat">扩展目前只提供商品 ID，价格、图片等详情暂不可用。</p>
-            </template>
-            <p v-else class="col-note col-note--flat">这个会话没有关联商品信息。</p>
-          </section>
-        </div>
-      </PanelCard>
     </div>
   </div>
 </template>
 
 <style scoped>
-.views {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.banner {
-  display: grid;
-  gap: 8px;
-  padding: 12px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-panel);
-}
-
-.banner__head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 10px;
-}
-
-.banner__spacer {
-  flex: 1 1 0;
-}
-
-.banner__text {
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
 .sync {
   font-size: 13px;
   overflow-wrap: anywhere;
@@ -476,11 +479,12 @@ watch(
 
 .chat {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 260px;
+  grid-template-columns: 260px minmax(0, 1fr);
   gap: 14px;
   align-items: stretch;
   min-height: 420px;
-  height: max(420px, calc(100dvh - 220px));
+  /* 聊天中心不再有规则/会话标签栏，减去该栏及其间距占位，把空间让给消息列表。 */
+  height: max(420px, calc(100dvh - 180px));
 }
 
 .chat__col {
@@ -616,11 +620,18 @@ watch(
   place-items: center;
   width: 34px;
   height: 34px;
+  overflow: hidden;
   border-radius: var(--radius-control);
   background: var(--surface-sunken);
   border: 1px solid var(--border);
   font-weight: 600;
   color: var(--text-muted);
+}
+
+.conv__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .conv__body {
@@ -727,8 +738,9 @@ watch(
 }
 
 .msg {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   max-width: min(78%, 560px);
 }
 
@@ -738,6 +750,33 @@ watch(
 
 .msg--out {
   align-self: flex-end;
+}
+
+.msg__avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.msg__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.msg__content {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .msg__meta {
@@ -778,63 +817,102 @@ watch(
   color: var(--info);
 }
 
-/* 买家与商品 */
-.context {
-  display: grid;
-  gap: 18px;
-  padding: 0 14px 14px;
+/* 买家 / 商品紧凑摘要条 */
+.contextbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
 }
 
-.context__h {
-  margin-bottom: 8px;
-  font-size: 12px;
-  font-weight: 650;
+.contextbar__peer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.contextbar__avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--text-muted);
 }
 
-.kv {
+.contextbar__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.contextbar__peer-text {
   display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.contextbar__name {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.contextbar__sub {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  margin: 0;
-}
-
-.kv > div {
-  display: grid;
-  gap: 2px;
-}
-
-.kv dt {
   font-size: 11.5px;
   color: var(--text-muted);
 }
 
-.kv dd {
-  margin: 0;
-  font-size: 13px;
-  overflow-wrap: anywhere;
+.contextbar__item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.contextbar__item-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.contextbar__item-title {
+  max-width: 260px;
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextbar__link {
+  text-decoration: none;
+}
+
+.contextbar__muted {
+  font-size: 12.5px;
+  color: var(--text-muted);
 }
 
 .mono {
   font-family: var(--mono);
   font-size: 12.5px;
-}
-
-.context__link {
-  margin-top: 10px;
-  text-decoration: none;
-}
-
-.context-toggle { display: none; }
-@media (max-width: 1199px) {
-  .chat {
-    grid-template-columns: 260px minmax(0, 1fr);
-  }
-
-  .context-toggle { display: inline-flex; align-self: start; }
-  .chat__context { display: none; }
-  .chat--context-open { height: auto; }
-  .chat--context-open .chat__context { display: flex; grid-column: 1 / -1; }
-  .chat--context-open .thread { min-height: 420px; max-height: 70dvh; }
 }
 
 @media (max-width: 719px) {

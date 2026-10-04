@@ -87,6 +87,28 @@ test('只监听目标主机，转发 message/open/close/error，且从不发送'
   assert.equal(other.sendCalls.length, 0)
 })
 
+test('重复 observe 同一 socket 幂等：不重复注册监听（socket open 不重复连接）', () => {
+  const statuses: ChatSocketStatus[] = []
+  let openCount = 0
+  const monitor = new ChatWebSocketMonitor({
+    onStatus: (status) => statuses.push(status),
+    onOpen: () => (openCount += 1),
+  })
+
+  const socket = new FakeWebSocket('wss://wss-goofish.dingtalk.com/')
+  monitor.observe(socket)
+  monitor.observe(socket)
+  monitor.observe(socket)
+
+  // 重复 observe 只登记一次，不会重复挂载监听（也就不会重复“连接”）。
+  assert.equal(monitor.activeSockets.length, 1)
+
+  socket.readyState = 1
+  socket.emit('open', {})
+  assert.equal(openCount, 1)
+  assert.equal(statuses.filter((status) => status === 'open').length, 1)
+})
+
 test('监听回调抛错不逃逸到调用方', () => {
   const monitor = new ChatWebSocketMonitor({
     onMessage: () => {

@@ -1,0 +1,4249 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FishOps Workbench - UI 预览</title>
+  <style>
+    /* 基础重置 */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Seline 风格变量系统：默认浅色，暖石纸色画布 (Warm Stone / Paper Canvas) */
+    :root[data-theme="light"] {
+      --bg-canvas: #FAF9F5;
+      --bg-card: #FFFFFF;
+      --bg-subtle: #F4F2EC;
+      --bg-hover: #ECE9E1;
+      --bg-active: #E4E0D6;
+
+      --border-line: #E8E5DC;
+      --border-hover: #D6D2C4;
+      --border-focus: #F5C400;
+
+      --text-main: #1C1917;
+      --text-secondary: #57534E;
+      --text-muted: #8C867E;
+      --text-faint: #B5AFA6;
+
+      /* FishOps 原始黄色：唯一品牌强调色 */
+      --brand-yellow: #F5C400;
+      --brand-yellow-hover: #E5B700;
+      --brand-yellow-active: #CCA300;
+      --brand-yellow-bg: #FEF9E6;
+      --brand-yellow-border: #F3DC7D;
+      --brand-yellow-text: #826200;
+
+      /* 真实状态色（仅用于状态语义） */
+      --status-success: #16A34A;
+      --status-success-bg: #F0FDF4;
+      --status-success-border: #BBF7D0;
+      --status-danger: #DC2626;
+      --status-danger-bg: #FEF2F2;
+      --status-danger-border: #FECACA;
+
+      --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.03);
+      --shadow-card: 0 1px 3px rgba(28, 25, 23, 0.04), 0 1px 2px rgba(28, 25, 23, 0.02);
+      --shadow-pop: 0 8px 24px -4px rgba(28, 25, 23, 0.08), 0 2px 6px -1px rgba(28, 25, 23, 0.04);
+
+      --chart-grid: #EFECE4;
+      --chart-axis: #A8A29A;
+      --chart-bar-dim: #EAE6DC;
+    }
+
+    :root[data-theme="dark"] {
+      --bg-canvas: #121210;
+      --bg-card: #1A1916;
+      --bg-subtle: #24221E;
+      --bg-hover: #2D2A24;
+      --bg-active: #37332C;
+
+      --border-line: #2E2B25;
+      --border-hover: #423E34;
+      --border-focus: #F5C400;
+
+      --text-main: #FBF9F5;
+      --text-secondary: #ABA59A;
+      --text-muted: #7A746B;
+      --text-faint: #4E4A43;
+
+      --brand-yellow: #F5C400;
+      --brand-yellow-hover: #FFD21A;
+      --brand-yellow-active: #E5B700;
+      --brand-yellow-bg: rgba(245, 196, 0, 0.12);
+      --brand-yellow-border: rgba(245, 196, 0, 0.32);
+      --brand-yellow-text: #FDE68A;
+
+      --status-success: #22C55E;
+      --status-success-bg: rgba(34, 197, 94, 0.12);
+      --status-success-border: rgba(34, 197, 94, 0.28);
+      --status-danger: #EF4444;
+      --status-danger-bg: rgba(239, 68, 68, 0.12);
+      --status-danger-border: rgba(239, 68, 68, 0.28);
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
+      --shadow-pop: 0 12px 32px -4px rgba(0, 0, 0, 0.7);
+
+      --chart-grid: #282520;
+      --chart-axis: #6E685E;
+      --chart-bar-dim: #2A2722;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: var(--text-main);
+      background-color: var(--bg-canvas);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
+    }
+
+    /* ============ 顶部导航 ============ */
+    .top-nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: var(--bg-canvas);
+      border-bottom: 1px solid var(--border-line);
+      backdrop-filter: blur(8px);
+    }
+
+    .nav-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .brand-logo-mark {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: var(--brand-yellow);
+      color: #1C1917;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: -0.5px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    }
+
+    .brand-name-wrap {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .brand-title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+      color: var(--text-main);
+    }
+
+    .brand-version-pill {
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: 9999px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      color: var(--text-muted);
+    }
+
+    .tab-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--bg-subtle);
+      padding: 3px 4px;
+      border-radius: 9999px;
+      border: 1px solid var(--border-line);
+    }
+
+    .tab-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 11px;
+      border-radius: 9999px;
+      font-size: 12.5px;
+      font-weight: 400;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border: 1px solid transparent;
+      background: transparent;
+      outline: none;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .tab-item:hover {
+      color: var(--text-main);
+      background: rgba(0, 0, 0, 0.03);
+    }
+
+    :root[data-theme="dark"] .tab-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-item.active {
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-weight: 500;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      border-color: var(--border-line);
+    }
+
+    .tab-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: transparent;
+      display: inline-block;
+      transition: background 0.15s ease;
+    }
+
+    .tab-item.active .tab-dot {
+      background: var(--brand-yellow);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 11.5px;
+      background: var(--brand-yellow-bg);
+      border: 1px solid var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+    }
+
+    .status-live-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--brand-yellow);
+    }
+
+    /* ============ 按钮 ============ */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 5px 13px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 400;
+      cursor: pointer;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      outline: none;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+
+    .btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+      border-color: var(--border-hover);
+    }
+
+    .btn:focus-visible {
+      border-color: var(--brand-yellow);
+      box-shadow: 0 0 0 2px var(--brand-yellow-bg);
+    }
+
+    .btn:active {
+      background: var(--bg-active);
+      transform: translateY(1px);
+    }
+
+    .btn-brand {
+      background: var(--brand-yellow);
+      border-color: var(--brand-yellow);
+      color: #1C1917;
+      font-weight: 500;
+      box-shadow: 0 1px 2px rgba(245, 196, 0, 0.2);
+    }
+
+    .btn-brand:hover {
+      background: var(--brand-yellow-hover);
+      border-color: var(--brand-yellow-hover);
+      color: #1C1917;
+    }
+
+    .btn-brand:active {
+      background: var(--brand-yellow-active);
+      border-color: var(--brand-yellow-active);
+    }
+
+    .btn-icon-only {
+      padding: 5px 9px;
+      border-radius: 9999px;
+    }
+
+    /* ============ 工作区 ============ */
+    .workspace-wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 20px 48px;
+    }
+
+    .view-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      gap: 16px;
+    }
+
+    .view-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .view-title {
+      font-size: 19px;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      color: var(--text-main);
+    }
+
+    .view-sub {
+      font-size: 12.5px;
+      color: var(--text-muted);
+    }
+
+    .view-tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ============ 设计稿标识 ============ */
+    .demo-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      border: 1px dashed var(--brand-yellow-border);
+      border-radius: 10px;
+      background: var(--brand-yellow-bg);
+      color: var(--brand-yellow-text);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .demo-tag {
+      flex-shrink: 0;
+      font-weight: 600;
+      font-size: 11px;
+      padding: 1px 8px;
+      border-radius: 9999px;
+      background: var(--brand-yellow);
+      color: #1C1917;
+    }
+
+    /* ============ 卡片 ============ */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      border-radius: 10px;
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    .card.feature-card {
+      border-radius: 16px;
+    }
+
+    .card-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: var(--bg-card);
+      flex-wrap: wrap;
+    }
+
+    .card-title-wrap {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .card-title {
+      font-size: 13.5px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      color: var(--text-main);
+    }
+
+    .card-caption {
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+
+    .card-body {
+      padding: 16px;
+    }
+
+    .muted-note {
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+
+    /* ============ 指标卡 ============ */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: border-color 0.15s ease;
+    }
+
+    .metric-card:hover {
+      border-color: var(--border-hover);
+    }
+
+    .metric-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .metric-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .metric-badge {
+      font-size: 10.5px;
+      padding: 1px 7px;
+      border-radius: 9999px;
+      border: 1px solid var(--border-line);
+      color: var(--text-muted);
+      background: var(--bg-subtle);
+      white-space: nowrap;
+    }
+
+    .metric-badge.yellow {
+      background: var(--brand-yellow-bg);
+      border-color: var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+    }
+
+    .metric-badge.red {
+      background: var(--status-danger-bg);
+      border-color: var(--status-danger-border);
+      color: var(--status-danger);
+    }
+
+    .metric-value-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    .metric-num {
+      font-size: 24px;
+      font-weight: 400;
+      letter-spacing: -0.03em;
+      color: var(--text-main);
+      line-height: 1.1;
+    }
+
+    .metric-diff {
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+
+    .metric-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding-top: 6px;
+      border-top: 1px solid var(--border-line);
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+      gap: 8px;
+    }
+
+    /* ============ 分栏 ============ */
+    .dashboard-split {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ============ 表格 ============ */
+    .table-responsive {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .seline-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+      text-align: left;
+    }
+
+    .seline-table th {
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      font-weight: 500;
+      padding: 7px 12px;
+      height: 32px;
+      border-bottom: 1px solid var(--border-line);
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .seline-table th.sortable {
+      cursor: pointer;
+    }
+
+    .seline-table th.sortable:hover {
+      color: var(--text-main);
+      background: var(--bg-hover);
+    }
+
+    .seline-table td {
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border-line);
+      color: var(--text-main);
+      vertical-align: middle;
+      transition: background 0.1s ease;
+    }
+
+    .seline-table tr:hover td {
+      background: var(--bg-subtle);
+    }
+
+    .seline-table.density-compact td {
+      padding: 5px 10px;
+      font-size: 11.5px;
+    }
+
+    .seline-table.density-compact th {
+      padding: 4px 10px;
+      height: 28px;
+      font-size: 11.5px;
+    }
+
+    .code-tag {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      color: var(--text-secondary);
+    }
+
+    /* ============ 药丸标签 ============ */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 400;
+      border: 1px solid var(--border-line);
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    .pill.pill-yellow {
+      background: var(--brand-yellow-bg);
+      border-color: var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+    }
+
+    .pill.pill-green {
+      background: var(--status-success-bg);
+      border-color: var(--status-success-border);
+      color: var(--status-success);
+    }
+
+    .pill.pill-red {
+      background: var(--status-danger-bg);
+      border-color: var(--status-danger-border);
+      color: var(--status-danger);
+    }
+
+    /* ============ 操作按钮（链接态） ============ */
+    .action-btn {
+      color: var(--brand-yellow-text);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-left: 8px;
+      background: transparent;
+      border: none;
+      padding: 0;
+      font-family: inherit;
+    }
+
+    .action-btn:hover {
+      text-decoration: underline;
+    }
+
+    .action-btn.danger {
+      color: var(--status-danger);
+    }
+
+    /* ============ 商品库控件 ============ */
+    .toolbar-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-line);
+      background: var(--bg-card);
+      flex-wrap: wrap;
+    }
+
+    .toolbar-left, .toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .input-text {
+      height: 30px;
+      padding: 0 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-size: 12.5px;
+      outline: none;
+      transition: border-color 0.15s ease;
+      width: 220px;
+      font-family: inherit;
+    }
+
+    .input-text:focus {
+      border-color: var(--brand-yellow);
+      box-shadow: 0 0 0 2px var(--brand-yellow-bg);
+    }
+
+    .select-dropdown {
+      height: 30px;
+      padding: 0 26px 0 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-line);
+      background-color: var(--bg-card);
+      color: var(--text-main);
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+        linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+      background-position: calc(100% - 14px) center, calc(100% - 9px) center;
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+      transition: border-color 0.15s ease;
+      font-family: inherit;
+    }
+
+    .select-dropdown:focus {
+      border-color: var(--brand-yellow);
+      box-shadow: 0 0 0 2px var(--brand-yellow-bg);
+    }
+
+    .product-thumb {
+      width: 48px;
+      height: 48px;
+      min-width: 48px;
+      border-radius: 6px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .product-thumb-svg {
+      width: 28px;
+      height: 28px;
+      opacity: 0.85;
+    }
+
+    .product-info-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-width: 320px;
+    }
+
+    .product-name {
+      font-size: 13px;
+      color: var(--text-main);
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .product-sku {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+
+    .product-price {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .table-footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border-line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--bg-card);
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .page-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .page-btn {
+      min-width: 26px;
+      height: 26px;
+      padding: 0 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9999px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .page-btn:hover:not(:disabled) {
+      background: var(--bg-hover);
+      color: var(--text-main);
+    }
+
+    .page-btn:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+
+    .page-btn.active {
+      background: var(--brand-yellow);
+      border-color: var(--brand-yellow);
+      color: #1C1917;
+      font-weight: 600;
+    }
+
+    /* ============ 周期切换 / 分段控件 ============ */
+    .period-switch {
+      display: inline-flex;
+      align-items: center;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      border-radius: 9999px;
+      padding: 2px;
+    }
+
+    .period-btn {
+      border: 1px solid transparent;
+      background: transparent;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+
+    .period-btn:hover {
+      color: var(--text-main);
+    }
+
+    .period-btn.active {
+      background: var(--bg-card);
+      color: var(--text-main);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      border-color: var(--border-line);
+      font-weight: 500;
+    }
+
+    /* ============ 数据分析 ============ */
+    .analysis-hero-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      border-radius: 16px;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      box-shadow: var(--shadow-card);
+      position: relative;
+    }
+
+    .analysis-hero-card::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 16px;
+      bottom: 16px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--brand-yellow);
+    }
+
+    .analysis-hero-content {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-left: 10px;
+    }
+
+    .analysis-hero-tag {
+      font-size: 11px;
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+
+    .analysis-hero-title {
+      font-size: 16px;
+      font-weight: 400;
+      letter-spacing: -0.01em;
+      color: var(--text-main);
+      line-height: 1.4;
+    }
+
+    .analysis-hero-desc {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      max-width: 820px;
+    }
+
+    .hist-wrapper {
+      padding: 12px 4px 6px;
+    }
+
+    .hist-chart {
+      display: flex;
+      align-items: flex-end;
+      height: 160px;
+      gap: 12px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border-line);
+      position: relative;
+    }
+
+    .hist-bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+      justify-content: flex-end;
+      position: relative;
+      cursor: default;
+    }
+
+    .hist-bar-col:hover .hist-pop {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(-4px);
+    }
+
+    .hist-fill {
+      width: 100%;
+      max-width: 44px;
+      border-radius: 4px 4px 1px 1px;
+      background: var(--chart-bar-dim);
+      transition: height 0.25s ease, background 0.15s ease;
+    }
+
+    .hist-fill.highlight {
+      background: var(--brand-yellow);
+    }
+
+    .hist-axis-label {
+      position: absolute;
+      bottom: -20px;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .hist-pop {
+      position: absolute;
+      top: -30px;
+      background: var(--text-main);
+      color: var(--bg-card);
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.15s ease;
+      z-index: 10;
+      font-weight: 500;
+    }
+
+    .insights-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .insight-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-line);
+    }
+
+    .insight-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .insight-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-top: 6px;
+      flex-shrink: 0;
+    }
+
+    .insight-dot.green { background: var(--status-success); }
+    .insight-dot.red { background: var(--status-danger); }
+    .insight-dot.yellow { background: var(--brand-yellow); }
+
+    .insight-text-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .insight-headline {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-main);
+    }
+
+    .insight-body {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    /* ============ 键值对 ============ */
+    .key-value {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 10px 16px;
+      font-size: 12.5px;
+    }
+
+    .key-value .kv-key {
+      color: var(--text-muted);
+    }
+
+    .key-value .kv-val {
+      color: var(--text-main);
+      font-weight: 500;
+      word-break: break-word;
+    }
+
+    .mask {
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      letter-spacing: 1px;
+    }
+
+    /* ============ 表单 ============ */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px 16px;
+    }
+
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-field.span-full { grid-column: 1 / -1; }
+    .form-field.span-2 { grid-column: span 2; }
+
+    .form-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .form-input, .form-textarea {
+      width: 100%;
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-size: 12.5px;
+      outline: none;
+      transition: border-color 0.15s ease;
+      font-family: inherit;
+    }
+
+    .form-textarea {
+      min-height: 76px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    .form-input:focus, .form-textarea:focus {
+      border-color: var(--brand-yellow);
+      box-shadow: 0 0 0 2px var(--brand-yellow-bg);
+    }
+
+    .form-check {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12.5px;
+      color: var(--text-main);
+      cursor: pointer;
+    }
+
+    .form-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .collapse-panel {
+      display: none;
+    }
+
+    .collapse-panel.open {
+      display: block;
+    }
+
+    .input-with-action {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .input-with-action .form-input {
+      flex: 1;
+    }
+
+    /* ============ Tab 组 ============ */
+    .tabs {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      border-radius: 9999px;
+      padding: 2px;
+      flex-wrap: wrap;
+    }
+
+    .tab-btn {
+      border: 1px solid transparent;
+      background: transparent;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+
+    .tab-btn:hover { color: var(--text-main); }
+
+    .tab-btn.active {
+      background: var(--bg-card);
+      color: var(--text-main);
+      border-color: var(--border-line);
+      font-weight: 500;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+
+    /* ============ 进度条 ============ */
+    .progress-inline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 130px;
+    }
+
+    .progress-bar-wrap {
+      flex: 1;
+      height: 5px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 9999px;
+      background: var(--brand-yellow);
+      transition: width 0.3s ease;
+    }
+
+    .progress-bar-fill.success { background: var(--status-success); }
+    .progress-bar-fill.danger { background: var(--status-danger); }
+
+    .progress-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      min-width: 34px;
+      text-align: right;
+    }
+
+    /* ============ 清单 / 门禁 ============ */
+    .checklist {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .check-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--border-line);
+      border-radius: 8px;
+      background: var(--bg-card);
+    }
+
+    .check-item.ok { border-color: var(--status-success-border); background: var(--status-success-bg); }
+    .check-item.miss { border-color: var(--brand-yellow-border); background: var(--brand-yellow-bg); }
+
+    .check-mark {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      flex-shrink: 0;
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-line);
+    }
+
+    .check-item.ok .check-mark { background: var(--status-success); color: #fff; border-color: var(--status-success); }
+    .check-item.miss .check-mark { background: var(--brand-yellow); color: #1C1917; border-color: var(--brand-yellow); }
+
+    .check-title {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-main);
+    }
+
+    .check-desc {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+    }
+
+    .gate-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .gate-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      padding: 7px 10px;
+      border: 1px solid var(--border-line);
+      border-radius: 8px;
+    }
+
+    .gate-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--text-faint);
+    }
+
+    .gate-item.ok .gate-dot { background: var(--status-success); }
+    .gate-item.miss .gate-dot { background: var(--brand-yellow); }
+
+    /* ============ 步骤条 ============ */
+    .stepper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .step-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 3px 6px;
+      border-radius: 9999px;
+    }
+
+    .step-item.active {
+      color: var(--text-main);
+      font-weight: 500;
+    }
+
+    .step-num {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10.5px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      color: var(--text-muted);
+    }
+
+    .step-item.active .step-num {
+      background: var(--brand-yellow);
+      border-color: var(--brand-yellow);
+      color: #1C1917;
+      font-weight: 700;
+    }
+
+    .step-arrow {
+      color: var(--text-faint);
+      font-size: 12px;
+    }
+
+    /* ============ 连接状态 ============ */
+    .connection-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 9px;
+      border-radius: 9999px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-subtle);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-faint);
+      display: inline-block;
+      flex-shrink: 0;
+    }
+
+    .status-dot.connected { background: var(--status-success); }
+    .status-dot.success { background: var(--status-success); }
+    .status-dot.warning { background: var(--brand-yellow); }
+    .status-dot.danger { background: var(--status-danger); }
+    .status-dot.idle { background: var(--text-faint); }
+
+    /* 紧凑状态点（非脉冲，带语义与可访问提示） */
+    .status-dot-compact {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+      background: var(--status-success);
+    }
+    .status-dot-compact.warn { background: var(--brand-yellow); }
+    .status-dot-compact.err { background: var(--status-danger); }
+    .status-dot-compact.idle { background: var(--text-faint); }
+
+    /* ============ 采集任务关键词标签与建议下拉 ============ */
+    .keyword-field-wrap {
+      position: relative;
+    }
+    .field-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 5px;
+    }
+    .btn-text-action {
+      background: none;
+      border: none;
+      color: var(--brand-yellow-text);
+      font-size: 11.5px;
+      cursor: pointer;
+      padding: 0 4px;
+      font-family: inherit;
+      font-weight: 500;
+      border-radius: 4px;
+    }
+    .btn-text-action:hover {
+      text-decoration: underline;
+    }
+    .tag-input-container {
+      min-height: 38px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border: 1px solid var(--border-line);
+      border-radius: 6px;
+      background: var(--bg-card);
+      cursor: text;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .tag-input-container:focus-within {
+      border-color: var(--brand-yellow);
+      box-shadow: 0 0 0 2px var(--brand-yellow-bg);
+    }
+    .tag-list {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .tag-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--brand-yellow-bg);
+      border: 1px solid var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-size: 12px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      line-height: 1.4;
+      user-select: none;
+    }
+    .tag-remove {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+      color: var(--brand-yellow-text);
+      opacity: 0.6;
+      padding: 0 1px;
+      font-family: inherit;
+      transition: opacity 0.1s ease;
+    }
+    .tag-remove:hover {
+      opacity: 1;
+    }
+    .tag-input-field {
+      flex: 1;
+      min-width: 160px;
+      border: none;
+      background: transparent;
+      outline: none;
+      font-size: 13px;
+      color: var(--text-main);
+      font-family: inherit;
+      padding: 2px 0;
+    }
+    .tag-input-field::placeholder {
+      color: var(--text-faint);
+    }
+    .suggest-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      z-index: 60;
+      margin-top: 4px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      border-radius: 8px;
+      box-shadow: var(--shadow-pop);
+      padding: 10px 12px;
+    }
+    .suggest-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--text-muted);
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border-line);
+      margin-bottom: 8px;
+    }
+    .suggest-hint {
+      font-size: 11px;
+      color: var(--text-faint);
+    }
+    .suggest-items-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 6px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    .suggest-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-subtle);
+      font-size: 12px;
+      color: var(--text-main);
+      cursor: pointer;
+      transition: all 0.12s ease;
+      user-select: none;
+    }
+    .suggest-item:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-hover);
+    }
+    .suggest-item.is-selected {
+      background: var(--brand-yellow-bg);
+      border-color: var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+    }
+    .suggest-check-mark {
+      font-size: 11px;
+      font-weight: bold;
+    }
+
+    /* ============ 聊天中心（对齐 ChatCenterPage.vue） ============ */
+    .chat-layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 16px;
+      align-items: stretch;
+      height: max(560px, calc(100vh - 180px));
+      min-height: 500px;
+    }
+
+    .chat-col {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      margin-bottom: 0 !important;
+    }
+
+    .chat-col .card-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0;
+    }
+
+    .chat-main-col {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      margin-bottom: 0 !important;
+    }
+
+    .chat-main-col .card-body {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .conversation-list {
+      height: 100%;
+      overflow-y: auto;
+    }
+
+    .conversation-item {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-line);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background 0.12s ease;
+    }
+
+    .conversation-item:hover { background: var(--bg-subtle); }
+    .conversation-item.active { background: var(--brand-yellow-bg); }
+
+    .conv-avatar-circle {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      color: var(--text-main);
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .conversation-item.active .conv-avatar-circle {
+      background: var(--brand-yellow);
+      border-color: var(--brand-yellow);
+      color: #1C1917;
+    }
+
+    .conv-content {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .conv-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .conv-name {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-main);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conv-time {
+      font-size: 11px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .conv-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .conv-last {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .conv-unread {
+      min-width: 17px;
+      height: 17px;
+      padding: 0 5px;
+      border-radius: 9999px;
+      background: var(--status-danger);
+      color: #fff;
+      font-size: 10.5px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    /* 买家与商品信息条 (contextbar) */
+    .chat-contextbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-line);
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .contextbar-peer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .contextbar-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--brand-yellow-bg);
+      border: 1px solid var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .contextbar-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .contextbar-name {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-main);
+      line-height: 1.2;
+    }
+
+    .contextbar-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.2;
+    }
+
+    .contextbar-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      min-width: 0;
+      max-width: 58%;
+    }
+
+    .contextbar-item-tag {
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      font-size: 11px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .contextbar-item-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-secondary);
+    }
+
+    .contextbar-link {
+      color: var(--brand-yellow-text);
+      text-decoration: none;
+      font-size: 11.5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      flex-shrink: 0;
+      font-weight: 500;
+    }
+
+    .contextbar-link:hover {
+      text-decoration: underline;
+    }
+
+    .chat-main-col .message-stream {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: var(--bg-canvas);
+    }
+
+    .msg-row {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      max-width: 76%;
+    }
+
+    .msg-row.out {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .msg-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10.5px;
+      color: var(--text-muted);
+    }
+
+    .msg-type-tag {
+      padding: 0 6px;
+      border-radius: 9999px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-muted);
+    }
+
+    .msg-bubble {
+      background: var(--bg-card);
+      border: 1px solid var(--border-line);
+      border-radius: 10px;
+      padding: 8px 11px;
+      font-size: 12.5px;
+      color: var(--text-main);
+      line-height: 1.5;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .msg-row.out .msg-bubble {
+      background: var(--brand-yellow);
+      border-color: var(--brand-yellow);
+      color: #1C1917;
+    }
+
+    .msg-bubble.sys {
+      align-self: center;
+      background: transparent;
+      border: 1px dashed var(--border-hover);
+      color: var(--text-muted);
+      font-size: 11px;
+      box-shadow: none;
+    }
+
+    .msg-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .msg-thumb {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .msg-card-title {
+      font-size: 12.5px;
+      font-weight: 500;
+    }
+
+    .msg-card-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .msg-row.out .msg-card-sub { color: rgba(28, 25, 23, 0.7); }
+
+    /* 回复区 (ReplyComposer) */
+    .chat-reply-composer {
+      border-top: 1px solid var(--border-line);
+      padding: 10px 14px;
+      background: var(--bg-card);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .reply-prompt-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .reply-suggest-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 11.5px;
+      background: var(--brand-yellow-bg);
+      border: 1px solid var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      cursor: pointer;
+      font-family: inherit;
+      font-weight: 500;
+      transition: all 0.12s ease;
+    }
+
+    .reply-suggest-btn:hover {
+      background: var(--brand-yellow);
+      color: #1C1917;
+    }
+
+    .suggestion-filled-badge {
+      font-size: 11.5px;
+      color: var(--status-success);
+    }
+
+    .reply-textarea {
+      width: 100%;
+      min-height: 58px;
+      max-height: 120px;
+      resize: vertical;
+      padding: 8px 11px;
+      border-radius: 6px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-size: 12.5px;
+      outline: none;
+      font-family: inherit;
+      line-height: 1.5;
+    }
+
+    .reply-textarea:focus {
+      border-color: var(--brand-yellow);
+      box-shadow: 0 0 0 2px var(--brand-yellow-bg);
+    }
+
+    .reply-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .reply-count {
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+
+    /* ============ 设置 ============ */
+    .settings-layout {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .settings-nav {
+      display: flex;
+      flex-direction: column;
+      padding: 6px;
+    }
+
+    .settings-nav .nav-item {
+      display: block;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.12s ease;
+      user-select: none;
+    }
+
+    .settings-nav .nav-item:hover { background: var(--bg-hover); color: var(--text-main); }
+
+    .settings-nav .nav-item.active {
+      background: var(--brand-yellow-bg);
+      color: var(--brand-yellow-text);
+      font-weight: 600;
+      border: 1px solid var(--brand-yellow-border);
+    }
+
+    .settings-section { display: none; }
+    .settings-section.active { display: block; }
+
+    .cap-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .cap-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 11px;
+      border-radius: 9999px;
+      border: 1px solid var(--border-line);
+      background: var(--bg-subtle);
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+
+    .cap-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-faint);
+    }
+
+    .cap-chip.unknown .cap-dot { background: var(--text-faint); }
+
+    .rule-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* ============ 占位态 ============ */
+    .placeholder-wrap {
+      padding: 40px 20px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      border: 1px dashed var(--border-hover);
+      border-radius: 10px;
+      background: var(--bg-subtle);
+    }
+
+    .placeholder-badge {
+      font-size: 11px;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      background: var(--brand-yellow-bg);
+      border: 1px solid var(--brand-yellow-border);
+      color: var(--brand-yellow-text);
+      font-weight: 500;
+    }
+
+    .placeholder-title {
+      font-size: 15px;
+      font-weight: 400;
+      color: var(--text-main);
+    }
+
+    .placeholder-desc {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      max-width: 480px;
+      line-height: 1.5;
+    }
+
+    /* ============ Dialog ============ */
+    dialog.seline-dialog {
+      border: 1px solid var(--border-line);
+      border-radius: 16px;
+      background: var(--bg-card);
+      color: var(--text-main);
+      width: 680px;
+      max-width: calc(100vw - 32px);
+      padding: 0;
+      margin: auto;
+      box-shadow: var(--shadow-pop);
+      outline: none;
+    }
+
+    dialog.seline-dialog::backdrop {
+      background: rgba(28, 25, 23, 0.35);
+      backdrop-filter: blur(2px);
+    }
+
+    .dialog-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .dialog-title {
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+    }
+
+    .dialog-body {
+      padding: 18px;
+      max-height: 66vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+
+    .dialog-footer {
+      padding: 10px 18px;
+      border-top: 1px solid var(--border-line);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      background: var(--bg-subtle);
+    }
+
+    .dialog-close {
+      border: none;
+      background: transparent;
+      font-size: 17px;
+      line-height: 1;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+
+    .dialog-close:hover { background: var(--bg-hover); color: var(--text-main); }
+
+    .dialog-section-title {
+      color: var(--text-main);
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .dialog-list {
+      padding-left: 18px;
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .dialog-callout {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-line);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    /* ============ Toast ============ */
+    .toast-notice {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--text-main);
+      color: var(--bg-card);
+      padding: 9px 16px;
+      border-radius: 9999px;
+      font-size: 12px;
+      box-shadow: var(--shadow-pop);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transform: translateY(60px);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 100;
+      max-width: calc(100vw - 48px);
+    }
+
+    .toast-notice.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .toast-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--brand-yellow);
+      flex-shrink: 0;
+    }
+
+    /* ============ 响应式 ============ */
+    @media (max-width: 992px) {
+      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+      .dashboard-split { grid-template-columns: 1fr; }
+      .insights-grid { grid-template-columns: 1fr; }
+      .chat-layout { grid-template-columns: 1fr; }
+      .settings-layout { grid-template-columns: 1fr; }
+      .checklist { grid-template-columns: 1fr; }
+      .nav-container { padding: 0 14px; }
+      .workspace-wrap { padding: 16px 14px 40px; }
+      .form-field.span-2 { grid-column: 1 / -1; }
+    }
+
+    @media (max-width: 720px) {
+      .tab-bar { overflow-x: auto; max-width: calc(100vw - 150px); }
+      .metrics-grid { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
+      .key-value { grid-template-columns: 1fr; gap: 4px; }
+      .key-value .kv-key { margin-top: 6px; }
+      .toolbar-row { flex-direction: column; align-items: stretch; }
+      .input-text { width: 100%; }
+      .msg-row { max-width: 92%; }
+    }
+  </style>
+</head>
+<body>
+  <!-- ============ 顶部导航：品牌 + 药丸 Tab + 控制 ============ -->
+  <header class="top-nav">
+    <div class="nav-container">
+      <div class="brand-section">
+        <div class="brand-logo-mark">F</div>
+        <div class="brand-name-wrap">
+          <span class="brand-title">FishOps</span>
+          <span class="brand-version-pill">Seline 功能版</span>
+        </div>
+      </div>
+
+      <nav class="tab-bar" id="main-tabs" role="tablist" aria-label="主导航">
+        <button class="tab-item active" data-view="overview" role="tab">
+          <span class="tab-dot"></span><span>运营总览</span>
+        </button>
+        <button class="tab-item" data-view="analytics" role="tab">
+          <span class="tab-dot"></span><span>数据分析</span>
+        </button>
+        <button class="tab-item" data-view="inventory" role="tab">
+          <span class="tab-dot"></span><span>商品库</span>
+        </button>
+        <button class="tab-item" data-view="tasks" role="tab">
+          <span class="tab-dot"></span><span>采集任务</span>
+        </button>
+        <button class="tab-item" data-view="chat" role="tab">
+          <span class="tab-dot"></span><span>聊天中心</span>
+        </button>
+        <button class="tab-item" data-view="publish" role="tab">
+          <span class="tab-dot"></span><span>发布中心</span>
+        </button>
+        <button class="tab-item" data-view="settings" role="tab">
+          <span class="tab-dot"></span><span>设置</span>
+        </button>
+      </nav>
+
+      <div class="nav-actions">
+        <button class="btn btn-icon-only" id="refresh-btn" title="刷新看板" aria-label="刷新看板">
+          <span id="refresh-icon">↻</span>
+        </button>
+        <button class="btn btn-icon-only" id="theme-toggle-btn" title="切换浅色/深色模式" aria-label="切换浅色/深色模式">
+          <svg id="theme-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="workspace-wrap">
+
+    <!-- ============ 1. 运营总览 ============ -->
+    <section class="view-panel" id="view-overview">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">运营总览</h1>
+          <span class="view-sub">商品资产、未读会话、任务流水线与运行环境状态看板</span>
+        </div>
+        <div class="view-tools">
+          <button class="btn btn-brand" id="browse-inventory-btn">浏览商品库</button>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">商品总数</span>
+          </div>
+          <div class="metric-value-row"><span class="metric-num">12,480</span></div>
+          <div class="metric-meta"><span>已同步至多维表格</span></div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">未读会话</span>
+            <span class="metric-badge red">需关注</span>
+          </div>
+          <div class="metric-value-row"><span class="metric-num">18</span></div>
+          <div class="metric-meta"><span>过去 24 小时活跃</span></div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">运行中任务</span>
+          </div>
+          <div class="metric-value-row"><span class="metric-num">4</span></div>
+          <div class="metric-meta"><span>正常执行中</span></div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">失败任务</span>
+            <span class="metric-badge red">待排查</span>
+          </div>
+          <div class="metric-value-row"><span class="metric-num">1</span></div>
+          <div class="metric-meta"><span>等待重试或人工排查</span></div>
+        </div>
+      </div>
+
+      <div class="dashboard-split">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="card-title">近期任务</span>
+              <span class="card-caption">采集 / 发布 / 分析</span>
+            </div>
+            <button class="btn" id="overview-all-tasks-btn">查看全部任务</button>
+          </div>
+          <div class="table-responsive">
+            <table class="seline-table">
+              <thead>
+                <tr>
+                  <th>任务</th>
+                  <th style="width: 80px;">类型</th>
+                  <th style="width: 96px;">状态</th>
+                  <th style="width: 120px;">更新时间</th>
+                  <th style="width: 90px; text-align: right;">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Sony A7M4 关键词采集</td>
+                  <td><span class="pill pill-yellow">采集</span></td>
+                  <td><span class="pill pill-green">已完成</span></td>
+                  <td>10-05 14:28</td>
+                  <td style="text-align: right;"><button class="action-btn" data-goto-view="tasks">查看</button></td>
+                </tr>
+                <tr>
+                  <td>富士 X-T5 关键词采集</td>
+                  <td><span class="pill pill-yellow">采集</span></td>
+                  <td><span class="pill pill-yellow">运行中</span></td>
+                  <td>10-05 14:32</td>
+                  <td style="text-align: right;"><button class="action-btn" data-goto-view="tasks">查看</button></td>
+                </tr>
+                <tr>
+                  <td>摄影器材价格分析</td>
+                  <td><span class="pill">分析</span></td>
+                  <td><span class="pill pill-green">已完成</span></td>
+                  <td>10-05 13:50</td>
+                  <td style="text-align: right;"><button class="action-btn" data-goto-view="analytics">查看</button></td>
+                </tr>
+                <tr>
+                  <td>Sony A7M4 发布准备</td>
+                  <td><span class="pill">发布</span></td>
+                  <td><span class="pill">等待开始</span></td>
+                  <td>10-05 12:20</td>
+                  <td style="text-align: right;"><button class="action-btn" data-goto-view="publish">查看</button></td>
+                </tr>
+                <tr>
+                  <td>验机报告批量采集</td>
+                  <td><span class="pill pill-yellow">采集</span></td>
+                  <td><span class="pill pill-red">失败</span></td>
+                  <td>10-05 11:20</td>
+                  <td style="text-align: right;"><button class="action-btn" data-goto-view="tasks">查看</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="card-title">运行环境状态</span>
+              <span class="card-caption">仅单次诊断</span>
+            </div>
+            <span class="pill" id="runtime-badge">未检测</span>
+          </div>
+          <div class="card-body">
+            <div class="key-value" style="grid-template-columns: 1fr;">
+              <div>
+                <div class="kv-key" style="font-size: 11.5px;">Bridge 状态</div>
+                <div class="kv-val" id="bridge-state" style="margin-top: 2px;">未检测</div>
+              </div>
+              <div>
+                <div class="kv-key" style="font-size: 11.5px;">单次 PING RTT</div>
+                <div class="kv-val" id="rtt-value" style="margin-top: 2px;">暂无</div>
+              </div>
+              <div>
+                <div class="kv-key" style="font-size: 11.5px;">错误信息</div>
+                <div class="kv-val" id="runtime-error" style="margin-top: 2px;">无</div>
+              </div>
+            </div>
+            <p class="muted-note" style="margin-top: 12px;">单次诊断的往返耗时，非平均值或分位数；诊断失败时展示原始错误内容。</p>
+            <div class="form-actions" style="margin-top: 14px;">
+              <button class="btn btn-brand" id="ping-diagnose-btn">发起单次 PING 诊断</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- ============ 2. 数据分析 ============ -->
+    <section class="view-panel" id="view-analytics" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">数据分析</h1>
+          <span class="view-sub">结构化数据分析与价格洞察：价格分析、价格分布、商机与风险</span>
+        </div>
+        <div class="view-tools">
+          <button class="btn btn-brand" id="open-report-btn">查看完整报告</button>
+        </div>
+      </div>
+
+      <div class="analysis-hero-card">
+        <div class="analysis-hero-content">
+          <span class="analysis-hero-tag">数据摘要 · Summary</span>
+          <h2 class="analysis-hero-title">市场供需与定价趋势分析</h2>
+          <p class="analysis-hero-desc">
+            汇总当前采集样本的价格区间、竞争程度分布与品相货源特征，综合生成选品建议、潜在商机与风控提示。
+          </p>
+        </div>
+        <button class="btn" id="hero-read-report-btn">阅读细节</button>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <span class="card-title">价格分析</span>
+            <span class="card-caption">priceRange / competition / recommendation</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="key-value">
+            <div class="kv-key">价格区间</div>
+            <div class="kv-val">¥7,000 - ¥9,500（样本集中分布带）</div>
+            <div class="kv-key">竞争热度</div>
+            <div class="kv-val">中等（同款在售约 120 件）</div>
+            <div class="kv-key">选品建议</div>
+            <div class="kv-val">聚焦箱说配件齐全、快门数低货源，溢价空间更稳定</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <span class="card-title">价格分布图表</span>
+            <span class="card-caption">样本分箱统计</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="hist-wrapper">
+            <div class="hist-chart">
+              <div class="hist-bar-col">
+                <span class="hist-pop">6.5k-7k</span>
+                <div class="hist-fill" style="height: 18%;"></div>
+                <span class="hist-axis-label">分箱 1</span>
+              </div>
+              <div class="hist-bar-col">
+                <span class="hist-pop">7k-7.5k</span>
+                <div class="hist-fill" style="height: 34%;"></div>
+                <span class="hist-axis-label">分箱 2</span>
+              </div>
+              <div class="hist-bar-col">
+                <span class="hist-pop">7.5k-8k</span>
+                <div class="hist-fill" style="height: 56%;"></div>
+                <span class="hist-axis-label">分箱 3</span>
+              </div>
+              <div class="hist-bar-col">
+                <span class="hist-pop">8k-8.5k</span>
+                <div class="hist-fill highlight" style="height: 94%;"></div>
+                <span class="hist-axis-label">分箱 4</span>
+              </div>
+              <div class="hist-bar-col">
+                <span class="hist-pop">8.5k-9k</span>
+                <div class="hist-fill" style="height: 70%;"></div>
+                <span class="hist-axis-label">分箱 5</span>
+              </div>
+              <div class="hist-bar-col">
+                <span class="hist-pop">9k-9.5k</span>
+                <div class="hist-fill" style="height: 40%;"></div>
+                <span class="hist-axis-label">分箱 6</span>
+              </div>
+              <div class="hist-bar-col">
+                <span class="hist-pop">9.5k+</span>
+                <div class="hist-fill" style="height: 22%;"></div>
+                <span class="hist-axis-label">分箱 7</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="insights-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="card-title">潜在商机</span>
+              <span class="card-caption">opportunities</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="insight-row">
+              <span class="insight-dot green"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">单机身搭配常用定焦套出需求旺盛</span>
+                <span class="insight-body">买家对 35mm / 50mm 大光圈镜头组合搜索率环比增长 24%。</span>
+              </div>
+            </div>
+            <div class="insight-row">
+              <span class="insight-dot green"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">个人转手低快门机身流转快</span>
+                <span class="insight-body">快门 5000 以内机身平均 48 小时内完成交易，转化率高。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="card-title">风险提示</span>
+              <span class="card-caption">risks</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="insight-row">
+              <span class="insight-dot red"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">低价翻新与暗病机身识别风险</span>
+                <span class="insight-body">低于均价 20% 的货源多伴随非原装传感器维修或发票缺失。</span>
+              </div>
+            </div>
+            <div class="insight-row">
+              <span class="insight-dot red"></span>
+              <div class="insight-text-wrap">
+                <span class="insight-headline">退换货纠纷集中于成色争议</span>
+                <span class="insight-body">建议入库核验并留存高清细节视频，避免成色描述不符。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 3. 商品库 ============ -->
+    <section class="view-panel" id="view-inventory" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">商品库</h1>
+          <span class="view-sub">采集结果检索、筛选、排序与发布流转</span>
+        </div>
+      </div>
+
+      <div class="card feature-card">
+        <div class="toolbar-row">
+          <div class="toolbar-left">
+            <input type="text" class="input-text" id="product-search" placeholder="搜索标题、卖家、地区..." aria-label="搜索商品">
+            <select class="select-dropdown" id="ship-filter" aria-label="包邮筛选">
+              <option value="all">包邮状态：全部</option>
+              <option value="free">包邮</option>
+              <option value="paid">不包邮</option>
+            </select>
+            <button class="btn" id="reset-filter-btn">重置筛选</button>
+          </div>
+          <div class="toolbar-right">
+            <span class="muted-note">行距密度：</span>
+            <div class="period-switch" role="group" aria-label="表格行距密度">
+              <button class="period-btn active" id="density-normal-btn" type="button">默认</button>
+              <button class="period-btn" id="density-compact-btn" type="button">紧凑</button>
+            </div>
+            <button class="btn btn-brand" id="batch-enqueue-publish-btn" type="button" disabled>批量加入发布队列</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="seline-table" id="product-table">
+            <thead>
+              <tr>
+                <th style="width: 40px; text-align: center;"><input type="checkbox" id="check-all" aria-label="全选"></th>
+                <th style="width: 66px;">图片</th>
+                <th>商品（itemId）</th>
+                <th class="sortable" id="sort-price-th" title="点击按价格排序">价格 <span style="font-size: 10px;">↕</span></th>
+                <th class="sortable" id="sort-wants-th" title="点击按想要数排序">想要数 <span style="font-size: 10px;">↕</span></th>
+                <th>卖家</th>
+                <th>地区</th>
+                <th>包邮</th>
+                <th>采集时间</th>
+                <th style="width: 150px; text-align: right;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="product-tbody">
+              <tr data-shipping="free" data-price="8850" data-wants="182">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择此行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                      <rect x="3" y="8" width="26" height="18" rx="3" stroke="#F5C400" stroke-width="2"/>
+                      <circle cx="16" cy="17" r="5" stroke="#F5C400" stroke-width="2"/>
+                      <rect x="8" y="5" width="6" height="3" rx="1" fill="#F5C400"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <span class="product-name" title="Sony A7M4 国行单机 极少用 快门3200 箱说全">Sony A7M4 国行单机 极少用 快门3200 箱说全</span>
+                    <span class="product-sku">itemId: 884029</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥8,850.00</span></td>
+                <td><strong>182</strong> 人想要</td>
+                <td>摄影小陈_自用</td>
+                <td>上海 · 浦东</td>
+                <td><span class="pill pill-yellow">包邮</span></td>
+                <td>10-05 14:12</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-design-toast="设计稿：不会真正查看商品详情">详情</button>
+                  <button class="action-btn" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</button>
+                </td>
+              </tr>
+
+              <tr data-shipping="free" data-price="9200" data-wants="245">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择此行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                      <rect x="3" y="8" width="26" height="18" rx="3" stroke="#F5C400" stroke-width="2"/>
+                      <circle cx="16" cy="17" r="5" stroke="#F5C400" stroke-width="2"/>
+                      <rect x="8" y="5" width="6" height="3" rx="1" fill="#F5C400"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <span class="product-name" title="富士 X-T5 碳晶灰机身 官方延保中 诚心出">富士 X-T5 碳晶灰机身 官方延保中 诚心出</span>
+                    <span class="product-sku">itemId: 884030</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥9,200.00</span></td>
+                <td><strong>245</strong> 人想要</td>
+                <td>日落街角Lens</td>
+                <td>浙江 · 杭州</td>
+                <td><span class="pill pill-yellow">包邮</span></td>
+                <td>10-05 13:58</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-design-toast="设计稿：不会真正查看商品详情">详情</button>
+                  <button class="action-btn" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</button>
+                </td>
+              </tr>
+
+              <tr data-shipping="paid" data-price="6350" data-wants="89">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择此行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                      <rect x="8" y="6" width="16" height="20" rx="3" stroke="var(--text-secondary)" stroke-width="2"/>
+                      <circle cx="16" cy="16" r="4" stroke="#F5C400" stroke-width="2"/>
+                      <line x1="8" y1="11" x2="24" y2="11" stroke="var(--border-line)" stroke-width="1.5"/>
+                      <line x1="8" y1="21" x2="24" y2="21" stroke="var(--border-line)" stroke-width="1.5"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <span class="product-name" title="适马 24-70mm F2.8 DG DN 二代 E口 镜片通透">适马 24-70mm F2.8 DG DN 二代 E口 镜片通透</span>
+                    <span class="product-sku">itemId: 884031</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥6,350.00</span></td>
+                <td><strong>89</strong> 人想要</td>
+                <td>器材党退烧小李</td>
+                <td>北京 · 朝阳</td>
+                <td><span class="pill">不包邮</span></td>
+                <td>10-05 13:20</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-design-toast="设计稿：不会真正查看商品详情">详情</button>
+                  <button class="action-btn" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</button>
+                </td>
+              </tr>
+
+              <tr data-shipping="free" data-price="11800" data-wants="312">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择此行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                      <rect x="3" y="8" width="26" height="18" rx="3" stroke="#F5C400" stroke-width="2"/>
+                      <circle cx="16" cy="17" r="5" stroke="#F5C400" stroke-width="2"/>
+                      <rect x="8" y="5" width="6" height="3" rx="1" fill="#F5C400"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <span class="product-name" title="佳能 EOS R6 Mark II 单机身 个人自用退坑">佳能 EOS R6 Mark II 单机身 个人自用退坑</span>
+                    <span class="product-sku">itemId: 884032</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥11,800.00</span></td>
+                <td><strong>312</strong> 人想要</td>
+                <td>光影实验室</td>
+                <td>广东 · 深圳</td>
+                <td><span class="pill pill-yellow">包邮</span></td>
+                <td>10-05 12:44</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-design-toast="设计稿：不会真正查看商品详情">详情</button>
+                  <button class="action-btn" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</button>
+                </td>
+              </tr>
+
+              <tr data-shipping="free" data-price="680" data-wants="54">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择此行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                      <line x1="16" y1="5" x2="16" y2="18" stroke="#F5C400" stroke-width="2"/>
+                      <line x1="16" y1="18" x2="9" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                      <line x1="16" y1="18" x2="23" y2="28" stroke="var(--text-secondary)" stroke-width="2"/>
+                      <circle cx="16" cy="5" r="3" fill="#F5C400"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <span class="product-name" title="马小路 ET-1541T 碳纤维便携三脚架 云台完好">马小路 ET-1541T 碳纤维便携三脚架 云台完好</span>
+                    <span class="product-sku">itemId: 884033</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥680.00</span></td>
+                <td><strong>54</strong> 人想要</td>
+                <td>远行户外徒步</td>
+                <td>四川 · 成都</td>
+                <td><span class="pill pill-yellow">包邮</span></td>
+                <td>10-05 11:30</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-design-toast="设计稿：不会真正查看商品详情">详情</button>
+                  <button class="action-btn" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</button>
+                </td>
+              </tr>
+
+              <tr data-shipping="paid" data-price="4500" data-wants="198">
+                <td style="text-align: center;"><input type="checkbox" class="row-check" aria-label="选择此行"></td>
+                <td>
+                  <div class="product-thumb">
+                    <svg class="product-thumb-svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                      <circle cx="16" cy="16" r="4" fill="#F5C400"/>
+                      <line x1="8" y1="8" x2="24" y2="24" stroke="var(--text-secondary)" stroke-width="1.8"/>
+                      <line x1="24" y1="8" x2="8" y2="24" stroke="var(--text-secondary)" stroke-width="1.8"/>
+                      <circle cx="8" cy="8" r="3" stroke="#F5C400" stroke-width="1.5"/>
+                      <circle cx="24" cy="8" r="3" stroke="#F5C400" stroke-width="1.5"/>
+                      <circle cx="8" cy="24" r="3" stroke="#F5C400" stroke-width="1.5"/>
+                      <circle cx="24" cy="24" r="3" stroke="#F5C400" stroke-width="1.5"/>
+                    </svg>
+                  </div>
+                </td>
+                <td>
+                  <div class="product-info-wrap">
+                    <span class="product-name" title="大疆 DJI Mini 4 Pro 畅飞套装 带屏遥控器 无炸机">大疆 DJI Mini 4 Pro 畅飞套装 带屏遥控器 无炸机</span>
+                    <span class="product-sku">itemId: 884034</span>
+                  </div>
+                </td>
+                <td><span class="product-price">¥4,500.00</span></td>
+                <td><strong>198</strong> 人想要</td>
+                <td>飞行员老张</td>
+                <td>湖北 · 武汉</td>
+                <td><span class="pill">不包邮</span></td>
+                <td>10-05 10:15</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-design-toast="设计稿：不会真正查看商品详情">详情</button>
+                  <button class="action-btn" data-design-toast="设计稿：不会真正加入发布队列">加入发布队列</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-footer">
+          <div id="pagination-summary">示例数据</div>
+          <div class="page-controls" id="pagination-pages"></div>
+        </div>
+      </div>
+
+      <p class="muted-note">已选择 <strong id="selected-count-label">0</strong> 项商品</p>
+    </section>
+    <!-- ============ 4. 采集任务 ============ -->
+    <section class="view-panel" id="view-tasks" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">采集任务</h1>
+          <span class="view-sub">创建关键词采集任务、跟踪进度与查看任务详情</span>
+        </div>
+      </div>
+
+      <!-- 创建任务（可展开 / 收起） -->
+      <div class="card feature-card">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <span class="card-title">创建采集任务</span>
+            <span class="card-caption">采集参数与流量词选择</span>
+          </div>
+          <button class="btn" id="toggle-task-form" type="button">展开表单</button>
+        </div>
+        <div class="collapse-panel" id="task-form-panel">
+          <div class="card-body">
+            <div class="form-grid">
+              <div class="form-field span-full keyword-field-wrap">
+                <div class="field-label-row">
+                  <label class="form-label" for="task-keyword-input">关键词 / 流量词（多选）</label>
+                  <button class="btn-text-action" id="toggle-suggest-btn" type="button">常用流量词建议 ▾</button>
+                </div>
+                <div class="tag-input-container" id="keyword-tag-container" tabindex="0">
+                  <div class="tag-list" id="keyword-tag-list"></div>
+                  <input type="text" class="tag-input-field" id="task-keyword-input" placeholder="输入关键词按 Enter 添加，或点选建议词..." autocomplete="off">
+                </div>
+                <div class="suggest-dropdown" id="keyword-suggest-dropdown" style="display: none;" role="listbox">
+                  <div class="suggest-header">
+                    <span>热门流量词建议（点击可连续添加）</span>
+                    <span class="suggest-hint">Esc 或点击外部关闭</span>
+                  </div>
+                  <div class="suggest-items-grid" id="suggest-items-container"></div>
+                </div>
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="task-start-page">起始页</label>
+                <input class="form-input" id="task-start-page" type="number" min="1" value="1">
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="task-pages">采集页数</label>
+                <input class="form-input" id="task-pages" type="number" min="1" value="5">
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="task-page-size">每页条数</label>
+                <input class="form-input" id="task-page-size" type="number" min="1" value="30">
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="task-min-wants">最低想要数</label>
+                <input class="form-input" id="task-min-wants" type="number" min="0" value="0">
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="task-price-min">最低价格</label>
+                <input class="form-input" id="task-price-min" type="number" min="0" placeholder="¥">
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="task-price-max">最高价格</label>
+                <input class="form-input" id="task-price-max" type="number" min="0" placeholder="¥">
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="task-base-interval">基础间隔（秒）</label>
+                <input class="form-input" id="task-base-interval" type="number" min="1" value="3">
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="task-random-interval">随机间隔（秒）</label>
+                <input class="form-input" id="task-random-interval" type="number" min="0" value="2">
+              </div>
+              <div class="form-field">
+                <span class="form-label">仅包邮</span>
+                <label class="form-check"><input type="checkbox" id="task-free-shipping"> 仅采集包邮商品</label>
+              </div>
+              <div class="form-field">
+                <span class="form-label">采集详情</span>
+                <label class="form-check"><input type="checkbox" id="task-fetch-detail"> 采集商品详情页</label>
+              </div>
+            </div>
+            <div class="form-actions" style="margin-top: 18px;">
+              <button class="btn btn-brand" id="create-task-btn" type="button">创建任务</button>
+              <button class="btn" id="reset-task-form-btn" type="button">重置</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 任务列表 -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <span class="card-title">采集任务列表</span>
+            <span class="card-caption">任务执行流水</span>
+          </div>
+          <div class="tabs" id="task-status-tabs">
+            <button class="tab-btn active" data-status="all" type="button">全部</button>
+            <button class="tab-btn" data-status="waiting" type="button">等待开始</button>
+            <button class="tab-btn" data-status="running" type="button">采集中</button>
+            <button class="tab-btn" data-status="paused" type="button">已暂停</button>
+            <button class="tab-btn" data-status="done" type="button">已完成</button>
+            <button class="tab-btn" data-status="failed" type="button">失败</button>
+            <button class="tab-btn" data-status="canceled" type="button">已取消</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="seline-table">
+            <thead>
+              <tr>
+                <th>关键词</th>
+                <th style="width: 96px;">状态</th>
+                <th style="width: 160px;">进度</th>
+                <th style="width: 80px;">页码</th>
+                <th style="width: 74px;">已入库</th>
+                <th style="width: 70px;">失败数</th>
+                <th style="width: 120px;">更新时间</th>
+                <th style="width: 210px; text-align: right;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="task-tbody">
+              <tr data-status="running" data-keyword="Sony A7M4" data-page="3 / 5" data-stored="86" data-failed="2" data-updated="10-05 14:32" data-fetched="120" data-valid="86" data-filtered="22" data-duplicate="10" data-breakpoint="第 4 页第 7 条" data-issue="第 3 页偶发 429 请求受限">
+                <td><strong>Sony A7M4</strong></td>
+                <td><span class="pill pill-yellow">采集中</span></td>
+                <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width: 42%;"></div></div><span class="progress-label">42%</span></div></td>
+                <td>3 / 5</td>
+                <td>86</td>
+                <td>2</td>
+                <td>10-05 14:32</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-action="pause">暂停</button>
+                  <button class="action-btn" data-action="cancel">取消</button>
+                  <button class="action-btn" data-action="detail">查看详情</button>
+                </td>
+              </tr>
+              <tr data-status="paused" data-keyword="富士 X-T5" data-page="2 / 5" data-stored="54" data-failed="0" data-updated="10-05 13:10" data-fetched="72" data-valid="54" data-filtered="12" data-duplicate="6" data-breakpoint="第 2 页第 21 条" data-issue="无">
+                <td><strong>富士 X-T5</strong></td>
+                <td><span class="pill pill-yellow">已暂停</span></td>
+                <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width: 30%;"></div></div><span class="progress-label">30%</span></div></td>
+                <td>2 / 5</td>
+                <td>54</td>
+                <td>0</td>
+                <td>10-05 13:10</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-action="resume">恢复</button>
+                  <button class="action-btn" data-action="cancel">取消</button>
+                  <button class="action-btn" data-action="detail">查看详情</button>
+                </td>
+              </tr>
+              <tr data-status="waiting" data-keyword="佳能 EOS R6" data-page="暂无" data-stored="0" data-failed="0" data-updated="10-05 12:40" data-fetched="0" data-valid="0" data-filtered="0" data-duplicate="0" data-breakpoint="未开始" data-issue="无">
+                <td><strong>佳能 EOS R6</strong></td>
+                <td><span class="pill">等待开始</span></td>
+                <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width: 0%;"></div></div><span class="progress-label">0%</span></div></td>
+                <td>暂无</td>
+                <td>0</td>
+                <td>0</td>
+                <td>10-05 12:40</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-action="cancel">取消</button>
+                  <button class="action-btn" data-action="detail">查看详情</button>
+                </td>
+              </tr>
+              <tr data-status="done" data-keyword="尼康 Z6 III" data-page="5 / 5" data-stored="132" data-failed="1" data-updated="10-05 11:05" data-fetched="145" data-valid="132" data-filtered="8" data-duplicate="4" data-breakpoint="已完成" data-issue="第 2 页 1 条解析失败">
+                <td><strong>尼康 Z6 III</strong></td>
+                <td><span class="pill pill-green">已完成</span></td>
+                <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill success" style="width: 100%;"></div></div><span class="progress-label">100%</span></div></td>
+                <td>5 / 5</td>
+                <td>132</td>
+                <td>1</td>
+                <td>10-05 11:05</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-action="retry">重试失败项</button>
+                  <button class="action-btn" data-action="detail">查看详情</button>
+                </td>
+              </tr>
+              <tr data-status="failed" data-keyword="验机报告批量" data-page="1 / 5" data-stored="9" data-failed="16" data-updated="10-05 10:20" data-fetched="25" data-valid="9" data-filtered="0" data-duplicate="0" data-breakpoint="第 1 页第 26 条" data-issue="多次请求超时">
+                <td><strong>验机报告批量</strong></td>
+                <td><span class="pill pill-red">失败</span></td>
+                <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill danger" style="width: 15%;"></div></div><span class="progress-label">15%</span></div></td>
+                <td>1 / 5</td>
+                <td>9</td>
+                <td>16</td>
+                <td>10-05 10:20</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-action="retry">重试失败项</button>
+                  <button class="action-btn" data-action="detail">查看详情</button>
+                  <button class="action-btn danger" data-action="cancel">取消</button>
+                </td>
+              </tr>
+              <tr data-status="canceled" data-keyword="索尼 A7C II" data-page="1 / 3" data-stored="12" data-failed="0" data-updated="10-05 09:15" data-fetched="12" data-valid="12" data-filtered="0" data-duplicate="0" data-breakpoint="已取消" data-issue="手动取消">
+                <td><strong>索尼 A7C II</strong></td>
+                <td><span class="pill">已取消</span></td>
+                <td><div class="progress-inline"><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width: 8%;"></div></div><span class="progress-label">8%</span></div></td>
+                <td>1 / 3</td>
+                <td>12</td>
+                <td>0</td>
+                <td>10-05 09:15</td>
+                <td style="text-align: right;">
+                  <button class="action-btn" data-action="detail">查看详情</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 5. 聊天中心 ============ -->
+    <section class="view-panel" id="view-chat" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">聊天中心</h1>
+          <span class="view-sub">买家会话流、消息记录、历史同步与智能建议</span>
+        </div>
+      </div>
+
+      <!-- 会话列表 + 消息流 + 回复区（对齐 ChatCenterPage.vue） -->
+      <div class="chat-layout">
+        <!-- 左列：会话 -->
+        <div class="card chat-col">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="card-title">会话</span>
+            </div>
+            <div class="toolbar-right">
+              <span class="pill pill-mono" id="conv-count-badge">4</span>
+              <button class="btn btn-icon-only" id="chat-refresh-conv-btn" title="刷新本地缓存" aria-label="刷新本地缓存">
+                <span>↻</span>
+              </button>
+              <span class="status-dot-compact" id="socket-status-dot" title="Socket 正常连接" aria-label="Socket 正常连接"></span>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="conversation-list" id="conversation-list"></div>
+          </div>
+        </div>
+
+        <!-- 右列：消息与回复 -->
+        <div class="card chat-main-col">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="card-title">消息</span>
+            </div>
+            <div class="toolbar-right">
+              <button class="btn btn-sm" id="chat-sync-history-btn" type="button">同步历史</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <!-- 买家与商品紧凑摘要栏 (contextbar) -->
+            <div class="chat-contextbar" id="chat-contextbar">
+              <div class="contextbar-peer">
+                <span class="contextbar-avatar" id="contextbar-avatar">陈</span>
+                <div class="contextbar-info">
+                  <span class="contextbar-name" id="chat-peer-name">摄影小陈_自用</span>
+                  <span class="contextbar-meta" id="chat-peer-meta">ID 392019482 · 未读 0</span>
+                </div>
+              </div>
+              <div class="contextbar-item" id="contextbar-item">
+                <span class="contextbar-item-tag">关联商品</span>
+                <span class="contextbar-item-title" id="contextbar-item-title">Sony A7M4 国行单机 极少用 快门3200 箱说全</span>
+                <a class="contextbar-link" id="contextbar-item-link" href="https://www.goofish.com/item?id=884029" target="_blank" rel="noopener noreferrer">在闲鱼打开 ↗</a>
+              </div>
+            </div>
+
+            <!-- 消息流 -->
+            <div class="message-stream" id="message-stream"></div>
+
+            <!-- 回复区 (ReplyComposer) -->
+            <div class="chat-reply-composer">
+              <div class="reply-prompt-row">
+                <button class="reply-suggest-btn" id="chat-suggest-btn" type="button">✨ 回复建议</button>
+                <span class="suggestion-filled-badge" id="suggestion-filled-tip" style="display: none;">已填入智能建议</span>
+              </div>
+              <textarea class="reply-textarea" id="reply-input" placeholder="输入回复内容..." rows="3"></textarea>
+              <div class="reply-toolbar">
+                <span class="reply-count"><span id="reply-count">0</span> / 200 字</span>
+                <div class="toolbar-right">
+                  <button class="btn btn-brand btn-sm" id="send-reply-btn" type="button">发送</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 6. 发布中心 ============ -->
+    <section class="view-panel" id="view-publish" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">发布中心</h1>
+          <span class="view-sub">发布任务历史流水、执行状态与人工确认</span>
+        </div>
+      </div>
+
+      <!-- 发布任务历史主体 -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <span class="card-title">发布任务历史</span>
+            <span class="card-caption" id="publish-count-caption">共 5 条任务</span>
+          </div>
+          <div class="toolbar-right">
+            <input type="text" class="input-text" id="publish-search-input" placeholder="搜索商品名称..." aria-label="搜索发布任务" style="width: 170px;">
+            <select class="select-dropdown" id="publish-status-filter" aria-label="发布状态筛选">
+              <option value="all">任务状态：全部</option>
+              <option value="queue">排队中</option>
+              <option value="review">待核对</option>
+              <option value="published">已发布</option>
+              <option value="failed">准备失败 / 拒绝</option>
+              <option value="unknown">结果未知</option>
+            </select>
+            <button class="btn" id="refresh-publish-list-btn" type="button">刷新列表</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="seline-table">
+            <thead>
+              <tr>
+                <th style="width: 120px;">时间</th>
+                <th>摘要</th>
+                <th style="width: 116px;">任务状态</th>
+                <th style="width: 96px;">确认状态</th>
+                <th style="width: 100px; text-align: right;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="publish-task-tbody">
+              <!-- 任务行由 JS 渲染 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 7. 设置 ============ -->
+    <section class="view-panel" id="view-settings" style="display: none;">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">设置</h1>
+          <span class="view-sub">外观、AI、飞书、回复策略、运行环境与授权</span>
+        </div>
+      </div>
+
+      <div class="settings-layout">
+        <div class="card">
+          <div class="settings-nav" id="settings-nav">
+            <a class="nav-item active" data-settings="appearance" tabindex="0"><span>外观</span></a>
+            <a class="nav-item" data-settings="ai" tabindex="0"><span>AI 配置</span></a>
+            <a class="nav-item" data-settings="feishu" tabindex="0"><span>飞书配置</span></a>
+            <a class="nav-item" data-settings="reply" tabindex="0"><span>回复策略</span></a>
+            <a class="nav-item" data-settings="runtime" tabindex="0"><span>运行环境</span></a>
+            <a class="nav-item" data-settings="account" tabindex="0"><span>账号与授权</span></a>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column;">
+          <!-- 外观 -->
+          <div class="card settings-section active" data-settings-section="appearance">
+            <div class="card-header"><div class="card-title-wrap"><span class="card-title">外观</span><span class="card-caption">主题设置</span></div></div>
+            <div class="card-body">
+              <span class="form-label" style="display:block; margin-bottom: 10px;">主题</span>
+              <div class="tabs" id="theme-tabs">
+                <button class="tab-btn active" data-theme-option="light" type="button">浅色</button>
+                <button class="tab-btn" data-theme-option="dark" type="button">深色</button>
+              </div>
+              <p class="muted-note" style="margin-top: 12px;">与顶部主题切换按钮联动，选择保存在本地。</p>
+            </div>
+          </div>
+
+          <!-- AI 配置 -->
+          <div class="card settings-section" data-settings-section="ai">
+            <div class="card-header"><div class="card-title-wrap"><span class="card-title">AI 配置</span><span class="card-caption">模型服务与接口凭证</span></div></div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-field span-2"><label class="form-label" for="ai-base-url">Base URL</label><input class="form-input" id="ai-base-url" value="api.openai.com/v1"></div>
+                <div class="form-field span-2">
+                  <label class="form-label" for="ai-api-key">API Key（掩码）</label>
+                  <div class="input-with-action">
+                    <input class="form-input mask" id="ai-api-key" type="password" value="sk-demo-1234567890abcdef">
+                    <button class="btn" data-toggle-mask="ai-api-key" type="button">显示</button>
+                  </div>
+                </div>
+                <div class="form-field"><label class="form-label" for="ai-model">模型</label><input class="form-input" id="ai-model" value="gpt-4o-mini"></div>
+                <div class="form-field"><label class="form-label" for="ai-timeout">超时（秒）</label><input class="form-input" id="ai-timeout" value="60"></div>
+                <div class="form-field span-full"><label class="form-label" for="ai-domains">域名授权</label><input class="form-input" id="ai-domains" value="api.example.com, openapi.example.com"></div>
+              </div>
+              <div class="form-actions" style="margin-top: 18px;">
+                <button class="btn btn-brand" data-design-toast="AI 配置已保存" type="button">保存</button>
+                <button class="btn" data-design-toast="已发起 AI 接口连通性测试" type="button">测试连通</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 飞书配置 -->
+          <div class="card settings-section" data-settings-section="feishu">
+            <div class="card-header"><div class="card-title-wrap"><span class="card-title">飞书配置</span><span class="card-caption">多维表格与机器人权限</span></div></div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-field span-2"><label class="form-label" for="fs-app-id">App ID</label><input class="form-input" id="fs-app-id" value="cli_demo1234567890"></div>
+                <div class="form-field span-2">
+                  <label class="form-label" for="fs-app-secret">App Secret（掩码）</label>
+                  <div class="input-with-action">
+                    <input class="form-input mask" id="fs-app-secret" type="password" value="demo-secret-abcdef123456">
+                    <button class="btn" data-toggle-mask="fs-app-secret" type="button">显示</button>
+                  </div>
+                </div>
+                <div class="form-field span-2">
+                  <label class="form-label" for="fs-sheet-token">Spreadsheet Token（掩码）</label>
+                  <div class="input-with-action">
+                    <input class="form-input mask" id="fs-sheet-token" type="password" value="demo-sheet-token-abcdef">
+                    <button class="btn" data-toggle-mask="fs-sheet-token" type="button">显示</button>
+                  </div>
+                </div>
+                <div class="form-field"><label class="form-label" for="fs-product-table">Product Table ID</label><input class="form-input" id="fs-product-table" value="tbl_product_demo"></div>
+                <div class="form-field"><label class="form-label" for="fs-seller-table">Seller Table ID</label><input class="form-input" id="fs-seller-table" value="tbl_seller_demo"></div>
+              </div>
+              <div class="form-actions" style="margin-top: 18px;">
+                <button class="btn btn-brand" data-design-toast="飞书配置已保存" type="button">保存</button>
+                <button class="btn" data-design-toast="已发起飞书连通性测试" type="button">测试连通</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 回复策略 -->
+          <div class="card settings-section" data-settings-section="reply">
+            <div class="card-header"><div class="card-title-wrap"><span class="card-title">回复策略</span><span class="card-caption">自动回复与兜底规则</span></div></div>
+            <div class="card-body">
+              <div class="rule-panel">
+                <div class="form-field">
+                  <span class="form-label">模式</span>
+                  <div class="tabs" id="settings-reply-mode-tabs">
+                    <button class="tab-btn" data-mode="manual" type="button">人工</button>
+                    <button class="tab-btn active" data-mode="suggest" type="button">建议</button>
+                    <button class="tab-btn" data-mode="auto" type="button">自动</button>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <div class="form-field span-2">
+                    <span class="form-label">开关</span>
+                    <label class="form-check"><input type="checkbox" checked> 启用回复规则</label>
+                    <label class="form-check"><input type="checkbox"> AI 暂停</label>
+                  </div>
+                  <div class="form-field"><label class="form-label" for="set-cooldown">冷却（秒）</label><input class="form-input" id="set-cooldown" value="30"></div>
+                  <div class="form-field"><label class="form-label" for="set-delay">延迟（秒）</label><input class="form-input" id="set-delay" value="5"></div>
+                  <div class="form-field"><label class="form-label" for="set-limit">每会话上限</label><input class="form-input" id="set-limit" value="10"></div>
+                  <div class="form-field"><label class="form-label" for="set-window">自动回复窗口</label><input class="form-input" id="set-window" value="09:00 - 22:00"></div>
+                  <div class="form-field span-2"><label class="form-label" for="set-handoff">转人工关键词</label><input class="form-input" id="set-handoff" value="投诉, 退款, 举报"></div>
+                  <div class="form-field span-2"><label class="form-label" for="set-blacklist">黑名单关键词</label><input class="form-input" id="set-blacklist" value="加微信, 站外交易"></div>
+                  <div class="form-field"><label class="form-label" for="set-maxlen">最大内容长度</label><input class="form-input" id="set-maxlen" value="200"></div>
+                </div>
+              </div>
+              <div class="form-actions" style="margin-top: 18px;">
+                <button class="btn btn-brand" data-design-toast="回复策略已保存" type="button">保存</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 运行环境 -->
+          <div class="card settings-section" data-settings-section="runtime">
+            <div class="card-header"><div class="card-title-wrap"><span class="card-title">运行环境</span></div><span class="pill" id="settings-runtime-badge">未检测</span></div>
+            <div class="card-body">
+              <div class="key-value">
+                <div class="kv-key">扩展环境</div><div class="kv-val">Chrome Extension</div>
+                <div class="kv-key">Bridge 状态</div><div class="kv-val" id="settings-bridge-state">未检测</div>
+                <div class="kv-key">RTT（单次 PING）</div><div class="kv-val" id="settings-rtt">暂无</div>
+                <div class="kv-key">错误信息</div><div class="kv-val" id="settings-error">无</div>
+              </div>
+              <span class="form-label" style="display:block; margin: 20px 0 10px;">能力检查</span>
+              <div class="cap-grid">
+                <span class="cap-chip unknown"><span class="cap-dot"></span>bridge</span>
+                <span class="cap-chip unknown"><span class="cap-dot"></span>platform</span>
+                <span class="cap-chip unknown"><span class="cap-dot"></span>chat</span>
+                <span class="cap-chip unknown"><span class="cap-dot"></span>reply</span>
+                <span class="cap-chip unknown"><span class="cap-dot"></span>capture</span>
+                <span class="cap-chip unknown"><span class="cap-dot"></span>analysis</span>
+              </div>
+              <div class="form-actions" style="margin-top: 18px;">
+                <button class="btn" id="settings-check-btn" type="button">重新检查能力</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 账号与授权 -->
+          <div class="card settings-section" data-settings-section="account">
+            <div class="card-header"><div class="card-title-wrap"><span class="card-title">账号与授权</span></div></div>
+            <div class="card-body">
+              <div class="placeholder-wrap" style="padding: 40px 16px; margin: 0;">
+                <span class="placeholder-badge">暂未实现</span>
+                <h2 class="placeholder-title">账号与授权功能暂未实现</h2>
+                <p class="placeholder-desc">当前版本不包含账号体系、登录、会员、套餐与余额。此处不展示任何虚构的账号或授权信息。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+  <!-- 分析报告弹窗 -->
+  <dialog class="seline-dialog" id="report-dialog">
+    <div class="dialog-header">
+      <span class="dialog-title">数据分析报告</span>
+      <button class="dialog-close" id="close-report-btn" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-body">
+      <div>
+        <div class="dialog-section-title">输出结构</div>
+        <p style="margin-top: 4px;">摘要 summary · 价格分析 priceRange / competition / recommendation · 商机 opportunities · 风险 risks。</p>
+      </div>
+      <div>
+        <div class="dialog-section-title">价格分析</div>
+        <p style="margin-top: 4px;">围绕当前采集样本的集中成交区间、竞品货源分布与配件成色给出的定价建议。</p>
+      </div>
+      <div>
+        <div class="dialog-section-title">商机与风控</div>
+        <p style="margin-top: 4px;">提炼高频买家偏好与流转特征，并对低价异常货源标注翻新成色风险。</p>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn" id="close-report-footer-btn">关闭</button>
+      <button class="btn btn-brand" data-design-toast="已导出分析报告">导出报告</button>
+    </div>
+  </dialog>
+
+  <!-- 采集任务详情弹窗 -->
+  <dialog class="seline-dialog" id="task-detail-dialog">
+    <div class="dialog-header">
+      <span class="dialog-title">采集任务详情 · <span id="td-keyword">暂无</span></span>
+      <button class="dialog-close" id="close-task-detail-btn" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-body">
+      <div class="key-value">
+        <div class="kv-key">已获取</div><div class="kv-val" id="td-fetched">暂无</div>
+        <div class="kv-key">有效</div><div class="kv-val" id="td-valid">暂无</div>
+        <div class="kv-key">被过滤</div><div class="kv-val" id="td-filtered">暂无</div>
+        <div class="kv-key">重复</div><div class="kv-val" id="td-duplicate">暂无</div>
+        <div class="kv-key">失败</div><div class="kv-val" id="td-failed">暂无</div>
+        <div class="kv-key">下一页断点</div><div class="kv-val" id="td-breakpoint">暂无</div>
+        <div class="kv-key">问题说明</div><div class="kv-val" id="td-issue">暂无</div>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn" id="close-task-detail-footer-btn">关闭</button>
+    </div>
+  </dialog>
+
+  <!-- Toast 浮层 -->
+  <div class="toast-notice" id="toast-notice">
+    <span class="toast-dot"></span>
+    <span id="toast-text">提示信息</span>
+  </div>
+  <!-- 原生 JavaScript 交互逻辑（仅驱动静态设计稿，无真实请求） -->
+  <script>
+    // 通用工具
+    function escapeHtml(str) {
+      return String(str == null ? '' : str).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+    function nowTime() {
+      const d = new Date();
+      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    }
+    function modeLabel(mode) {
+      return { manual: '工人', suggest: '建议', auto: '自动' }[mode] || mode;
+    }
+
+    // Toast
+    const toastNotice = document.getElementById('toast-notice');
+    const toastText = document.getElementById('toast-text');
+    let toastTimer = null;
+    function showToast(msg) {
+      toastText.textContent = msg;
+      toastNotice.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { toastNotice.classList.remove('show'); }, 2600);
+    }
+
+    // 1. 顶部 Tab 切换
+    const tabs = document.querySelectorAll('.tab-item');
+    const panels = document.querySelectorAll('.view-panel');
+    function switchTab(viewId) {
+      tabs.forEach(function (tab) { tab.classList.toggle('active', tab.getAttribute('data-view') === viewId); });
+      panels.forEach(function (panel) { panel.style.display = (panel.id === 'view-' + viewId) ? 'block' : 'none'; });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () { switchTab(tab.getAttribute('data-view')); });
+    });
+    document.querySelectorAll('[data-goto-view]').forEach(function (el) {
+      el.addEventListener('click', function () { switchTab(el.getAttribute('data-goto-view')); });
+    });
+    document.getElementById('browse-inventory-btn').addEventListener('click', function () { switchTab('inventory'); });
+    document.getElementById('overview-all-tasks-btn').addEventListener('click', function () { switchTab('tasks'); });
+
+    // 2. 主题切换（默认浅色，与设置页联动）
+    const rootHtml = document.documentElement;
+    const themeToggleBtn = document.getElementById('theme-toggle-btn');
+    const themeIconSvg = document.getElementById('theme-icon-svg');
+    const SUN_ICON = '<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>';
+    const MOON_ICON = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>';
+    function setTheme(theme) {
+      rootHtml.setAttribute('data-theme', theme);
+      themeIconSvg.innerHTML = theme === 'dark' ? MOON_ICON : SUN_ICON;
+      document.querySelectorAll('#theme-tabs .tab-btn').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-theme-option') === theme);
+      });
+      try { localStorage.setItem('fishops_seline_theme', theme); } catch (e) {}
+    }
+    (function () {
+      let saved = 'light';
+      try { saved = localStorage.getItem('fishops_seline_theme') || 'light'; } catch (e) {}
+      setTheme(saved);
+    })();
+    themeToggleBtn.addEventListener('click', function () {
+      setTheme(rootHtml.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    });
+    document.getElementById('theme-tabs').addEventListener('click', function (e) {
+      const btn = e.target.closest('.tab-btn');
+      if (btn) setTheme(btn.getAttribute('data-theme-option'));
+    });
+
+    // 3. 刷新按钮
+    const refreshBtn = document.getElementById('refresh-btn');
+    const refreshIcon = document.getElementById('refresh-icon');
+    refreshBtn.addEventListener('click', function () {
+      refreshIcon.style.transition = 'transform 0.6s ease';
+      refreshIcon.style.transform = 'rotate(360deg)';
+      setTimeout(function () {
+        refreshIcon.style.transform = 'none';
+        showToast('已刷新看板数据');
+      }, 600);
+    });
+
+    // 4. 运行环境：单次 PING 诊断
+    function setBridgeUI(stateText, rtt, error) {
+      const map = { 'bridge-state': stateText, 'rtt-value': rtt, 'runtime-error': error, 'settings-bridge-state': stateText, 'settings-rtt': rtt, 'settings-error': error };
+      Object.keys(map).forEach(function (id) { const el = document.getElementById(id); if (el) el.textContent = map[id]; });
+      const runtimeBadge = document.getElementById('runtime-badge');
+      const settingsBadge = document.getElementById('settings-runtime-badge');
+      if (runtimeBadge) runtimeBadge.textContent = stateText;
+      if (settingsBadge) settingsBadge.textContent = stateText;
+    }
+    const pingBtn = document.getElementById('ping-diagnose-btn');
+    pingBtn.addEventListener('click', function () {
+      setBridgeUI('检查中', '暂无', '无');
+      showToast('正在发起单次 PING 诊断...');
+      setTimeout(function () {
+        setBridgeUI('可用', '42 ms', '无');
+        showToast('单次 PING 诊断完成，RTT 42 ms');
+      }, 700);
+    });
+
+    // 5. 发布中心数据与渲染（前置定义，便于商品库直接联动）
+    function nowTimeStr() {
+      const d = new Date();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const h = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      return m + '-' + day + ' ' + h + ':' + min;
+    }
+
+    const publishTasks = [
+      { id: 'pub_1', time: '10-05 14:20', summary: 'Sony A7M4 国行单机 (¥8,850.00) 发布', status: 'review', statusLabel: '待核对', statusClass: 'pill pill-yellow', confirm: '未确认', itemId: '884029' },
+      { id: 'pub_2', time: '10-05 13:40', summary: '富士 X-T5 银色单机 (¥11,200.00) 发布', status: 'failed', statusLabel: '准备失败', statusClass: 'pill pill-red', confirm: '暂无', itemId: '884030' },
+      { id: 'pub_3', time: '10-05 12:10', summary: '适马 24-70mm F2.8 DG DN (¥4,900.00) 发布', status: 'failed', statusLabel: '提交被拒绝', statusClass: 'pill pill-red', confirm: '已确认', itemId: '884031' },
+      { id: 'pub_4', time: '10-05 11:05', summary: '佳能 EOS R6 Mark II (¥13,800.00) 发布', status: 'published', statusLabel: '已发布', statusClass: 'pill pill-green', confirm: '已确认', itemId: '884032' },
+      { id: 'pub_5', time: '10-05 10:30', summary: '大疆 DJI Mini 4 Pro 畅飞套装 (¥4,500.00) 发布', status: 'unknown', statusLabel: '结果未知', statusClass: 'pill', confirm: '已确认', itemId: '884034' }
+    ];
+
+    const publishTbody = document.getElementById('publish-task-tbody');
+    const publishCountCaption = document.getElementById('publish-count-caption');
+    const publishStatusFilter = document.getElementById('publish-status-filter');
+    const publishSearchInput = document.getElementById('publish-search-input');
+
+    function renderPublishTasks() {
+      if (!publishTbody) return;
+      const status = publishStatusFilter ? publishStatusFilter.value : 'all';
+      const kw = (publishSearchInput ? publishSearchInput.value : '').trim().toLowerCase();
+
+      const filtered = publishTasks.filter(function (t) {
+        const matchStatus = (status === 'all')
+          || (status === 'failed' ? (t.status === 'failed' || t.status === 'rejected') : t.status === status);
+        const matchKw = !kw || t.summary.toLowerCase().indexOf(kw) !== -1;
+        return matchStatus && matchKw;
+      });
+
+      if (publishCountCaption) {
+        publishCountCaption.textContent = '共 ' + publishTasks.length + ' 条任务' + (filtered.length !== publishTasks.length ? '（筛选显示 ' + filtered.length + ' 条）' : '');
+      }
+
+      publishTbody.innerHTML = '';
+      if (filtered.length === 0) {
+        const emptyTr = document.createElement('tr');
+        emptyTr.innerHTML = '<td colspan="5" style="text-align: center; color: var(--text-muted); padding: 32px 14px;">暂无匹配的发布任务记录</td>';
+        publishTbody.appendChild(emptyTr);
+        return;
+      }
+
+      filtered.forEach(function (t) {
+        const tr = document.createElement('tr');
+        let actHtml = '<button class="action-btn" data-pub-action="view" data-pub-id="' + t.id + '">查看</button>';
+        if (t.status === 'queue') {
+          actHtml += ' <button class="action-btn danger" data-pub-action="cancel" data-pub-id="' + t.id + '">取消</button>';
+        }
+        tr.innerHTML = '<td>' + escapeHtml(t.time) + '</td>'
+          + '<td><strong>' + escapeHtml(t.summary) + '</strong></td>'
+          + '<td><span class="' + t.statusClass + '">' + escapeHtml(t.statusLabel) + '</span></td>'
+          + '<td>' + escapeHtml(t.confirm) + '</td>'
+          + '<td style="text-align: right;">' + actHtml + '</td>';
+        publishTbody.appendChild(tr);
+      });
+    }
+
+    if (publishStatusFilter) publishStatusFilter.addEventListener('change', renderPublishTasks);
+    if (publishSearchInput) publishSearchInput.addEventListener('input', renderPublishTasks);
+    const refreshPublishListBtn = document.getElementById('refresh-publish-list-btn');
+    if (refreshPublishListBtn) {
+      refreshPublishListBtn.addEventListener('click', function () {
+        renderPublishTasks();
+        showToast('已刷新发布任务列表');
+      });
+    }
+    if (publishTbody) {
+      publishTbody.addEventListener('click', function (e) {
+        const btn = e.target.closest('[data-pub-action]');
+        if (!btn) return;
+        const action = btn.getAttribute('data-pub-action');
+        const pubId = btn.getAttribute('data-pub-id');
+        const task = publishTasks.find(function (item) { return item.id === pubId; });
+        if (!task) return;
+        if (action === 'view') {
+          showToast('查看任务详情：' + task.summary);
+        } else if (action === 'cancel') {
+          task.status = 'canceled';
+          task.statusLabel = '已取消';
+          task.statusClass = 'pill';
+          task.confirm = '已撤回';
+          renderPublishTasks();
+          showToast('已取消发布任务');
+        }
+      });
+    }
+    renderPublishTasks();
+
+    // 6. 商品库：搜索 / 筛选 / 排序 / 分页 / 密度 / 批量选择与批量入发布队列
+    const PAGE_SIZE = 3;
+    const searchInput = document.getElementById('product-search');
+    const shipFilter = document.getElementById('ship-filter');
+    const resetFilterBtn = document.getElementById('reset-filter-btn');
+    const inventoryTable = document.getElementById('product-table');
+    const inventoryTbody = document.getElementById('product-tbody');
+    const paginationSummary = document.getElementById('pagination-summary');
+    const paginationPages = document.getElementById('pagination-pages');
+    const batchEnqueueBtn = document.getElementById('batch-enqueue-publish-btn');
+    const checkAll = document.getElementById('check-all');
+    const selectedCountLabel = document.getElementById('selected-count-label');
+    const invRows = Array.from(inventoryTbody.querySelectorAll('tr'));
+    let currentPage = 1;
+    let priceSortDir = 0;
+    let wantsSortDir = 0;
+
+    function makePageBtn(label, disabled, onClick, ariaLabel) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'page-btn';
+      b.textContent = label;
+      b.disabled = disabled;
+      if (ariaLabel) b.setAttribute('aria-label', ariaLabel);
+      if (!disabled) b.addEventListener('click', onClick);
+      return b;
+    }
+
+    function renderPagination(total, totalPages) {
+      const start = total === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+      const end = Math.min(currentPage * PAGE_SIZE, total);
+      if (paginationSummary) {
+        paginationSummary.textContent = '显示第 ' + start + ' 至 ' + end + ' 条 / 共 ' + total + ' 条（每页 ' + PAGE_SIZE + ' 条）';
+      }
+      if (!paginationPages) return;
+      paginationPages.innerHTML = '';
+      paginationPages.appendChild(makePageBtn('‹', currentPage === 1, function () { currentPage--; applyInventory(); }, '上一页'));
+      for (let p = 1; p <= totalPages; p++) {
+        (function (page) {
+          const btn = makePageBtn(String(page), false, function () { currentPage = page; applyInventory(); });
+          if (page === currentPage) btn.classList.add('active');
+          paginationPages.appendChild(btn);
+        })(p);
+      }
+      paginationPages.appendChild(makePageBtn('›', currentPage === totalPages, function () { currentPage++; applyInventory(); }, '下一页'));
+    }
+
+    function applyInventory() {
+      const query = (searchInput.value || '').trim().toLowerCase();
+      const shipping = shipFilter.value;
+      const visible = invRows.filter(function (row) {
+        const text = row.textContent.toLowerCase();
+        const matchQuery = !query || text.indexOf(query) !== -1;
+        const matchShipping = shipping === 'all' || row.getAttribute('data-shipping') === shipping;
+        return matchQuery && matchShipping;
+      });
+      const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+      invRows.forEach(function (r) { r.style.display = 'none'; });
+      visible.forEach(function (r, i) {
+        if (Math.floor(i / PAGE_SIZE) + 1 === currentPage) r.style.display = '';
+      });
+      renderPagination(visible.length, totalPages);
+    }
+
+    function sortInventory(by) {
+      if (by === 'price') { priceSortDir = priceSortDir === 1 ? -1 : 1; wantsSortDir = 0; }
+      else { wantsSortDir = wantsSortDir === 1 ? -1 : 1; priceSortDir = 0; }
+      invRows.sort(function (a, b) {
+        if (by === 'price') {
+          const pa = parseFloat(a.querySelector('.product-price').textContent.replace(/[^0-9.]/g, '')) || 0;
+          const pb = parseFloat(b.querySelector('.product-price').textContent.replace(/[^0-9.]/g, '')) || 0;
+          return (pa - pb) * priceSortDir;
+        }
+        const wa = parseInt(a.querySelector('td:nth-child(5) strong').textContent, 10) || 0;
+        const wb = parseInt(b.querySelector('td:nth-child(5) strong').textContent, 10) || 0;
+        return (wa - wb) * wantsSortDir;
+      });
+      invRows.forEach(function (r) { inventoryTbody.appendChild(r); });
+      currentPage = 1;
+      applyInventory();
+    }
+
+    searchInput.addEventListener('input', function () { currentPage = 1; applyInventory(); });
+    shipFilter.addEventListener('change', function () { currentPage = 1; applyInventory(); });
+    resetFilterBtn.addEventListener('click', function () {
+      searchInput.value = '';
+      shipFilter.value = 'all';
+      currentPage = 1;
+      applyInventory();
+      showToast('已重置商品筛选条件');
+    });
+    document.getElementById('sort-price-th').addEventListener('click', function () { sortInventory('price'); });
+    document.getElementById('sort-wants-th').addEventListener('click', function () { sortInventory('wants'); });
+
+    const densityNormalBtn = document.getElementById('density-normal-btn');
+    const densityCompactBtn = document.getElementById('density-compact-btn');
+    densityCompactBtn.addEventListener('click', function () {
+      densityCompactBtn.classList.add('active');
+      densityNormalBtn.classList.remove('active');
+      inventoryTable.classList.add('density-compact');
+    });
+    densityNormalBtn.addEventListener('click', function () {
+      densityNormalBtn.classList.add('active');
+      densityCompactBtn.classList.remove('active');
+      inventoryTable.classList.remove('density-compact');
+    });
+
+    function updateSelectedCount() {
+      const boxes = inventoryTbody.querySelectorAll('.row-check');
+      let count = 0;
+      boxes.forEach(function (cb) { if (cb.checked) count++; });
+      if (selectedCountLabel) selectedCountLabel.textContent = count;
+      if (checkAll) checkAll.checked = boxes.length > 0 && Array.from(boxes).every(function (cb) { return cb.checked; });
+      if (batchEnqueueBtn) batchEnqueueBtn.disabled = (count === 0);
+    }
+
+    if (checkAll) {
+      checkAll.addEventListener('change', function () {
+        inventoryTbody.querySelectorAll('.row-check').forEach(function (cb) { cb.checked = checkAll.checked; });
+        updateSelectedCount();
+      });
+    }
+
+    inventoryTbody.addEventListener('change', function (e) {
+      if (e.target.classList.contains('row-check')) updateSelectedCount();
+    });
+
+    // 辅助解析行内商品信息
+    function extractRowProduct(row) {
+      const nameEl = row.querySelector('.product-name');
+      const skuEl = row.querySelector('.product-sku');
+      const priceEl = row.querySelector('.product-price');
+      const title = nameEl ? nameEl.textContent.trim() : '商品';
+      const skuText = skuEl ? skuEl.textContent : '';
+      const m = skuText.match(/\d+/);
+      const itemId = m ? m[0] : ('item_' + Math.random().toString(36).slice(2, 7));
+      const price = priceEl ? priceEl.textContent.trim() : '¥0.00';
+      return { title: title, itemId: itemId, price: price };
+    }
+
+    // 批量加入发布队列
+    let isEnqueuing = false;
+    if (batchEnqueueBtn) {
+      batchEnqueueBtn.addEventListener('click', function () {
+        if (isEnqueuing || batchEnqueueBtn.disabled) return;
+        isEnqueuing = true;
+        batchEnqueueBtn.disabled = true;
+
+        const checkedBoxes = Array.from(inventoryTbody.querySelectorAll('.row-check:checked'));
+        if (checkedBoxes.length === 0) {
+          isEnqueuing = false;
+          return;
+        }
+
+        let addedCount = 0;
+        let skippedCount = 0;
+
+        checkedBoxes.forEach(function (cb) {
+          const row = cb.closest('tr');
+          if (!row) return;
+          const p = extractRowProduct(row);
+          // 去重判断：若同一个 itemId 在发布任务中已有处于排队中或待核对状态，则跳过
+          const exists = publishTasks.some(function (t) {
+            return t.itemId === p.itemId && (t.status === 'queue' || t.status === 'review');
+          });
+          if (exists) {
+            skippedCount++;
+          } else {
+            publishTasks.unshift({
+              id: 'pub_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+              time: nowTimeStr(),
+              summary: p.title + ' (' + p.price + ') 发布',
+              status: 'queue',
+              statusLabel: '排队中',
+              statusClass: 'pill pill-yellow',
+              confirm: '待确认',
+              itemId: p.itemId
+            });
+            addedCount++;
+          }
+          cb.checked = false;
+        });
+
+        if (checkAll) checkAll.checked = false;
+        updateSelectedCount();
+        renderPublishTasks();
+
+        if (addedCount > 0 && skippedCount > 0) {
+          showToast('已加入发布队列 ' + addedCount + ' 件商品，' + skippedCount + ' 件已在队列中跳过');
+        } else if (addedCount > 0) {
+          showToast('已将 ' + addedCount + ' 件商品加入发布队列');
+        } else {
+          showToast('所选商品均已在发布队列中');
+        }
+
+        setTimeout(function () {
+          isEnqueuing = false;
+          updateSelectedCount();
+        }, 300);
+      });
+    }
+
+    // 行内操作“加入发布队列”与“详情”
+    inventoryTbody.addEventListener('click', function (e) {
+      const btn = e.target.closest('.action-btn');
+      if (!btn) return;
+      const text = btn.textContent.trim();
+      const row = btn.closest('tr');
+      if (!row) return;
+      const p = extractRowProduct(row);
+
+      if (text === '加入发布队列') {
+        const exists = publishTasks.some(function (t) {
+          return t.itemId === p.itemId && (t.status === 'queue' || t.status === 'review');
+        });
+        if (exists) {
+          showToast('商品「' + p.title + '」已在发布队列中');
+          return;
+        }
+        publishTasks.unshift({
+          id: 'pub_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          time: nowTimeStr(),
+          summary: p.title + ' (' + p.price + ') 发布',
+          status: 'queue',
+          statusLabel: '排队中',
+          statusClass: 'pill pill-yellow',
+          confirm: '待确认',
+          itemId: p.itemId
+        });
+        renderPublishTasks();
+        showToast('已加入发布队列：' + p.title);
+      } else if (text === '详情') {
+        showToast('查看商品：' + p.title);
+      }
+    });
+
+    applyInventory();
+    updateSelectedCount();
+
+    // 7. 采集任务：关键词多选标签 / 建议下拉 / 表单与任务筛选
+    const taskFormPanel = document.getElementById('task-form-panel');
+    const toggleTaskFormBtn = document.getElementById('toggle-task-form');
+    if (toggleTaskFormBtn && taskFormPanel) {
+      toggleTaskFormBtn.addEventListener('click', function () {
+        const open = taskFormPanel.classList.toggle('open');
+        toggleTaskFormBtn.textContent = open ? '收起表单' : '展开表单';
+      });
+    }
+
+    // 关键词多选与下拉建议
+    const POPULAR_KEYWORDS = [
+      { word: 'Sony A7M4', hot: '4.8w' },
+      { word: '富士 X-T5', hot: '4.2w' },
+      { word: '佳能 EOS R6', hot: '3.9w' },
+      { word: '索尼 A7C II', hot: '3.7w' },
+      { word: '尼康 Z6 III', hot: '3.5w' },
+      { word: '大疆 Pocket 3', hot: '4.5w' },
+      { word: '理光 GR3', hot: '3.6w' },
+      { word: '佳能 G7X3', hot: '3.8w' },
+      { word: '富士 X100V', hot: '4.1w' },
+      { word: '适马 24-70', hot: '2.9w' },
+      { word: '索尼 24-70 GM2', hot: '3.2w' },
+      { word: '腾龙 28-200', hot: '2.7w' }
+    ];
+
+    let selectedKeywords = ['Sony A7M4'];
+    const keywordTagList = document.getElementById('keyword-tag-list');
+    const taskKeywordInput = document.getElementById('task-keyword-input');
+    const toggleSuggestBtn = document.getElementById('toggle-suggest-btn');
+    const keywordSuggestDropdown = document.getElementById('keyword-suggest-dropdown');
+    const suggestItemsContainer = document.getElementById('suggest-items-container');
+
+    function renderKeywordTags() {
+      if (!keywordTagList) return;
+      keywordTagList.innerHTML = '';
+      selectedKeywords.forEach(function (kw, index) {
+        const chip = document.createElement('span');
+        chip.className = 'tag-chip';
+        chip.innerHTML = '<span>' + escapeHtml(kw) + '</span><button type="button" class="tag-remove" aria-label="移除 ' + escapeHtml(kw) + '">×</button>';
+        chip.querySelector('.tag-remove').addEventListener('click', function (e) {
+          e.stopPropagation();
+          removeKeywordTag(index);
+        });
+        keywordTagList.appendChild(chip);
+      });
+    }
+
+    function removeKeywordTag(index) {
+      selectedKeywords.splice(index, 1);
+      renderKeywordTags();
+      renderSuggestItems(taskKeywordInput ? taskKeywordInput.value.trim() : '');
+    }
+
+    function addKeywordTag(word) {
+      const trimmed = word.trim();
+      if (!trimmed) return;
+      if (selectedKeywords.indexOf(trimmed) === -1) {
+        selectedKeywords.push(trimmed);
+        renderKeywordTags();
+      }
+      renderSuggestItems(taskKeywordInput ? taskKeywordInput.value.trim() : '');
+    }
+
+    function renderSuggestItems(filterText) {
+      if (!suggestItemsContainer) return;
+      suggestItemsContainer.innerHTML = '';
+      const filter = (filterText || '').toLowerCase();
+      const list = POPULAR_KEYWORDS.filter(function (item) {
+        return !filter || item.word.toLowerCase().indexOf(filter) !== -1;
+      });
+
+      if (list.length === 0) {
+        const emptyDiv = document.createElement('div');
+        emptyDiv.style.gridColumn = '1 / -1';
+        emptyDiv.style.textAlign = 'center';
+        emptyDiv.style.padding = '10px';
+        emptyDiv.style.color = 'var(--text-muted)';
+        emptyDiv.textContent = '按 Enter 可添加「' + filterText + '」作为自定义关键词';
+        suggestItemsContainer.appendChild(emptyDiv);
+        return;
+      }
+
+      list.forEach(function (item) {
+        const isSelected = selectedKeywords.indexOf(item.word) !== -1;
+        const div = document.createElement('div');
+        div.className = 'suggest-item' + (isSelected ? ' is-selected' : '');
+        div.setAttribute('role', 'option');
+        div.setAttribute('tabindex', '0');
+        div.innerHTML = '<span>' + escapeHtml(item.word) + '</span>'
+          + (isSelected ? '<span class="suggest-check-mark">✓</span>' : '<span style="font-size: 10px; color: var(--text-muted);">' + item.hot + '</span>');
+
+        div.addEventListener('click', function (e) {
+          e.stopPropagation(); // 阻止事件冒泡以保持下拉框打开
+          if (!isSelected) {
+            addKeywordTag(item.word);
+          }
+          if (taskKeywordInput) taskKeywordInput.focus();
+        });
+
+        div.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!isSelected) addKeywordTag(item.word);
+          }
+        });
+
+        suggestItemsContainer.appendChild(div);
+      });
+    }
+
+    function openSuggestDropdown() {
+      if (!keywordSuggestDropdown) return;
+      keywordSuggestDropdown.style.display = 'block';
+      renderSuggestItems(taskKeywordInput ? taskKeywordInput.value.trim() : '');
+    }
+
+    function closeSuggestDropdown() {
+      if (!keywordSuggestDropdown) return;
+      keywordSuggestDropdown.style.display = 'none';
+    }
+
+    if (taskKeywordInput) {
+      taskKeywordInput.addEventListener('focus', function () {
+        openSuggestDropdown();
+      });
+      taskKeywordInput.addEventListener('input', function () {
+        openSuggestDropdown();
+        renderSuggestItems(taskKeywordInput.value.trim());
+      });
+      taskKeywordInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const val = taskKeywordInput.value.trim();
+          if (val) {
+            addKeywordTag(val);
+            taskKeywordInput.value = '';
+          }
+        } else if (e.key === 'Escape') {
+          closeSuggestDropdown();
+        } else if (e.key === 'Backspace' && !taskKeywordInput.value && selectedKeywords.length > 0) {
+          removeKeywordTag(selectedKeywords.length - 1);
+        }
+      });
+    }
+
+    if (toggleSuggestBtn) {
+      toggleSuggestBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (keywordSuggestDropdown.style.display === 'none') {
+          openSuggestDropdown();
+        } else {
+          closeSuggestDropdown();
+        }
+      });
+    }
+
+    // 点击外部关闭建议下拉
+    document.addEventListener('click', function (e) {
+      if (!e.target.closest('.keyword-field-wrap')) {
+        closeSuggestDropdown();
+      }
+    });
+
+    renderKeywordTags();
+
+    document.getElementById('create-task-btn').addEventListener('click', function () {
+      if (taskKeywordInput && taskKeywordInput.value.trim()) {
+        addKeywordTag(taskKeywordInput.value.trim());
+        taskKeywordInput.value = '';
+      }
+      if (selectedKeywords.length === 0) {
+        showToast('请先输入或选择采集关键词');
+        return;
+      }
+      showToast('已创建采集任务「' + selectedKeywords.join('、') + '」');
+      closeSuggestDropdown();
+    });
+
+    document.getElementById('reset-task-form-btn').addEventListener('click', function () {
+      selectedKeywords = [];
+      renderKeywordTags();
+      if (taskKeywordInput) taskKeywordInput.value = '';
+      document.getElementById('task-price-min').value = '';
+      document.getElementById('task-price-max').value = '';
+      document.getElementById('task-free-shipping').checked = false;
+      document.getElementById('task-fetch-detail').checked = false;
+      closeSuggestDropdown();
+      showToast('表单已重置');
+    });
+
+    const taskStatusTabs = document.getElementById('task-status-tabs');
+    const taskRows = Array.from(document.querySelectorAll('#task-tbody tr'));
+    taskStatusTabs.addEventListener('click', function (e) {
+      const btn = e.target.closest('.tab-btn');
+      if (!btn) return;
+      taskStatusTabs.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      const status = btn.getAttribute('data-status');
+      taskRows.forEach(function (row) {
+        row.style.display = (status === 'all' || row.getAttribute('data-status') === status) ? '' : 'none';
+      });
+    });
+
+    const taskDetailDialog = document.getElementById('task-detail-dialog');
+    function openTaskDetail(row) {
+      const d = row.dataset;
+      const fields = { 'td-keyword': d.keyword, 'td-fetched': d.fetched, 'td-valid': d.valid, 'td-filtered': d.filtered, 'td-duplicate': d.duplicate, 'td-failed': d.failed, 'td-breakpoint': d.breakpoint, 'td-issue': d.issue };
+      Object.keys(fields).forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = fields[id] || '暂无';
+      });
+      taskDetailDialog.showModal();
+    }
+    document.getElementById('close-task-detail-btn').addEventListener('click', function () { taskDetailDialog.close(); });
+    document.getElementById('close-task-detail-footer-btn').addEventListener('click', function () { taskDetailDialog.close(); });
+    document.getElementById('task-tbody').addEventListener('click', function (e) {
+      const link = e.target.closest('.action-btn');
+      if (!link) return;
+      const action = link.getAttribute('data-action');
+      const row = link.closest('tr');
+      const kw = row.dataset.keyword || '';
+      if (action === 'detail') { openTaskDetail(row); return; }
+      const labels = { pause: '已暂停', resume: '已恢复', cancel: '已取消', retry: '已提交重试失败项' };
+      showToast((labels[action] || action) + '：' + kw);
+    });
+
+    // 8. 聊天中心（对齐 ChatCenterPage.vue）
+    const ICON_IMAGE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8C867E" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="8.5" cy="9.5" r="1.5"></circle><path d="M21 16l-5-5-9 9"></path></svg>';
+    const ICON_PRODUCT = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8C867E" stroke-width="1.8"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path><line x1="3" y1="6" x2="21" y2="6"></line></svg>';
+
+    const conversations = [
+      {
+        id: 'c1', name: '摄影小陈_自用', peerUserId: '392019482', time: '14:32', unread: 2, socket: 'connected',
+        item: { id: '884029', title: 'Sony A7M4 国行单机 极少用 快门3200 箱说全', url: 'https://www.goofish.com/item?id=884029' },
+        last: '快门次数有记录吗？',
+        suggestions: [
+          '您好，快门数3200次，原装箱说全配件齐，诚心想要可以稍微小刀，支持当面验机。',
+          '在的，机身无划痕传感器完好，支持闲鱼平台验货宝交易。'
+        ],
+        messages: [
+          { dir: 'in', type: 'text', text: '你好，这台 A7M4 还在吗？', time: '14:28' },
+          { dir: 'out', type: 'text', text: '在的，国行单机，箱说全。', time: '14:30' },
+          { dir: 'in', type: 'text', text: '快门次数有记录吗？', time: '14:32' },
+          { dir: 'in', type: 'product', title: 'Sony A7M4 国行单机', sub: '¥8,850.00', time: '14:32' }
+        ]
+      },
+      {
+        id: 'c2', name: '日落街角Lens', peerUserId: '581029411', time: '13:58', unread: 0, socket: 'connected',
+        item: { id: '884031', title: '适马 24-70mm F2.8 DG DN 索尼E卡口', url: 'https://www.goofish.com/item?id=884031' },
+        last: '镜头有霉吗？',
+        suggestions: [
+          '镜头通透三无（无霉、无雾、无划痕），前后镜片完美，带原装遮光罩和包装盒。',
+          '可以提供强光打光检查视频，顺丰包邮保价发货。'
+        ],
+        messages: [
+          { dir: 'in', type: 'text', text: '镜头有霉吗？', time: '13:58' },
+          { dir: 'out', type: 'text', text: '前后镜片通透无霉无雾，保护滤镜一直戴着。', time: '13:59' }
+        ]
+      },
+      {
+        id: 'c3', name: '器材党退烧小李', peerUserId: '109283742', time: '13:20', unread: 5, socket: 'connected',
+        item: { id: '884032', title: '佳能 EOS R6 Mark II 99新 国行在保', url: 'https://www.goofish.com/item?id=884032' },
+        last: '能便宜点吗',
+        suggestions: [
+          '国行在保成色接近全新，爽快付款可以包顺丰特快并送一张 128G 高速卡。',
+          '这个价格已经是底价了，成色很好性价比高，随时可以拍下。'
+        ],
+        messages: [
+          { dir: 'in', type: 'text', text: '能便宜点吗', time: '13:20' }
+        ]
+      },
+      {
+        id: 'c4', name: '飞行员老张', peerUserId: '772910481', time: '10:15', unread: 0, socket: 'connected',
+        item: { id: '884034', title: '大疆 DJI Mini 4 Pro 畅飞套装 带屏遥控器 无炸机', url: 'https://www.goofish.com/item?id=884034' },
+        last: '已拍，明天发货',
+        suggestions: [
+          '好的，感谢信任！明天上午为您安排顺丰保价发货，单号会第一时间同步。',
+          '收到后建议开箱验货，有任何配对操作问题随时联系我。'
+        ],
+        messages: [
+          { dir: 'in', type: 'text', text: '已拍，明天发货', time: '10:15' },
+          { dir: 'out', type: 'text', text: '收到，明天上午为您安排顺丰发货，感谢支持！', time: '10:16' }
+        ]
+      }
+    ];
+
+    let activeConvId = conversations[0].id;
+    const conversationList = document.getElementById('conversation-list');
+    const messageStream = document.getElementById('message-stream');
+    const replyInput = document.getElementById('reply-input');
+    const replyCount = document.getElementById('reply-count');
+    const chatSuggestBtn = document.getElementById('chat-suggest-btn');
+    const suggestionFilledTip = document.getElementById('suggestion-filled-tip');
+    const chatRefreshConvBtn = document.getElementById('chat-refresh-conv-btn');
+    const chatSyncHistoryBtn = document.getElementById('chat-sync-history-btn');
+    const convCountBadge = document.getElementById('conv-count-badge');
+    const MAX_LEN = 200;
+
+    function renderConversations() {
+      if (!conversationList) return;
+      conversationList.innerHTML = '';
+      if (convCountBadge) convCountBadge.textContent = conversations.length;
+      conversations.forEach(function (conv) {
+        const item = document.createElement('div');
+        item.className = 'conversation-item' + (conv.id === activeConvId ? ' active' : '');
+        const avatarLetter = (conv.name || '对').slice(0, 1);
+        let html = '<div class="conv-avatar-circle">' + escapeHtml(avatarLetter) + '</div>';
+        html += '<div class="conv-content">';
+        html += '<div class="conv-top"><span class="conv-name">' + escapeHtml(conv.name) + '</span><span class="conv-time">' + escapeHtml(conv.time) + '</span></div>';
+        html += '<div class="conv-bottom"><span class="conv-last">' + escapeHtml(conv.last) + '</span>';
+        if (conv.unread > 0) {
+          html += '<span class="conv-unread">' + conv.unread + '</span>';
+        }
+        html += '</div></div>';
+        item.innerHTML = html;
+        item.addEventListener('click', function () { selectConversation(conv.id); });
+        conversationList.appendChild(item);
+      });
+    }
+
+    function renderMessages() {
+      const conv = conversations.find(function (c) { return c.id === activeConvId; });
+      if (!conv) return;
+
+      // 更新 contextbar
+      const avatarEl = document.getElementById('contextbar-avatar');
+      const peerNameEl = document.getElementById('chat-peer-name');
+      const peerMetaEl = document.getElementById('chat-peer-meta');
+      const itemTitleEl = document.getElementById('contextbar-item-title');
+      const itemLinkEl = document.getElementById('contextbar-item-link');
+
+      if (avatarEl) avatarEl.textContent = (conv.name || '对').slice(0, 1);
+      if (peerNameEl) peerNameEl.textContent = conv.name;
+      if (peerMetaEl) peerMetaEl.textContent = 'ID ' + conv.peerUserId + (conv.unread > 0 ? ' · 未读 ' + conv.unread : '');
+      if (itemTitleEl) itemTitleEl.textContent = conv.item ? conv.item.title : '未关联商品';
+      if (itemLinkEl) {
+        itemLinkEl.href = conv.item ? conv.item.url : '#';
+        itemLinkEl.style.display = conv.item ? '' : 'none';
+      }
+
+      if (!messageStream) return;
+      messageStream.innerHTML = '';
+      conv.messages.forEach(function (m) {
+        const row = document.createElement('div');
+        if (m.type === 'product') {
+          row.className = 'msg-row';
+          row.innerHTML = '<div class="msg-meta"><span>' + escapeHtml(m.time || '') + '</span></div>'
+            + '<div class="msg-bubble"><div class="msg-card"><div class="msg-thumb">' + ICON_PRODUCT + '</div><div><div class="msg-card-title">' + escapeHtml(m.title || '商品') + '</div><div class="msg-card-sub">' + escapeHtml(m.sub || '') + '</div></div></div></div>';
+        } else {
+          row.className = 'msg-row' + (m.dir === 'out' ? ' out' : '');
+          row.innerHTML = '<div class="msg-meta"><span>' + (m.dir === 'out' ? '我' : conv.name) + '</span><span>' + escapeHtml(m.time || '') + '</span></div>'
+            + '<div class="msg-bubble">' + escapeHtml(m.text || '') + '</div>';
+        }
+        messageStream.appendChild(row);
+      });
+      messageStream.scrollTop = messageStream.scrollHeight;
+      if (suggestionFilledTip) suggestionFilledTip.style.display = 'none';
+    }
+
+    function selectConversation(id) {
+      activeConvId = id;
+      const conv = conversations.find(function (c) { return c.id === id; });
+      if (conv) conv.unread = 0;
+      renderConversations();
+      renderMessages();
+      if (replyInput) replyInput.value = '';
+      updateReplyCount();
+    }
+
+    function updateReplyCount() {
+      if (!replyInput || !replyCount) return;
+      const len = Array.from(replyInput.value).length;
+      replyCount.textContent = len;
+      replyCount.style.color = len > MAX_LEN ? 'var(--status-danger)' : '';
+      if (suggestionFilledTip && !replyInput.value) {
+        suggestionFilledTip.style.display = 'none';
+      }
+    }
+
+    if (replyInput) {
+      replyInput.addEventListener('input', updateReplyCount);
+    }
+
+    // 回复建议：读取建议填入输入框，绝不自动发送
+    if (chatSuggestBtn) {
+      chatSuggestBtn.addEventListener('click', function () {
+        const conv = conversations.find(function (c) { return c.id === activeConvId; });
+        if (!conv) return;
+        const suggestion = (conv.suggestions && conv.suggestions.length) ? conv.suggestions[0] : '您好，商品在售中，随时支持下单验货。';
+        replyInput.value = suggestion;
+        updateReplyCount();
+        if (suggestionFilledTip) suggestionFilledTip.style.display = 'inline';
+        replyInput.focus();
+      });
+    }
+
+    // 手动发送
+    function sendReply() {
+      if (!replyInput) return;
+      const text = replyInput.value.trim();
+      if (!text) { showToast('请输入回复内容'); return; }
+      const conv = conversations.find(function (c) { return c.id === activeConvId; });
+      if (!conv) return;
+      conv.messages.push({ dir: 'out', type: 'text', text: text, time: nowTime() });
+      conv.last = text;
+      conv.time = nowTime();
+      replyInput.value = '';
+      updateReplyCount();
+      renderMessages();
+      renderConversations();
+      showToast('回复已发送');
+    }
+    const sendReplyBtn = document.getElementById('send-reply-btn');
+    if (sendReplyBtn) sendReplyBtn.addEventListener('click', sendReply);
+
+    // 刷新本地会话缓存
+    if (chatRefreshConvBtn) {
+      chatRefreshConvBtn.addEventListener('click', function () {
+        const icon = chatRefreshConvBtn.querySelector('span');
+        if (icon) {
+          icon.style.display = 'inline-block';
+          icon.style.transition = 'transform 0.5s ease';
+          icon.style.transform = 'rotate(360deg)';
+          setTimeout(function () { icon.style.transform = 'none'; }, 500);
+        }
+        renderConversations();
+        showToast('已同步最新会话');
+      });
+    }
+
+    // 同步历史
+    if (chatSyncHistoryBtn) {
+      chatSyncHistoryBtn.addEventListener('click', function () {
+        chatSyncHistoryBtn.disabled = true;
+        chatSyncHistoryBtn.textContent = '同步历史中…';
+        setTimeout(function () {
+          chatSyncHistoryBtn.disabled = false;
+          chatSyncHistoryBtn.textContent = '同步历史';
+          renderMessages();
+          showToast('已同步消息历史');
+        }, 700);
+      });
+    }
+
+    renderConversations();
+    renderMessages();
+    updateReplyCount();
+
+    // 9. 设置：分区 / 掩码 / 能力检查
+    const settingsNav = document.getElementById('settings-nav');
+    const settingsSections = Array.from(document.querySelectorAll('.settings-section'));
+    if (settingsNav) {
+      settingsNav.addEventListener('click', function (e) {
+        const item = e.target.closest('.nav-item');
+        if (!item) return;
+        const key = item.getAttribute('data-settings');
+        settingsNav.querySelectorAll('.nav-item').forEach(function (i) { i.classList.toggle('active', i === item); });
+        settingsSections.forEach(function (sec) {
+          sec.classList.toggle('active', sec.getAttribute('data-settings-section') === key);
+        });
+      });
+      settingsNav.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const item = e.target.closest('.nav-item');
+        if (item) { e.preventDefault(); item.click(); }
+      });
+    }
+
+    document.querySelectorAll('[data-toggle-mask]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const input = document.getElementById(btn.getAttribute('data-toggle-mask'));
+        if (!input) return;
+        const show = input.type === 'password';
+        input.type = show ? 'text' : 'password';
+        btn.textContent = show ? '隐藏' : '显示';
+      });
+    });
+
+    const settingsCheckBtn = document.getElementById('settings-check-btn');
+    if (settingsCheckBtn) {
+      settingsCheckBtn.addEventListener('click', function () {
+        showToast('已完成环境能力检测，运行正常');
+      });
+    }
+
+    // 10. 分析报告弹窗
+    const reportDialog = document.getElementById('report-dialog');
+    function openReport() { if (reportDialog) reportDialog.showModal(); }
+    const openReportBtn = document.getElementById('open-report-btn');
+    if (openReportBtn) openReportBtn.addEventListener('click', openReport);
+    const heroReadReportBtn = document.getElementById('hero-read-report-btn');
+    if (heroReadReportBtn) heroReadReportBtn.addEventListener('click', openReport);
+    const closeReportBtn = document.getElementById('close-report-btn');
+    if (closeReportBtn) closeReportBtn.addEventListener('click', function () { reportDialog.close(); });
+    const closeReportFooterBtn = document.getElementById('close-report-footer-btn');
+    if (closeReportFooterBtn) closeReportFooterBtn.addEventListener('click', function () { reportDialog.close(); });
+
+    // 11. 统一处理提示按钮
+    document.addEventListener('click', function (e) {
+      const el = e.target.closest('[data-design-toast]');
+      if (el) showToast(el.getAttribute('data-design-toast'));
+    });
+  </script>
+</body>
+</html>

@@ -219,6 +219,22 @@ export class TaskManager {
   }
 
   /**
+   * 重新排队任务 (paused -> pending)
+   *
+   * 用于「恢复采集」：先把 paused 任务持久化为 pending 重新入队，真正出队执行
+   * 时才转为 running；transitionTask 会保留首次 startedAt（不重置为出队时间）。
+   */
+  public async requeue(id: string): Promise<Task> {
+    const current = await this.getRequiredTask(id);
+    const prevStatus = current.status;
+    const next = transitionTask(current, 'pending');
+
+    await this.store.save(next);
+    this.notify('updated', next, prevStatus);
+    return cloneTask(next);
+  }
+
+  /**
    * 取消任务 (pending | running | paused -> cancelled)
    */
   public async cancel(id: string, reason?: string): Promise<Task> {

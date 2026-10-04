@@ -124,6 +124,7 @@ function baseApi(): FakeApi {
     const sessionId = (p as { sessionId: string }).sessionId
     return { messages: [msg(sessionId, `${sessionId}-1`, `来自${sessionId}的消息`)] }
   })
+  api.respond(CommandTypes.CHAT_MARK_READ, () => ({ ok: true }))
   return api
 }
 
@@ -378,6 +379,46 @@ test('同步会话：成功后记录新增/更新数量并重新读取本地缓�
   controller.dispose()
 })
 
+test('syncRecent 显式同步平台会话与选中会话历史，且并发触发只执行一轮', async () => {
+  const api = baseApi()
+  const conversations = defer<unknown>()
+  api.respond(CommandTypes.CHAT_SYNC_CONVERSATIONS, () => conversations.promise)
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => ({ ok: true, added: 2, updated: 0 }))
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  const beforeList = api.count(CommandTypes.CHAT_LIST_CONVERSATIONS)
+  const beforeMessages = api.count(CommandTypes.CHAT_GET_MESSAGES)
+  const first = controller.syncRecent()
+  const second = controller.syncRecent()
+  assert.equal(api.count(CommandTypes.CHAT_SYNC_CONVERSATIONS), 1)
+  conversations.resolve({ ok: true, added: 1, updated: 0 })
+  await Promise.all([first, second])
+  assert.equal(api.count(CommandTypes.CHAT_SYNC_HISTORY), 1)
+  assert.ok(api.count(CommandTypes.CHAT_LIST_CONVERSATIONS) > beforeList)
+  assert.ok(api.count(CommandTypes.CHAT_GET_MESSAGES) > beforeMessages)
+  controller.dispose()
+})
+
+test('syncRecent：切换会话后不为旧会话同步历史', async () => {
+  const api = baseApi()
+  const conversations = defer<unknown>()
+  api.respond(CommandTypes.CHAT_SYNC_CONVERSATIONS, () => conversations.promise)
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  const syncing = controller.syncRecent()
+  controller.selectSession('b')
+  conversations.resolve({ ok: true, added: 0, updated: 0 })
+  await syncing
+  assert.equal(api.count(CommandTypes.CHAT_SYNC_HISTORY), 0)
+  controller.dispose()
+})
+
 test('同步进行中重复触发会被忽略（不重复拉取平台数据）', async () => {
   const api = baseApi()
   const pending = defer<unknown>()
@@ -470,7 +511,7 @@ test('实时事件：只作为信号触发重新读 store，状态中不出现�
 
   const listBefore = api.count(CommandTypes.CHAT_LIST_CONVERSATIONS)
   const getBefore = api.count(CommandTypes.CHAT_GET_MESSAGES)
-  api.respond(CommandTypes.CHAT_GET_MESSAGES, () => ({ messages: [msg('a', 'a-2', 'store 中的新消息')] }))
+  api.respond(CommandTypes.CHAT_GET_MESSAGES, () => ({ messages: [msg('a', 'a-1', 'store 中的新消息')] }))
 
   // 恶意/意外携带正文的事件负载：控制器不得读取或保存它。
   api.emit(EventTypes.CHAT_MESSAGE_INGESTED, { added: 1, updated: 0, content: '机密正文-不应出现' })
@@ -586,7 +627,91 @@ test('resubscribe：委托给 Bridge 重新声明订阅，不新增监听', asyn
   assert.equal(api.resubscribeCount, 1)
 })
 
-test('只读保证：整个交互过程只会调用 5 条只读 CHAT 命令', async () => {
+test('选择会话后先同步最近历史再请求已读；只在成功后刷新未读状态', async () => {
+  const api = baseApi()
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => ({ ok: true, added: 1, updated: 0 }))
+  api.respond(CommandTypes.CHAT_MARK_READ, () => ({ ok: true }))
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1)
+  assert.deepEqual(api.calls.find((call) => call.type === CommandTypes.CHAT_MARK_READ)?.payload, { sessionId: 'a' })
+  controller.dispose()
+})
+
+test('缓存无历史时仍触发后台已读（由后台补同步最近一页），不因页面消息为空而永远未读', async () => {
+  const api = baseApi()
+  api.respond(CommandTypes.CHAT_GET_MESSAGES, () => ({ messages: [] }))
+  api.respond(CommandTypes.CHAT_MARK_READ, () => ({ ok: true }))
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1, '即使本地无消息也应请求后台已读')
+  assert.deepEqual(api.calls.find((call) => call.type === CommandTypes.CHAT_MARK_READ)?.payload, { sessionId: 'a' })
+  controller.dispose()
+})
+
+test('打开当前会话后请求已读一次，失败显示提示且切换后的旧响应不改状态', async () => {
+  const api = baseApi()
+  const read = defer<unknown>()
+  let readCalls = 0
+  // A 的已读延迟到切到 B 之后再结算；B 自身的已读立即成功。
+  api.respond(CommandTypes.CHAT_MARK_READ, () => {
+    readCalls += 1
+    return readCalls === 1 ? read.promise : { ok: true }
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1)
+  assert.deepEqual(api.calls.find((call) => call.type === CommandTypes.CHAT_MARK_READ)?.payload, { sessionId: 'a' })
+  controller.selectSession('b')
+  assert.equal(controller.getState().markReadError, null, '切换会话应立即清除旧错误状态')
+  await settle()
+  // A settle 后为 B 补一次已读（A 的失败不得污染 B）。
+  read.resolve({ ok: false, error: { message: '平台拒绝' } })
+  await settle()
+  assert.equal(controller.getState().markReadError, null, '旧会话响应不得覆盖新会话状态')
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 2, 'A settle 后应为 B 补一次已读')
+  assert.deepEqual(
+    api.calls.filter((call) => call.type === CommandTypes.CHAT_MARK_READ).map((call) => call.payload),
+    [{ sessionId: 'a' }, { sessionId: 'b' }],
+  )
+  controller.dispose()
+})
+
+test('CHAT_MARK_READ 失败保留可见错误', async () => {
+  const api = baseApi()
+  api.respond(CommandTypes.CHAT_MARK_READ, () => ({ ok: false, error: { message: '平台拒绝' } }))
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  assert.match(controller.getState().markReadError ?? '', /平台拒绝/)
+  controller.dispose()
+})
+
+test('已读命令只在选中会话打开时触发，不因内部缓存刷新重复调用', async () => {
+  const api = baseApi()
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.refresh()
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1)
+  controller.dispose()
+})
+
+test('只读保证：交互仅调用只读命令与受控 CHAT_MARK_READ', async () => {
   const api = baseApi()
   api.respond(CommandTypes.CHAT_SYNC_CONVERSATIONS, () => ({ ok: true, added: 0, updated: 0 }))
   api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => ({ ok: true, added: 0, updated: 0 }))
@@ -604,7 +729,91 @@ test('只读保证：整个交互过程只会调用 5 条只读 CHAT 命令', as
     CommandTypes.CHAT_GET_MESSAGES,
     CommandTypes.CHAT_SYNC_CONVERSATIONS,
     CommandTypes.CHAT_SYNC_HISTORY,
+    CommandTypes.CHAT_MARK_READ,
   ])
   for (const call of api.calls) assert.ok(allowed.has(call.type), `不应调用 ${call.type}`)
+  controller.dispose()
+})
+
+// ---------------- 已读单飞：settle 后对最新选中会话 / 新水位补一次 ----------------
+
+test('已读单飞：A 在途时选 B，A settle 后无需再点击自动为 B 补一次已读', async () => {
+  const api = baseApi()
+  const readA = defer<unknown>()
+  let readCalls = 0
+  api.respond(CommandTypes.CHAT_MARK_READ, () => {
+    readCalls += 1
+    return readCalls === 1 ? readA.promise : { ok: true }
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1, 'A 首次应发起一次已读')
+
+  controller.selectSession('b')
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1, 'A 在途时 B 不得并发发起')
+
+  readA.resolve({ ok: true })
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 2, 'A settle 后应自动为 B 补一次已读，不依赖用户再点')
+  assert.deepEqual(
+    api.calls.filter((call) => call.type === CommandTypes.CHAT_MARK_READ).map((call) => call.payload),
+    [{ sessionId: 'a' }, { sessionId: 'b' }],
+  )
+  controller.dispose()
+})
+
+test('已读单飞：dispose 后 A settle 不再补 B 请求', async () => {
+  const api = baseApi()
+  const readA = defer<unknown>()
+  let readCalls = 0
+  api.respond(CommandTypes.CHAT_MARK_READ, () => {
+    readCalls += 1
+    return readCalls === 1 ? readA.promise : { ok: true }
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  controller.selectSession('b')
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1)
+
+  controller.dispose()
+  readA.resolve({ ok: true })
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1, 'dispose 后不得再补发请求')
+})
+
+test('已读单飞：ACK 期间同会话出现新水位，settle 后按新水位补一次', async () => {
+  const api = baseApi()
+  const readA = defer<unknown>()
+  let readCalls = 0
+  api.respond(CommandTypes.CHAT_MARK_READ, () => {
+    readCalls += 1
+    return readCalls === 1 ? readA.promise : { ok: true }
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1)
+
+  // ACK 未返回期间：同会话新入站消息入库，触发事件→重读消息→出现新水位。
+  api.respond(CommandTypes.CHAT_GET_MESSAGES, (payload) => ({
+    messages: [msg((payload as { sessionId: string }).sessionId, 'a-2', '新消息')],
+  }))
+  api.emit(EventTypes.CHAT_MESSAGE_INGESTED, { kind: 'message', added: 1, updated: 0 })
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 1, 'A 在途时不得并发发起')
+
+  readA.resolve({ ok: true })
+  await settle()
+  assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 2, '同会话新水位应在 settle 后补一次')
   controller.dispose()
 })

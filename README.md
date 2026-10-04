@@ -115,6 +115,46 @@ extension/dist/
 - 长连接 Port 的事件订阅与广播（`WORKER_STARTED` / `PING_RECEIVED`）
 - 模拟 service worker 被回收后重启：`firstStart=false` 且 `pingCount` 从 `chrome.storage.session` 恢复
 
+## Trace 排查
+
+Trace 默认关闭。它记录命令边界，不修改协议，也不改变原有超时、权限校验和业务错误处理。
+
+在需要排查的上下文打开 DevTools Console：
+
+- Workbench：扩展内页的 Console，记录 `client`。覆盖 `RuntimeClient.call` 和业务 `createBridgeApi` 两个入口。
+- background：`chrome://extensions/` → 扩展的 Service Worker → Console，记录 `background`。
+- content：闲鱼页面 Console 的执行上下文切换到本扩展的 ISOLATED content script，记录 `content`。
+
+每个上下文单独开启，再复现问题：
+
+```js
+FishOpsTrace.enable()
+FishOpsTrace.isEnabled()
+FishOpsTrace.read()
+// Chrome DevTools 的 copy 可将 JSON 复制到剪贴板。
+copy(FishOpsTrace.exportJson())
+FishOpsTrace.disable()
+FishOpsTrace.clear()
+```
+
+同一命令的 `traceId` 等于已有 `requestId`。在两端导出的 JSON 中按 `traceId` 对齐，检查 `start` → `success` / `error` / `timeout` / `rejected`，结束记录含 `durationMs`。也可筛选：
+
+```js
+FishOpsTrace.read().filter(record => record.traceId === 'req_替换为实际ID')
+```
+
+安全与使用边界：
+
+- 只记录时间、上下文、阶段、关联 ID、已知命令类型、耗时和允许的协议错误码；不记录 payload、result、原始异常文本、URL、密钥或聊天正文。非法关联 ID 记为 `untracked`。
+- 每个上下文最多保留 500 条，超出时删除最旧记录。`disable()` 停止新记录但保留已有缓冲；`clear()` 清空缓冲但不改变开关。
+- 开关和缓冲仅在内存中。页面刷新、扩展重载或 Service Worker 回收后重置，需重新开启；没有外部遥测或持久化日志。
+- Workbench 扩展内页直接与 background 通信，不经过 content。content 仅记录现有允许转发的 `CHAT_SOCKET_EVENT`，不会扩大页面权限，也不会放行 localhost Workbench 的业务命令。
+- 仅覆盖 Command 请求/响应边界。采集、分析等已返回任务 ID 的后台长任务、事件订阅及独立发布 API 不在本机制的完整关联范围内；独立发布 API 保留原有诊断日志。
+- 客户端超时只表示停止等待，不表示 background 操作已取消；后者仍可能记录成功。
+- 本机制不替换已有模块日志。分享控制台的完整输出前，仍需检查其中是否含敏感信息；建议只导出 `FishOpsTrace.exportJson()`。
+
+验证命令：`npm run typecheck`、`npm run test:background`、`npm run build`、`npm run test:smoke`。
+
 ## 加载与验证（ego lite / Chrome）
 
 1. `npm run build`

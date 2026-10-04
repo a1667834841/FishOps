@@ -12,8 +12,9 @@
  *      事件长连接拒绝 content / 非扩展页，防事件泄露；
  *   3. 聊天实时数据在 init 完成前不 ingest，且 init 失败可重试、不吞错误；
  *   4. manifest 不含 newtab 覆盖；content_scripts 注入范围仍仅收窄到 www.goofish.com；
- *      host_permissions 只额外放行飞书开放平台 https://open.feishu.cn/*（供 DATA_SOURCE_* 真实拉取），
- *      不得出现 <all_urls> 或任意域通配。
+ *      host_permissions 仅额外放行：闲鱼 MTOP 商品库 API https://h5api.m.goofish.com/*（发布结果核验只读）
+ *      与飞书开放平台 https://open.feishu.cn/*（供 DATA_SOURCE_* 真实拉取），
+ *      且 permissions 含 cookies（读取 _m_h5_tk/unb 做签名，不打印）；不得出现 <all_urls> 或任意域通配。
  *
  * 用法：先 `npm run build`，再 `node scripts/review-security.test.mjs`
  */
@@ -457,12 +458,16 @@ function testManifest() {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 
   check('manifest 不含 chrome_url_overrides（未替换新标签页）', manifest.chrome_url_overrides === undefined)
-  // 仅允许两个精确 origin：goofish 页面注入 + 飞书开放平台 API。
+  // 仅允许三个精确 origin：goofish 页面注入 + 闲鱼 MTOP 商品库 API（h5api）+ 飞书开放平台 API。
   // 使用精确数组相等而非 includes，防止后续误加 <all_urls> / 任意域通配。
   check(
-    'host_permissions 精确为 goofish 与飞书开放平台两项',
+    'host_permissions 精确为 goofish 页面、h5api 商品库 API 与飞书开放平台三项',
     JSON.stringify(manifest.host_permissions) ===
-      JSON.stringify(['https://www.goofish.com/*', 'https://open.feishu.cn/*']),
+      JSON.stringify([
+        'https://www.goofish.com/*',
+        'https://h5api.m.goofish.com/*',
+        'https://open.feishu.cn/*',
+      ]),
     manifest.host_permissions,
   )
   check(
@@ -475,8 +480,8 @@ function testManifest() {
   )
   check('所有 content_scripts 注入范围仍仅 https://www.goofish.com/*', allWww)
   check(
-    '保留必要 permissions（storage/scripting/tabs）',
-    ['storage', 'scripting', 'tabs'].every((p) => (manifest.permissions ?? []).includes(p)),
+    '保留必要 permissions（storage/scripting/tabs/cookies）',
+    ['storage', 'scripting', 'tabs', 'cookies'].every((p) => (manifest.permissions ?? []).includes(p)),
     manifest.permissions,
   )
 }

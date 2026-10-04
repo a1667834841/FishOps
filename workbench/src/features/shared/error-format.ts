@@ -22,13 +22,21 @@ export class CommandError extends Error {
   readonly code: string
   readonly category: PlatformCategory | undefined
   readonly retCode: string | undefined
+  readonly businessCode: string | undefined
 
-  constructor(code: string, message: string, category?: string, retCode?: string) {
+  constructor(
+    code: string,
+    message: string,
+    category?: string,
+    retCode?: string,
+    businessCode?: string,
+  ) {
     super(message)
     this.name = 'CommandError'
     this.code = code
     this.category = isPlatformCategory(category) ? category : undefined
     this.retCode = retCode
+    this.businessCode = businessCode
   }
 }
 
@@ -132,6 +140,7 @@ export function toErrorView(error: unknown): ErrorView {
         code: error.retCode ? `${error.category} / ${error.retCode}` : error.category,
       }
     }
+    const displayCode = error.businessCode || error.code
     switch (error.code) {
       case 'TIMEOUT':
         return {
@@ -139,7 +148,7 @@ export function toErrorView(error: unknown): ErrorView {
           hint: '操作可能仍在后台执行，请稍后刷新查看结果，不要连续重复提交。',
           detail: message,
           kind: 'timeout',
-          code: error.code,
+          code: displayCode,
         }
       case 'NO_TRANSPORT':
         return {
@@ -147,23 +156,26 @@ export function toErrorView(error: unknown): ErrorView {
           hint: '请通过 chrome-extension://<扩展 ID>/workbench.html 打开工作台。',
           detail: message,
           kind: 'unavailable',
-          code: error.code,
+          code: displayCode,
         }
       case 'INVALID_PAYLOAD':
-        return { title: '扩展拒绝了这次请求', hint: '', detail: message, kind: 'validation', code: error.code }
+        return { title: '扩展拒绝了这次请求', hint: '', detail: message, kind: 'validation', code: displayCode }
       case 'UNKNOWN_COMMAND':
         return {
           title: '扩展不认识这条命令',
           hint: '工作台与扩展版本可能不一致，请重新构建并重新加载扩展。',
           detail: message,
           kind: 'unavailable',
-          code: error.code,
+          code: displayCode,
         }
       default:
-        return { title: '扩展处理失败', hint: '', detail: message, kind: 'unknown', code: error.code }
+        return { title: '扩展处理失败', hint: '', detail: message, kind: 'unknown', code: displayCode }
     }
   }
-  const code = typeof (error as { code?: unknown } | null)?.code === 'string' ? String((error as { code: string }).code) : ''
+  const businessCode = typeof (error as { businessCode?: unknown } | null)?.businessCode === 'string'
+    ? String((error as { businessCode: string }).businessCode)
+    : undefined
+  const code = businessCode || (typeof (error as { code?: unknown } | null)?.code === 'string' ? String((error as { code: string }).code) : '')
   if (code === 'TIMEOUT') {
     return toErrorView(new CommandError('TIMEOUT', rawMessage(error)))
   }

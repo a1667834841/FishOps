@@ -37,6 +37,7 @@ function sanitizeMessage(message: ChatMessage): ChatMessage {
     cid: message.cid,
     senderId: message.senderId,
     senderName: message.senderName,
+    ...(message.senderAvatarUrl === undefined ? {} : { senderAvatarUrl: message.senderAvatarUrl }),
     receiverId: message.receiverId,
     direction: message.direction,
     kind: message.kind,

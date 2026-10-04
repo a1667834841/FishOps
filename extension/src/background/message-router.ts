@@ -8,6 +8,7 @@ import {
   createResponse,
   EventTypes,
   isPingPayload,
+  isChatMarkReadPayload,
   isPlatformCallPayload,
   isPlatformPingPayload,
   isPublishPayload,
@@ -111,10 +112,18 @@ export interface FeishuWriteRouterDeps {
 }
 
 /**
- * 飞书表字段同步路由器（P7 后台）。
- * 预览只读、执行需显式 confirm；并集目标、类型冲突需显式确认、不删字段。
+ * 飞书商品库分页浏览 / 单条读取路由器（P7 商品库）。
+ * 目标表固定为已配置商品表，真实单次分页、不返回密钥。
  */
-export interface FeishuSchemaRouterDeps {
+export interface FeishuProductsRouterDeps {
+  handleCommand(command: CommandEnvelope): Promise<ResponseEnvelope>
+}
+
+/**
+ * 商品目录统一查询路由器（P7 商品库）。
+ * 后台侧用 `ProductCatalogRuntime` 实现（feishu / my_published）。
+ */
+export interface ProductCatalogRouterDeps {
   handleCommand(command: CommandEnvelope): Promise<ResponseEnvelope>
 }
 
@@ -190,10 +199,15 @@ const FEISHU_WRITE_ROUTED_COMMANDS: ReadonlySet<string> = new Set<string>([
   CommandTypes.FEISHU_PRODUCT_WRITE_EXECUTE,
 ])
 
-/** 需要交由 FeishuSchemaRouterDeps 处理的飞书表字段同步命令（P7 后台）。 */
-const FEISHU_SCHEMA_ROUTED_COMMANDS: ReadonlySet<string> = new Set<string>([
-  CommandTypes.FEISHU_PRODUCT_SCHEMA_RECONCILE_PREVIEW,
-  CommandTypes.FEISHU_PRODUCT_SCHEMA_RECONCILE_EXECUTE,
+/** 需要交由 FeishuProductsRouterDeps 处理的飞书商品库分页 / 单条读取命令（P7 商品库）。 */
+const FEISHU_PRODUCTS_ROUTED_COMMANDS: ReadonlySet<string> = new Set<string>([
+  CommandTypes.FEISHU_PRODUCTS_PAGE,
+  CommandTypes.FEISHU_PRODUCT_GET,
+])
+
+/** 需要交由 ProductCatalogRouterDeps 处理的商品目录统一查询命令（P7 商品库）。 */
+const PRODUCT_CATALOG_ROUTED_COMMANDS: ReadonlySet<string> = new Set<string>([
+  CommandTypes.PRODUCT_CATALOG_QUERY,
 ])
 
 /** 需要交由 ChatRouterDeps 处理的 Workbench 聊天命令。 */
@@ -203,6 +217,7 @@ const CHAT_ROUTED_COMMANDS: ReadonlySet<string> = new Set<string>([
   CommandTypes.CHAT_GET_MESSAGES,
   CommandTypes.CHAT_SYNC_HISTORY,
   CommandTypes.CHAT_SYNC_CONVERSATIONS,
+  CommandTypes.CHAT_MARK_READ,
 ])
 
 /** 路由依赖。 */
@@ -232,8 +247,10 @@ export interface RouterDeps {
   analysis?: AnalysisRouterDeps
   /** 飞书商品写入路由器（P7 后台）；缺省表示未接线。 */
   feishuWrite?: FeishuWriteRouterDeps
-  /** 飞书表字段同步路由器（P7 后台）；缺省表示未接线。 */
-  feishuSchema?: FeishuSchemaRouterDeps
+  /** 飞书商品库分页 / 单条读取路由器（P7 商品库）；缺省表示未接线。 */
+  feishuProducts?: FeishuProductsRouterDeps
+  /** 商品目录统一查询路由器（P7 商品库）；缺省表示未接线。 */
+  productCatalog?: ProductCatalogRouterDeps
   /** 聊天发送与 AI 路由器（P6）；缺省表示 P6 未接线。 */
   reply?: ReplyRouterDeps
   /** 运行时自动准备路由器（P8）；缺省表示运行时未接线。 */
@@ -323,6 +340,9 @@ export async function handleCommand(
       }
       return runPlatform(command, deps, (platform) => platform.ping())
     default:
+      if (command.type === CommandTypes.CHAT_MARK_READ && !isChatMarkReadPayload(command.payload)) {
+        return invalid(command.requestId, command.type, '非法的 CHAT_MARK_READ 负载')
+      }
       if (CHAT_ROUTED_COMMANDS.has(command.type)) {
         if (!deps.chat) {
           return createErrorResponse(command.requestId, command.type, {
@@ -404,14 +424,23 @@ export async function handleCommand(
         }
         return deps.feishuWrite.handleCommand(command)
       }
-      if (FEISHU_SCHEMA_ROUTED_COMMANDS.has(command.type)) {
-        if (!deps.feishuSchema) {
+      if (FEISHU_PRODUCTS_ROUTED_COMMANDS.has(command.type)) {
+        if (!deps.feishuProducts) {
           return createErrorResponse(command.requestId, command.type, {
             code: 'INTERNAL',
-            message: '飞书字段同步层未接线',
+            message: '飞书商品库层未接线',
           })
         }
-        return deps.feishuSchema.handleCommand(command)
+        return deps.feishuProducts.handleCommand(command)
+      }
+      if (PRODUCT_CATALOG_ROUTED_COMMANDS.has(command.type)) {
+        if (!deps.productCatalog) {
+          return createErrorResponse(command.requestId, command.type, {
+            code: 'INTERNAL',
+            message: '商品目录层未接线',
+          })
+        }
+        return deps.productCatalog.handleCommand(command)
       }
       return createErrorResponse(command.requestId, command.type, {
         code: 'UNKNOWN_COMMAND',

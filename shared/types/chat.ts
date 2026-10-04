@@ -41,6 +41,11 @@ export interface ChatMessage {
   senderId: string
   /** 发送者昵称。 */
   senderName: string
+  /**
+   * 发送者头像 URL。
+   * 仅当平台原始数据确实提供、且已通过 https 白名单校验时才写入；缺失时保持 undefined，由界面回退字母头像。
+   */
+  senderAvatarUrl?: string
   /** 接收者用户 ID。 */
   receiverId: string
   /** 消息方向。 */
@@ -63,6 +68,14 @@ export interface ChatMessage {
   readStatus?: number
   /** 数据来源。 */
   source: ChatMessageSource
+  /**
+   * 本地确认回显标记（仅本账号「已确认发出」的乐观消息）。
+   *
+   * 发送成功后在本地立即可见，但尚未在权威历史中确认；仅内存暂存、不持久化。
+   * 当权威来源（历史 / 实时回声）写入同会话、时间边界覆盖到它时，store 会将其替换移除，
+   * 避免与平台 `messageId` 不同源的权威消息重复（见 `ChatStore.pruneCoveredEchoes`）。
+   */
+  pendingEcho?: boolean
 }
 
 /** 标准会话（会话列表项）。 */
@@ -75,6 +88,11 @@ export interface Conversation {
   peerUserId?: string
   /** 对方用户名。 */
   peerUserName: string
+  /**
+   * 对方头像 URL。
+   * 仅当平台原始数据确实提供、且已通过 https 白名单校验时才写入；缺失时保持 undefined，由界面回退字母头像。
+   */
+  peerAvatarUrl?: string
   /** 最后一条消息摘要。 */
   lastMessage: string
   /** 最后一条消息时间（毫秒时间戳）。 */

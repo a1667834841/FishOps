@@ -32,9 +32,11 @@ import {
   type PlatformErrorCategory,
   type ResponseEnvelope,
 } from '@fishops/shared'
-import type { ChatMessage } from '../../../shared/types/chat'
+import { toFullCid } from '../../../shared/chat/index'
+import type { ChatMessage, Conversation } from '../../../shared/types/chat'
 import {
   DEFAULT_AI_MAX_HISTORY,
+  TEXT_CONTENT_TYPE,
   type AutoReplyStatus,
   type ReplyContextSummary,
   type ReplyDecision,
@@ -51,6 +53,7 @@ import { ReplyEngine } from '../chat/reply-engine'
 import { mergeReplyGlobalConfig, type ReplyConfigStore } from '../chat/reply-config'
 import { matchesHandoff } from '../chat/reply-safety'
 import type { ChatMessageSender } from '../chat/send-client'
+import type { UpsertResult } from '../chat/store'
 import type { MyUserIdOutcome } from './my-user-id'
 
 /** 走 ReplyRuntime 的 P6 命令集合。 */
@@ -79,6 +82,19 @@ export interface ReplyReadiness {
   retCode?: string
 }
 
+/**
+ * 「已发送消息」落库所需的最小 store 能力。
+ * P5 `ChatStore` 天然满足；测试可注入内存实现。
+ */
+export interface SentMessageStore {
+  /** 批量 upsert 消息（按 {@link ChatStore.keyOf} 去重），返回新增/覆盖统计。 */
+  upsertMessages(messages: readonly ChatMessage[]): UpsertResult
+  /** 批量 upsert 会话，返回新增/覆盖统计。 */
+  upsertConversations(conversations: readonly Conversation[]): UpsertResult
+  /** 读取已有会话（用于保留头像 / 昵称等既有字段）。 */
+  getConversation(sessionId: string): Conversation | undefined
+}
+
 /** P6 运行时依赖。 */
 export interface ReplyRuntimeDeps {
   configStore: ReplyConfigStore
@@ -86,6 +102,12 @@ export interface ReplyRuntimeDeps {
   ai: AiChatService
   /** 读取某会话本地消息（由 P5 store 提供）。 */
   getMessages: (sessionId: string, options?: { order?: 'asc' | 'desc'; limit?: number }) => Promise<ChatMessage[]>
+  /**
+   * 已发送消息落库入口（P5 `store` 提供）。
+   * 仅在服务端确认发送成功（`result.ok`）后写入「已确认发出」的消息并更新会话摘要；
+   * 缺省时退化为旧行为（只发 `CHAT_MESSAGE_SENT`，不写 store）。
+   */
+  sentMessageStore?: SentMessageStore
   /** 当前登录用户 ID（发送必需，初值；运行时可用 `resolveMyUserId` 重新解析）。 */
   myUserId?: string
   /**
@@ -282,6 +304,20 @@ export function createReplyRuntime(deps: ReplyRuntimeDeps): ReplyRuntime {
       sessionId: incoming.sessionId,
       ...(result.ok ? { messageId: result.messageId } : { errorCode: result.error.code }),
     })
+    // 仅在服务端确认成功后才落库；失败 / 超时结果未知，绝不伪造。
+    if (result.ok) {
+      emitSentIngested(
+        recordSentMessage({
+          sessionId: incoming.sessionId,
+          receiverId: incoming.senderId,
+          myId,
+          content,
+          messageId: result.messageId,
+          sentAt: result.sentAt,
+          ...(incoming.itemId === undefined ? {} : { itemId: incoming.itemId }),
+        }),
+      )
+    }
     push(EventTypes.CHAT_AUTO_REPLY_TRIGGERED, {
       sessionId: incoming.sessionId,
       ruleId,
@@ -382,6 +418,106 @@ export function createReplyRuntime(deps: ReplyRuntimeDeps): ReplyRuntime {
     return target ? target.senderId : null
   }
 
+  /** 会话摘要最大长度（避免把长正文整段塞进会话列表）。 */
+  const CONVERSATION_SUMMARY_MAX = 100
+
+  /** 已发送消息落库结果（消息 + 会话两组 upsert 统计）。 */
+  interface SentIngestResult {
+    message: UpsertResult
+    conversation: UpsertResult
+  }
+
+  /**
+   * 发送成功后把「已确认发出」的消息与其会话摘要写入本地 store。
+   *
+   * 仅在服务端确认 `ok` 后调用；未注入 `sentMessageStore` 时返回 null（退化为旧行为，不写 store）。
+   *
+   * 去重使用 P5 `ChatStore` 口径，以发送 uuid 作 `messageId`（`mid:uuid`）。
+   * 证据核实（`.p0-runtime/chat/docs/api/websocket-api.md` 与旧 `chat-sender.js`）：
+   * 平台发送响应**不返回**服务端 `messageId`，历史 / 实时回声的 `messageId` 形如 `msg_xxx`，
+   * 与发送 uuid **不同源**，因此本键只能保证**本地幂等**（重试 / 重复发送不重复入库）；
+   * 跨源（本地发送 vs 历史 / 回声）按 id 去重无可靠依据，不做时间窗等猜测性合并。
+   *
+   * 会话摘要更新遵循「保留既有字段」：已存在则只改 `lastMessage` / `lastMessageTime` / `sortIndex`，
+   * 保留头像 / 昵称 / 未读等；不存在才新建（头像未知保持 undefined）。
+   */
+  function recordSentMessage(input: {
+    sessionId: string
+    receiverId: string
+    myId: string
+    content: string
+    messageId: string
+    sentAt: number
+    itemId?: string
+  }): SentIngestResult | null {
+    const store = deps.sentMessageStore
+    if (!store) return null
+
+    const cid = toFullCid(input.sessionId)
+    const summary =
+      input.content.length > CONVERSATION_SUMMARY_MAX ? `${input.content.slice(0, CONVERSATION_SUMMARY_MAX)}…` : input.content
+
+    const message: ChatMessage = {
+      // id 由 store 按去重键覆盖，这里留空占位。
+      id: '',
+      messageId: input.messageId,
+      sessionId: input.sessionId,
+      cid,
+      senderId: input.myId,
+      senderName: '',
+      receiverId: input.receiverId,
+      direction: 'out',
+      kind: 'text',
+      contentType: TEXT_CONTENT_TYPE,
+      content: input.content,
+      ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
+      createAt: input.sentAt,
+      // 本地已确认发出（非平台实时回声 / 历史拉取）；复用 history 表示「非实时推送」
+      source: 'history',
+      // 本地确认回显：仅内存暂存，待权威历史 / 回声覆盖边界到达后由 store 自动替换移除。
+      pendingEcho: true,
+    }
+
+    const existing = store.getConversation(input.sessionId)
+    const conversation: Conversation = existing
+      ? { ...existing, lastMessage: summary, lastMessageTime: input.sentAt, sortIndex: input.sentAt }
+      : {
+          sessionId: input.sessionId,
+          cid,
+          peerUserId: input.receiverId,
+          peerUserName: '',
+          lastMessage: summary,
+          lastMessageTime: input.sentAt,
+          unreadCount: 0,
+          sortIndex: input.sentAt,
+          ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
+          visible: true,
+        }
+
+    return {
+      message: store.upsertMessages([message]),
+      conversation: store.upsertConversations([conversation]),
+    }
+  }
+
+  /** 发送成功落库后 emit 入库 / 会话更新事件（负载仅元数据，不含正文）。 */
+  function emitSentIngested(result: SentIngestResult | null): void {
+    if (!result) return
+    if (result.message.added + result.message.updated > 0) {
+      push(EventTypes.CHAT_MESSAGE_INGESTED, {
+        kind: 'message',
+        added: result.message.added,
+        updated: result.message.updated,
+      })
+    }
+    if (result.conversation.added + result.conversation.updated > 0) {
+      push(EventTypes.CHAT_CONVERSATION_UPDATED, {
+        added: result.conversation.added,
+        updated: result.conversation.updated,
+      })
+    }
+  }
+
   /**
    * 显式发送前的统一准备：运行时就绪（ensureReady）+ 用户 ID 解析。
    * 失败返回结构化 `PLATFORM_ERROR`（带 category），由 UI 引导登录 / 处理验证码。
@@ -464,6 +600,20 @@ export function createReplyRuntime(deps: ReplyRuntimeDeps): ReplyRuntime {
       sessionId: payload.sessionId,
       ...(result.ok ? { messageId: result.messageId } : { errorCode: result.error.code }),
     })
+    // 仅在服务端确认成功后才落库；失败 / 超时结果未知，绝不伪造。
+    if (result.ok) {
+      emitSentIngested(
+        recordSentMessage({
+          sessionId: payload.sessionId,
+          receiverId: payload.receiverId,
+          myId,
+          content: payload.content,
+          messageId: result.messageId,
+          sentAt: result.sentAt,
+          ...(payload.itemId === undefined ? {} : { itemId: payload.itemId }),
+        }),
+      )
+    }
     return createResponse(command.requestId, command.type, result)
   }
 
@@ -495,6 +645,17 @@ export function createReplyRuntime(deps: ReplyRuntimeDeps): ReplyRuntime {
           content: payload.content,
         },
         { kind: 'suggest', mode: 'suggest', delayMs: 0, ...(payload.ruleId === undefined ? {} : { ruleId: payload.ruleId }) },
+      )
+      // 服务端确认后入库，使 UI 无需同步历史即可看到采用后发出的消息。
+      emitSentIngested(
+        recordSentMessage({
+          sessionId: payload.sessionId,
+          receiverId,
+          myId,
+          content: payload.content,
+          messageId: result.messageId,
+          sentAt: result.sentAt,
+        }),
       )
     }
     push(EventTypes.CHAT_MESSAGE_SENT, {

@@ -12,6 +12,7 @@
  *   避免发送注定失败的请求。可通过 `requireToken: false` 关闭。
  */
 import { PlatformError, classifyMtopPayload, defaultMessageFor } from '../errors'
+import { createRateLimiter } from '../rate-limit'
 import type { RateLimiter } from '../rate-limit'
 import type { SearchParams } from '../protocol'
 import { generateSignature, extractDocumentToken, type SignResult } from './sign'
@@ -21,6 +22,11 @@ export interface MtopApiConfig {
   baseUrl: string
   api: string
   appKey: string
+  /**
+   * 额外 URL 参数（按 API 固定），如 spm 埋点。
+   * 签名只针对 body 的 `data`，因此追加 URL 参数不影响签名值。
+   */
+  extraUrlParams?: Record<string, string>
 }
 
 /** API 配置，与旧 `API_CONFIG` 逐字段一致。 */
@@ -39,6 +45,13 @@ export const MTOP_API_CONFIG = {
     baseUrl: 'https://h5api.m.goofish.com/h5/mtop.taobao.idlemtopsearch.pc.search.suggest/1.0/',
     api: 'mtop.taobao.idlemtopsearch.pc.search.suggest',
     appKey: '34839810',
+  },
+  /** 当前账号官方「我的商品库」在售列表（实测接口，URL 参数与旧 goods-list-service 一致）。 */
+  myOnSaleItems: {
+    baseUrl: 'https://h5api.m.goofish.com/h5/mtop.idle.web.xyh.item.list/1.0/',
+    api: 'mtop.idle.web.xyh.item.list',
+    appKey: '34839810',
+    extraUrlParams: { spm_cnt: 'a21ybx.personal.0.0', spm_pre: 'a21ybx.home.nav.1' },
   },
 } as const satisfies Record<string, MtopApiConfig>
 
@@ -95,6 +108,11 @@ export interface MtopCallOptions {
   timestamp?: string
   /** 自定义 appKey。 */
   appKey?: string
+  /**
+   * 本次请求专用限速（覆盖全局 `deps.rateLimiter`）。仅采集搜索会携带，
+   * 用于按任务配置的「基础间隔 + 随机增量」节流，而不被全局固定 1500ms 拖慢。
+   */
+  rateLimit?: { minIntervalMs: number; jitterMs: number }
 }
 
 /**
@@ -127,6 +145,7 @@ export function buildMtopRequest(
     timeout: '20000',
     api: config.api,
     sessionOption: 'AutoLoginOnly',
+    ...('extraUrlParams' in config ? config.extraUrlParams : {}),
   }
 
   return {
@@ -188,10 +207,16 @@ export interface MtopClientDeps {
   transport: MtopTransport
   /** token 提供者，默认读取当前页面 cookie（MAIN world）。 */
   getToken?: () => string | null
-  /** 请求限速。 */
+  /** 请求限速（全局默认，非搜索请求使用）。 */
   rateLimiter?: RateLimiter
   /** 是否要求 token 非空（默认 true）。 */
   requireToken?: boolean
+  /** 专用限速器的时间源，默认 Date.now。 */
+  now?: () => number
+  /** 专用限速器的休眠实现，默认 setTimeout。 */
+  sleep?: (ms: number) => Promise<void>
+  /** 专用限速器的随机源，默认 Math.random。 */
+  random?: () => number
 }
 
 export interface MtopClient {
@@ -202,7 +227,7 @@ export interface MtopClient {
     options?: MtopCallOptions,
   ): Promise<MtopRawResponse>
   /** 搜索，返回响应中的 `data`。 */
-  search(params: SearchParams): Promise<MtopRawResponse>
+  search(params: SearchParams, options?: MtopCallOptions): Promise<MtopRawResponse>
   /** 商品详情，返回响应中的 `data`。 */
   fetchItemDetail(itemId: string, options?: MtopCallOptions): Promise<MtopRawResponse>
   /** 搜索建议（流量词），返回词列表。 */
@@ -217,6 +242,24 @@ export function createMtopClient(deps: MtopClientDeps): MtopClient {
   const getToken = deps.getToken ?? extractDocumentToken
   const requireToken = deps.requireToken ?? true
 
+  // 搜索专用限速器：按「基础间隔:随机增量」缓存，保证同一配置跨请求持续生效。
+  const searchLimiters = new Map<string, RateLimiter>()
+  const searchLimiterFor = (config: { minIntervalMs: number; jitterMs: number }): RateLimiter => {
+    const key = `${config.minIntervalMs}:${config.jitterMs}`
+    let limiter = searchLimiters.get(key)
+    if (!limiter) {
+      limiter = createRateLimiter({
+        minIntervalMs: config.minIntervalMs,
+        jitterMs: config.jitterMs,
+        ...(deps.now === undefined ? {} : { now: deps.now }),
+        ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+        ...(deps.random === undefined ? {} : { random: deps.random }),
+      })
+      searchLimiters.set(key, limiter)
+    }
+    return limiter
+  }
+
   async function requestRaw(
     apiType: MtopApiType,
     data: unknown,
@@ -227,7 +270,8 @@ export function createMtopClient(deps: MtopClientDeps): MtopClient {
       throw new PlatformError('unauthorized', defaultMessageFor('unauthorized'))
     }
 
-    await deps.rateLimiter?.acquire()
+    const limiter = options.rateLimit ? searchLimiterFor(options.rateLimit) : deps.rateLimiter
+    await limiter?.acquire()
 
     const plan = buildMtopRequest(apiType, data, { ...options, token })
     const payload = await deps.transport.send({
@@ -242,8 +286,15 @@ export function createMtopClient(deps: MtopClientDeps): MtopClient {
 
   return {
     requestRaw,
-    async search(params: SearchParams): Promise<MtopRawResponse> {
-      const payload = await requestRaw('search', buildSearchData(params))
+    async search(params: SearchParams, options: MtopCallOptions = {}): Promise<MtopRawResponse> {
+      const rateLimit =
+        typeof params.minIntervalMs === 'number'
+          ? { minIntervalMs: params.minIntervalMs, jitterMs: params.intervalJitterMs ?? 0 }
+          : undefined
+      const payload = await requestRaw('search', buildSearchData(params), {
+        ...options,
+        ...(rateLimit === undefined ? {} : { rateLimit }),
+      })
       const data = payload.data
       return typeof data === 'object' && data !== null ? (data as MtopRawResponse) : {}
     },
