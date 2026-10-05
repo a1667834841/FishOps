@@ -6,7 +6,22 @@ GitHub Actions 工作流「构建插件」在 push、pull request 和手动运�
 
 `npm run build` 将扩展运行时与工作台合并输出到 `extension/dist`。CI 将该目录的内容打包为 `fishops-extension.zip`，再上传到名为 `fishops-extension` 的 Artifact，保留 30 天。压缩包根目录包含 `manifest.json` 和 `workbench.html`。
 
-## 下载与加载
+## 发布到 Releases
+
+Actions 的 Artifacts 与仓库的 Releases 是两个独立入口。普通分支构建只上传 Artifact。推送 `v*` 标签（例如 `v0.1.0`）后，工作流在所有检查通过后自动创建对应 Release，并将 `fishops-extension.zip` 添加到 Release 的 Assets。
+
+先提交并推送包含工作流的代码，再对需要发布的提交创建和推送标签：
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+标签对应的提交必须包含此工作流。版本号应按实际发布版本调整。已有同名 Release 时，重新运行工作流会更新该 Release 的同名 ZIP 附件。也可在 **Run workflow** 中选择已有的 `v*` 标签重新构建并发布。
+
+发布成功后，打开仓库 **Releases → 对应版本 → Assets**，直接下载 `fishops-extension.zip`，解压并加载包含 `manifest.json` 的目录。
+
+## 从 Actions 下载与加载
 
 1. 打开 GitHub 仓库的 **Actions** 页面，选择「构建插件」。
 2. 打开一次成功的运行，在 **Artifacts** 中下载 `fishops-extension`。

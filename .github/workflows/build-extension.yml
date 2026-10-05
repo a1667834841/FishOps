@@ -57,3 +57,37 @@ jobs:
           path: dist/fishops-extension.zip
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: 发布插件到 Release
+    needs: build
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: extension-release-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - name: 下载插件压缩包
+        uses: actions/download-artifact@v4
+        with:
+          name: fishops-extension
+          path: dist
+
+      - name: 创建 Release 并上传插件
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/fishops-extension.zip --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/fishops-extension.zip \
+              --verify-tag \
+              --title "FishOps $RELEASE_TAG" \
+              --notes "下载 fishops-extension.zip，解压后在 Chrome 扩展管理页面加载包含 manifest.json 的目录。"
+          fi
