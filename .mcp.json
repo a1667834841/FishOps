@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp",
+      "auth": "bearer",
+      "bearerToken": "!zsh -lic 'printf \"%s\" \"$GITHUB_TOKEN\"'"
+    },
+    "parallel-search": {
+      "url": "https://search.parallel.ai/mcp",
+      "protocolVersion": "auto",
+      "directTools": true
+    }
+  }
+}
