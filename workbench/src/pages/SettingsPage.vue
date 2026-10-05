@@ -23,10 +23,8 @@ import {
   DEFAULT_AI_TIMEOUT_MS,
 } from '../features/contracts'
 import {
-  checkChromeOriginPermission,
-  requestChromeOriginPermission,
   resolveTargetAiOrigin,
-} from '../features/settings/ai-permission-helper'
+} from '../features/settings/ai-origin-helper'
 import type { CapabilityPhase } from '../features/settings/capability-controller'
 import {
   inferAiProvider,
@@ -101,7 +99,7 @@ const capabilityLabels: Record<CapabilityPhase, string> = {
   error: '异常',
 }
 
-// ==================== 1. AI 配置表单与域名按需授权 ====================
+// ==================== 1. AI 配置表单与安全 Origin 解析 ====================
 // 默认留空，表示保留后台已保存的 endpoint，不以前端写死默认值覆盖用户已有配置
 const aiForm = ref<AiConfigInput>({
   baseUrl: '',
@@ -115,20 +113,12 @@ const aiUserTouched = ref({
   timeoutMs: false,
 })
 
-/** 真实环境下 AI 接口 Origin 默认未授权（aiOriginGranted = false）。 */
-const aiOriginGranted = ref<boolean>(false)
-const aiPermissionPhase = ref<'idle' | 'requesting' | 'granted' | 'denied' | 'error'>('idle')
-const aiPermissionFeedback = ref<{ tone: 'ok' | 'warn' | 'error'; message: string } | null>(null)
-
 /** 计算是否已有配置但无法解析出安全 Origin（如旧版保存的端点无效，未填写新 URL）。 */
 const isExistingEndpointInsecure = computed(() => {
   return state.value.ai.configured && !state.value.ai.permissionOrigin && !aiForm.value.baseUrl?.trim()
 })
 
-/** 用户是否已显式确认 HTTP 明文传输 API Key 风险（未确认前禁止对 HTTP 端点授权，防静默授权）。 */
-const aiHttpRiskAcknowledged = ref(false)
-
-/** 依据输入 / 已存配置解析出的当前授权目标（同步纯计算，保留 http/https scheme）。 */
+/** 依据输入 / 已存配置解析出的当前目标端点（同步纯计算，保留 http/https scheme）。 */
 const currentAiTarget = computed(() =>
   resolveTargetAiOrigin({
     configured: state.value.ai.configured,
@@ -138,12 +128,12 @@ const currentAiTarget = computed(() =>
   }),
 )
 
-/** 当前授权目标是否为 HTTP（保留 scheme，用于显示明文传输警告）。 */
+/** 当前目标是否为 HTTP（保留 scheme，用于显示明文传输警告）。 */
 const currentAiTargetIsHttp = computed(
   () => currentAiTarget.value.ok && (currentAiTarget.value.origin ?? '').startsWith('http://'),
 )
 
-/** 当前计算得出的安全授权目标 Origin（仅 scheme+host）。 */
+/** 当前计算得出的安全目标 Origin（仅 scheme+host）。 */
 const currentAiTargetOrigin = computed(() => {
   const target = currentAiTarget.value
   if (target.ok && target.origin) return target.origin
@@ -152,110 +142,6 @@ const currentAiTargetOrigin = computed(() => {
   }
   return '（无有效 HTTP/HTTPS Origin）'
 })
-
-/** 查询当前目标域名是否已被授权（只读探查，不阻塞也不弹窗）。 */
-async function refreshAiPermissionGranted(): Promise<void> {
-  const target = currentAiTarget.value
-  if (target.ok && target.pattern) {
-    aiOriginGranted.value = await checkChromeOriginPermission(target.pattern)
-  } else {
-    aiOriginGranted.value = false
-  }
-}
-
-watch(
-  () => [state.value.ai.configured, state.value.ai.permissionOrigin, aiForm.value.baseUrl] as const,
-  () => {
-    // 目标变化后重置确认，避免对新的 HTTP 端点静默沿用旧确认。
-    aiHttpRiskAcknowledged.value = false
-    void refreshAiPermissionGranted()
-  },
-  { immediate: true },
-)
-
-/**
- * 用户显式点击“授权当前AI接口域名”。
- *
- * 核心安全与平台规范（硬性要求）：
- * 1. 必须在用户点击同步手势执行栈内直接触发 requestChromeOriginPermission(...)；
- * 2. 严禁在任何 await 之后调用，否则 Chrome 丢失 user gesture 拒绝弹出授权框；
- * 3. 严格禁止携带用户名/密码认证信息、查询参数或片段；
- * 4. 按当前 Origin（输入或已存配置）请求，已配置时绝不回退默认域名；
- * 5. 目标为 HTTP 时必须先由用户显式勾选确认「HTTP 会明文传输 API Key」风险，绝不静默授权；
- * 6. 授权浏览器 prompt 交给用户：允许/拒绝均给予明确可见反馈；
- * 7. 保存 AI 配置表单操作绝不自动调用此授权逻辑。
- */
-function onRequestAiPermission(): void {
-  aiPermissionFeedback.value = null
-
-  // 1. 同步校验与计算目标 Origin Pattern（传 configured 防旧配置误回退 OpenAI）
-  const target = currentAiTarget.value
-
-  if (!target.ok || !target.pattern || !target.origin) {
-    aiPermissionPhase.value = 'error'
-    aiPermissionFeedback.value = {
-      tone: 'error',
-      message: target.error ?? '无法从当前输入或配置中解析安全的 HTTP/HTTPS Origin',
-    }
-    return
-  }
-
-  // 2. 目标为 HTTP 时必须先显式确认明文风险，绝不在未确认时发起授权
-  if (target.origin.startsWith('http://') && !aiHttpRiskAcknowledged.value) {
-    aiPermissionPhase.value = 'error'
-    aiPermissionFeedback.value = {
-      tone: 'error',
-      message: 'HTTP 会明文传输 API Key：请先勾选确认了解风险后再发起授权',
-    }
-    return
-  }
-
-  aiPermissionPhase.value = 'requesting'
-
-  // 3. 必须在当前同步手势调用栈内直接调用底层的 chrome.permissions.request
-  let requestPromise: Promise<boolean>
-  try {
-    requestPromise = requestChromeOriginPermission(target.pattern)
-  } catch (error) {
-    aiPermissionPhase.value = 'error'
-    const msg = error instanceof Error ? error.message : String(error)
-    aiPermissionFeedback.value = {
-      tone: 'error',
-      message: `请求权限失败：${msg}`,
-    }
-    return
-  }
-
-  // 4. 异步监听浏览器 prompt 用户的选择反馈
-  requestPromise
-    .then((granted) => {
-      if (granted) {
-        aiPermissionPhase.value = 'granted'
-        aiOriginGranted.value = true
-        aiPermissionFeedback.value = {
-          tone: 'ok',
-          message: `已成功获得域名访问授权：${target.origin}`,
-        }
-      } else {
-        // 用户点击了拒绝或关闭了权限授权弹窗
-        aiPermissionPhase.value = 'denied'
-        aiOriginGranted.value = false
-        aiPermissionFeedback.value = {
-          tone: 'warn',
-          message: `授权未授予：用户拒绝或关闭了权限提示（域名：${target.origin}）`,
-        }
-      }
-    })
-    .catch((error) => {
-      aiPermissionPhase.value = 'error'
-      aiOriginGranted.value = false
-      const msg = error instanceof Error ? error.message : String(error)
-      aiPermissionFeedback.value = {
-        tone: 'error',
-        message: `请求权限异常：${msg}`,
-      }
-    })
-}
 
 // 当后台返回已有模型或超时配置时，仅在用户未触碰编辑且表单为空时进行初始填充，绝不覆盖用户编辑
 watch(
@@ -301,15 +187,13 @@ async function onTestAi(): Promise<void> {
     (aiUserTouched.value.model && (aiForm.value.model ?? '').trim() !== (state.value.ai.model ?? '')) ||
     (aiUserTouched.value.timeoutMs && aiForm.value.timeoutMs !== state.value.ai.timeoutMs)
 
-  // 2. 授权状态与 HTTP 判定（测试按钮不绕过授权）
+  // 2. HTTP 判定与目标 Origin 信息
   const isHttp = currentAiTargetIsHttp.value
-  const originGranted = aiOriginGranted.value
   const origin = currentAiTargetOrigin.value
 
   await controller.testAiConnection({
     isDirty,
     isHttp,
-    originGranted,
     origin,
   })
 }
@@ -560,69 +444,27 @@ async function onTogglePause(): Promise<void> {
               </span>
             </div>
 
-            <!-- AI 接口域名按需授权区 -->
-            <div class="ai-permission-card">
-              <div class="ai-permission-card__head">
-                <div class="ai-permission-card__meta">
-                  <span class="ai-permission-card__title">接口域名按需授权</span>
-                  <span class="ai-permission-card__origin mono">{{ currentAiTargetOrigin }}</span>
+            <!-- AI 接口域名说明区 -->
+            <div class="ai-origin-card">
+              <div class="ai-origin-card__head">
+                <div class="ai-origin-card__meta">
+                  <span class="ai-origin-card__title">当前 AI 接口域名</span>
+                  <span class="ai-origin-card__origin mono">{{ currentAiTargetOrigin }}</span>
                 </div>
-                <span
-                  class="pill"
-                  :class="aiOriginGranted ? 'pill--ok' : isExistingEndpointInsecure ? 'pill--error' : 'pill--warn'"
-                >
-                  {{
-                    aiOriginGranted
-                      ? '当前域名已授权'
-                      : isExistingEndpointInsecure
-                        ? '现有端点无效'
-                        : '未授权（需手动授权）'
-                  }}
-                </span>
               </div>
 
               <div v-if="isExistingEndpointInsecure" class="form-feedback">
                 <Callout tone="error">
-                  现有已配置端点无法解析出有效 Origin，请在上方填写合规的 HTTP/HTTPS 地址并保存。已阻止向默认域名发起授权请求。
+                  现有已配置端点无法解析出有效 Origin，请在上方填写合规的 HTTP/HTTPS 地址并保存。
                 </Callout>
               </div>
 
-              <!-- HTTP 明文传输风险提示：必须由用户显式确认后才允许授权，绝不静默授权 -->
+              <!-- HTTP 明文传输风险提示 -->
               <template v-if="currentAiTargetIsHttp">
                 <Callout tone="error" title="HTTP 会明文传输 API Key">
-                  当前授权目标为 HTTP 端点，API Key 与请求内容将以明文在网络中传输，可能被中间人窃取。请仅在可信内网 / 本地环境使用，并确认网络链路安全。
+                  当前目标为 HTTP 端点，API Key 与请求内容将以明文在网络中传输，可能被中间人窃取。请仅在可信内网 / 本地环境使用，并确认网络链路安全。
                 </Callout>
-                <label class="http-risk-confirm">
-                  <input v-model="aiHttpRiskAcknowledged" type="checkbox" class="switch-checkbox" />
-                  <span>我已了解上述风险，确认对该 HTTP 端点发起授权（未确认前不会授权，也不会静默授权）</span>
-                </label>
               </template>
-
-              <div class="ai-permission-card__actions">
-                <button
-                  type="button"
-                  class="btn btn--sm"
-                  :class="{ 'btn--primary': !aiOriginGranted && !isExistingEndpointInsecure }"
-                  :disabled="
-                    state.availability !== 'ready' ||
-                    aiPermissionPhase === 'requesting' ||
-                    isExistingEndpointInsecure ||
-                    (currentAiTargetIsHttp && !aiHttpRiskAcknowledged)
-                  "
-                  @click="onRequestAiPermission"
-                >
-                  {{ aiPermissionPhase === 'requesting' ? '等待授权确认…' : '授权当前AI接口域名' }}
-                </button>
-                <span class="ai-permission-card__hint">
-                  点击后由浏览器弹出原生授权提示，用户可随时允许或拒绝；保存配置时不自动授权。
-                </span>
-              </div>
-
-              <div v-if="aiPermissionFeedback" class="form-feedback">
-                <Callout :tone="aiPermissionFeedback.tone">
-                  {{ aiPermissionFeedback.message }}
-                </Callout>
-              </div>
             </div>
 
             <div class="field">
@@ -1844,8 +1686,8 @@ async function onTogglePause(): Promise<void> {
   color: var(--text-muted);
 }
 
-/* AI 域名按需授权卡片 */
-.ai-permission-card {
+/* AI 域名信息卡片 */
+.ai-origin-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1855,7 +1697,7 @@ async function onTogglePause(): Promise<void> {
   border: 1px solid var(--border);
 }
 
-.ai-permission-card__head {
+.ai-origin-card__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1863,55 +1705,26 @@ async function onTogglePause(): Promise<void> {
   flex-wrap: wrap;
 }
 
-.ai-permission-card__meta {
+.ai-origin-card__meta {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.ai-permission-card__title {
+.ai-origin-card__title {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
 }
 
-.ai-permission-card__origin {
+.ai-origin-card__origin {
   font-size: 12px;
   color: var(--text-muted);
   background: var(--surface);
   padding: 2px 7px;
   border-radius: 4px;
   border: 1px solid var(--border);
-}
-
-.ai-permission-card__actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.ai-permission-card__hint {
-  font-size: 11.5px;
-  color: var(--text-muted);
-  line-height: 1.45;
-  flex: 1 1 200px;
-}
-
-/* HTTP 明文风险显式确认行 */
-.http-risk-confirm {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius-control);
-  background: var(--error-soft);
-  border: 1px solid var(--error);
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--text);
-  cursor: pointer;
 }
 
 /* 账号与授权未实现明确空态 (Seline 白卡空态) */

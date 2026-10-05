@@ -47,8 +47,6 @@ export interface AiTestOptions {
   isDirty?: boolean
   /** 当前测试目标是否为 HTTP 协议端点。 */
   isHttp?: boolean
-  /** 域名是否已被授予权限（false 时拦截并提示，测试按钮不绕过授权）。 */
-  originGranted?: boolean
   /** 目标 Origin 字符串（仅 scheme+host），用于提示。 */
   origin?: string
 }
@@ -61,7 +59,6 @@ export function formatAiTestError(
   error: unknown,
   context?: {
     isHttp?: boolean
-    originGranted?: boolean
     origin?: string
   },
 ): ErrorView {
@@ -106,20 +103,10 @@ export function formatAiTestError(
   }
 
   if (errCode === 'NETWORK') {
-    if (context?.originGranted === false) {
-      const originHint = context?.origin ? `（目标域名：${context.origin}）` : ''
-      return {
-        title: 'AI 接口请求失败：域名可能未获授权',
-        hint: `请检查并点击上方的「授权当前AI接口域名」按钮${originHint}完成浏览器授权后再试。`,
-        detail: cleanDetail || '浏览器阻止了对该域名的网络请求（可能缺少 Chrome 域名权限）。',
-        kind: 'auth',
-        code: 'AI_PERMISSION_REQUIRED',
-      }
-    }
     if (context?.isHttp) {
       return {
         title: 'HTTP 接口网络连接失败',
-        hint: '当前使用的是 HTTP 端点，请确保本地服务或内网代理已启动且端口正确；请确认已了解明文传输风险并完成授权。',
+        hint: '当前使用的是 HTTP 端点，请确保本地服务或内网代理已启动且端口正确；请确认已了解明文传输风险。',
         detail: cleanDetail,
         kind: 'platform',
         code: 'HTTP_ENDPOINT_ERROR',
@@ -219,36 +206,7 @@ export function formatAiTestError(
     }
   }
 
-  if (errCode === 'AI_PERMISSION_REQUIRED') {
-    const originHint = context?.origin ? `（目标域名：${context.origin}）` : ''
-    return {
-      title: 'AI 接口请求失败：域名可能未获授权',
-      hint: `请检查并点击上方的「授权当前AI接口域名」按钮${originHint}完成浏览器授权后再试。`,
-      detail: cleanDetail || '浏览器阻止了对该域名的网络请求（可能缺少 Chrome 域名权限）。',
-      kind: 'auth',
-      code: 'AI_PERMISSION_REQUIRED',
-    }
-  }
-
   // ==================== 2. 文本语义降级匹配（针对原始 Error 或未带 code 的错误） ====================
-
-  // 域名权限不足
-  if (
-    context?.originGranted === false ||
-    lowerMsg.includes('permission') ||
-    lowerMsg.includes('not allowed') ||
-    lowerMsg.includes('denied') ||
-    (Boolean(context?.origin) && (lowerMsg.includes('failed to fetch') || lowerMsg.includes('net::')))
-  ) {
-    const originHint = context?.origin ? `（目标域名：${context.origin}）` : ''
-    return {
-      title: 'AI 接口请求失败：域名可能未获授权',
-      hint: `请检查并点击上方的「授权当前AI接口域名」按钮${originHint}完成浏览器授权后再试。`,
-      detail: cleanDetail || '浏览器阻止了对该域名的网络请求（可能缺少 Chrome 域名权限）。',
-      kind: 'auth',
-      code: 'AI_PERMISSION_REQUIRED',
-    }
-  }
 
   // 认证失败
   if (
@@ -311,18 +269,21 @@ export function formatAiTestError(
     }
   }
 
-  // 网络错误
+  // 网络错误（包含原权限不足关键词，统一降级为普通网络失败提示）
   if (
     lowerMsg.includes('failed to fetch') ||
     lowerMsg.includes('networkerror') ||
     lowerMsg.includes('net::err') ||
     lowerMsg.includes('econnrefused') ||
-    lowerMsg.includes('network')
+    lowerMsg.includes('network') ||
+    lowerMsg.includes('permission') ||
+    lowerMsg.includes('not allowed') ||
+    lowerMsg.includes('denied')
   ) {
     if (context?.isHttp) {
       return {
         title: 'HTTP 接口网络连接失败',
-        hint: '当前使用的是 HTTP 端点，请确保本地服务或内网代理已启动且端口正确；请确认已了解明文传输风险并完成授权。',
+        hint: '当前使用的是 HTTP 端点，请确保本地服务或内网代理已启动且端口正确；请确认已了解明文传输风险。',
         detail: cleanDetail,
         kind: 'platform',
         code: 'HTTP_ENDPOINT_ERROR',
@@ -330,7 +291,7 @@ export function formatAiTestError(
     }
     return {
       title: '网络连接失败',
-      hint: '无法连接到 AI 服务端点，请检查网络连接及 API Base URL 是否正确。',
+      hint: '无法连接到 AI 服务端点，请检查端点地址、网络连接与代理设置是否正确。',
       detail: cleanDetail,
       kind: 'platform',
       code: 'NETWORK',
@@ -681,10 +642,9 @@ export class SettingsController extends StateStore<SettingsState> {
    *
    * 规范与约束：
    * 1. 探测前校验：后台未保存配置时拦截并提示先保存；表单有未保存改动时拦截并提示先保存；
-   * 2. 授权拦截：测试按钮不绕过授权，若当前域名尚未获得授权则拦截并提示；
-   * 3. 严格防重复点击与 loading 状态管理；
-   * 4. 成功时仅展示模型名称、耗时及响应字符数，绝不展示探测文本、API key、完整 URL 或响应 body；
-   * 5. 失败时转换为结构化 ErrorView，展示针对性权限/HTTP/认证可行动建议。
+   * 2. 严格防重复点击与 loading 状态管理；
+   * 3. 成功时仅展示模型名称、耗时及响应字符数，绝不展示探测文本、API key、完整 URL 或响应 body；
+   * 4. 失败时转换为结构化 ErrorView，展示针对性 HTTP/认证/网络等可行动建议。
    */
   async testAiConnection(options?: AiTestOptions): Promise<boolean> {
     const api = this.api
@@ -719,29 +679,6 @@ export class SettingsController extends StateStore<SettingsState> {
         detail: '表单存在未保存的修改，为避免测试与预期不符，请先保存配置。',
         kind: 'validation',
         code: 'UNSAVED_CHANGES',
-      }
-      this.patch({
-        ai: {
-          ...this.state.ai,
-          testPhase: 'failed',
-          testError: `${view.title}：${view.hint}`,
-          testErrorView: view,
-          testSuccess: null,
-        },
-      })
-      return false
-    }
-
-    // 3. 授权拦截：测试按钮不绕过授权
-    if (options?.originGranted === false) {
-      const view: ErrorView = {
-        title: '当前 AI 接口域名尚未获得授权',
-        hint: options.origin
-          ? `请先点击上方的「授权当前AI接口域名」按钮，授权 ${options.origin} 后再进行测试。`
-          : '请先点击上方的「授权当前AI接口域名」按钮完成浏览器权限授权后再进行测试。',
-        detail: '测试按钮不绕过权限授权，需先显式授予该 Origin 访问权限。',
-        kind: 'auth',
-        code: 'AI_PERMISSION_REQUIRED',
       }
       this.patch({
         ai: {
@@ -798,7 +735,6 @@ export class SettingsController extends StateStore<SettingsState> {
         const errObj = res.error && typeof res.error === 'object' ? res.error : { message: 'AI 接口探测失败' }
         const view = formatAiTestError(errObj, {
           isHttp: options?.isHttp,
-          originGranted: options?.originGranted,
           origin: options?.origin,
         })
         this.patch({
@@ -851,7 +787,6 @@ export class SettingsController extends StateStore<SettingsState> {
       if (this.disposed) return false
       const view = formatAiTestError(error, {
         isHttp: options?.isHttp,
-        originGranted: options?.originGranted,
         origin: options?.origin,
       })
       this.patch({

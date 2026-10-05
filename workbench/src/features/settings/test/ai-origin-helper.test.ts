@@ -1,22 +1,19 @@
 /**
- * AI 域名按需授权与安全工具测试。
+ * AI 端点安全 Origin 解析工具测试。
  *
  * 规范与断言：
- * 1. 真实环境下 aiOriginGranted 初始为 false；
- * 2. 任意包含用户名/密码认证信息或查询参数的 URL 严格禁止并给出中文提示；
- * 3. 仅提取安全 origin 及 pattern，绝不包含 key、路径、query、userinfo；
- * 4. 必须在用户点击同步手势栈内调用 chrome.permissions.request；
- * 5. 用户授权/拒绝时产生正确反馈，保存配置不自动授权。
+ * 1. 任意包含用户名/密码认证信息或查询参数的 URL 严格禁止并给出中文提示；
+ * 2. 仅提取安全 origin 及 pattern，绝不包含 key、路径、query、userinfo；
+ * 3. 允许 HTTP/HTTPS 协议端点并保留 scheme；
+ * 4. resolveTargetAiOrigin 解析逻辑：输入框优先，其次已保存 origin，未配置时回退默认端点；
+ *    已配置但 origin 缺失时严禁回退默认端点，明确报错。
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   extractSafeAiOrigin,
   resolveTargetAiOrigin,
-  requestChromeOriginPermission,
-  checkChromeOriginPermission,
-  type ChromePermissionsApi,
-} from '../ai-permission-helper'
+} from '../ai-origin-helper'
 
 test('extractSafeAiOrigin：正常 HTTPS 接口提取安全 Origin 与 Pattern', () => {
   const r1 = extractSafeAiOrigin('https://api.openai.com/v1')
@@ -176,32 +173,6 @@ test('resolveTargetAiOrigin：已 configured 但 permissionOrigin 缺失时严�
   assert.equal(fixed.origin, 'https://new-secure-host.com')
 })
 
-test('HTTP 旧配置阻止默认请求：不可 request，api.request 绝不被调用', async () => {
-  let apiRequestCalled = false
-  const mockApi: ChromePermissionsApi = {
-    request: () => {
-      apiRequestCalled = true
-      return Promise.resolve(true)
-    },
-  }
-
-  // 模拟 UI 点击授权流程：已配置但 permissionOrigin 为 null（端点无效），且用户未在输入框填写地址
-  const target = resolveTargetAiOrigin({
-    configured: true,
-    inputUrl: '',
-    permissionOrigin: null,
-    defaultUrl: 'https://api.openai.com/v1',
-  })
-
-  // target 校验失败，流程在 request 前必须中断
-  assert.equal(target.ok, false)
-  if (target.ok && target.pattern) {
-    await requestChromeOriginPermission(target.pattern, mockApi)
-  }
-
-  assert.equal(apiRequestCalled, false, '不可调用 api.request 发起未授权或错误域名的请求')
-})
-
 test('resolveTargetAiOrigin：已配置 HTTP 端点时按当前 origin 请求，绝不回退默认域名', () => {
   // 已配置且后台返回 HTTP permissionOrigin（保留 scheme）
   const res = resolveTargetAiOrigin({
@@ -225,54 +196,4 @@ test('resolveTargetAiOrigin：已配置 HTTP 端点时按当前 origin 请求，
   assert.equal(inputRes.ok, true)
   assert.equal(inputRes.origin, 'http://my-ai.local')
   assert.equal(inputRes.pattern, 'http://my-ai.local/*')
-})
-
-test('requestChromeOriginPermission：必须在同步调用内立即触发 api.request', async () => {
-  let requestCalledSynchronously = false
-  let passedPattern: string | undefined
-
-  const mockApi: ChromePermissionsApi = {
-    request(permissions) {
-      requestCalledSynchronously = true
-      passedPattern = permissions.origins?.[0]
-      return Promise.resolve(true)
-    },
-  }
-
-  // 同步执行调用，断言在调用返回瞬间底层 request 已被同步触发
-  const promise = requestChromeOriginPermission('https://api.openai.com/*', mockApi)
-  assert.equal(requestCalledSynchronously, true)
-  assert.equal(passedPattern, 'https://api.openai.com/*')
-
-  const granted = await promise
-  assert.equal(granted, true)
-})
-
-test('requestChromeOriginPermission：用户在 prompt 中点击拒绝返回 false', async () => {
-  const mockApi: ChromePermissionsApi = {
-    request() {
-      // 模拟用户拒绝授权
-      return Promise.resolve(false)
-    },
-  }
-
-  const granted = await requestChromeOriginPermission('https://api.openai.com/*', mockApi)
-  assert.equal(granted, false)
-})
-
-test('requestChromeOriginPermission：非扩展环境安全拦截报错', async () => {
-  await assert.rejects(
-    () => requestChromeOriginPermission('https://api.openai.com/*', null),
-    /非扩展环境/,
-  )
-})
-
-test('checkChromeOriginPermission：真实初始状态未授权返回 false', async () => {
-  const mockApi: ChromePermissionsApi = {
-    request: async () => false,
-    contains: async () => false, // 真实初始未授权
-  }
-
-  const hasPerm = await checkChromeOriginPermission('https://api.openai.com/*', mockApi)
-  assert.equal(hasPerm, false)
 })

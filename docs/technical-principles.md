@@ -108,8 +108,7 @@ npm run dev:workbench
 `extension/public/manifest.json`：
 
 - `permissions`：`storage`、`scripting`、`tabs`、`cookies`。
-- `host_permissions`：`https://www.goofish.com/*`、`https://h5api.m.goofish.com/*`（商品库只读核验）、`https://open.feishu.cn/*`（飞书数据源）。
-- `optional_host_permissions`：`http://*/*`、`https://*/*`（用户按需授予 AI 服务来源等）。
+- `host_permissions`：`https://www.goofish.com/*`、`https://h5api.m.goofish.com/*`（商品库只读核验）、`https://open.feishu.cn/*`（飞书数据源）、`http://*/*` 与 `https://*/*`（静态声明供任意 AI 服务端点直接请求，零提示）。
 - `content_scripts` 仅在 `https://www.goofish.com/*`、`run_at: document_start` 注入四条：`content/isolated-bridge.js`、`content/main-world-bridge.js`、`content/platform-main.js`、`content/chat-main.js`。
 - 工作台入口由 `action` 打开；manifest **不含** `chrome_url_overrides.newtab`，不会替换新标签页。
 

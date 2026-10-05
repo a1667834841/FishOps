@@ -4,7 +4,7 @@
  * 遵循《项目开发与测试规范》：
  * 1. 结构与分区：外观、AI、飞书、回复策略、运行环境、账号与授权 6 大分区完整且可达；
  * 2. 交互与无障碍：支持键盘导航 (Enter / Space) 与可见焦点样式；
- * 3. 字段与安全：域名按需授权、HTTP 风险二次确认、API 密钥掩码切换、自动回复二次确认与暂停倒计时；
+ * 3. 字段与安全：AI 域名免授权与安全展示、HTTP 明文风险告知、API 密钥掩码切换、自动回复二次确认与暂停倒计时；
  * 4. 账号空态真实性：未实现保留明确空态，严禁示例 secret、假成功或新增虚构用量/余额；
  * 5. 加载错误与在途防护：加载错误清晰可见，取消确认不退化业务状态。
  */
@@ -41,16 +41,17 @@ test('设置页 Seline 视觉规范：包含 6 大分区与导航键盘支持', 
   assert.ok(settingsSource.includes(':focus-visible'), '导航与控件必须包含可见焦点样式')
 })
 
-test('AI 配置：域名按需授权、HTTP 风险二次确认与无示例 secret', () => {
-  // 域名授权
-  assert.ok(settingsSource.includes('ai-permission-card'), '必须包含域名按需授权卡片')
+test('AI 配置：静态声明免授权、Origin 信息展示、HTTP 明文风险告知与无示例 secret', () => {
+  // 域名静态声明与 Origin 展示（已去除动态授权按钮与授权拦截）
+  assert.ok(settingsSource.includes('ai-origin-card'), '必须包含 AI 接口域名信息展示卡片')
   assert.ok(settingsSource.includes('currentAiTargetOrigin'), '必须呈现目标安全 Origin')
-  assert.ok(settingsSource.includes('onRequestAiPermission'), '必须绑定授权触发函数')
+  assert.ok(!settingsSource.includes('onRequestAiPermission'), '严禁出现 onRequestAiPermission 授权触发函数')
+  assert.ok(!settingsSource.includes('授权当前AI接口域名'), '严禁出现授权当前AI接口域名按钮文案')
+  assert.ok(!settingsSource.includes('aiHttpRiskAcknowledged'), '严禁出现授权前置 HTTP 勾选门控')
 
-  // HTTP 明文传输风险提示与强制二次勾选
+  // HTTP 明文传输风险静态提示（不再要求勾选确认）
   assert.ok(settingsSource.includes('currentAiTargetIsHttp'), '必须判断是否为 HTTP 端点')
   assert.ok(settingsSource.includes('HTTP 会明文传输 API Key'), '必须明确提示 HTTP 明文传输风险')
-  assert.ok(settingsSource.includes('aiHttpRiskAcknowledged'), '必须绑定 HTTP 风险显式确认字段')
 
   // 密钥隐藏与严禁示例 secret
   assert.ok(settingsSource.includes('showAiKey'), '必须支持 API Key 隐藏/显示切换')

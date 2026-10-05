@@ -583,7 +583,7 @@ test('AI 接口测试：未保存配置或未配置时拦截，提示先保存',
   assert.equal(api.calls.filter((c) => c.type === AI_CONFIG_TEST_COMMAND).length, 0)
 })
 
-test('AI 接口测试：测试按钮不绕过授权，未授权时拦截并提示', async () => {
+test('AI 接口测试：测试按钮免动态授权直接发起探测', async () => {
   const api = makeApi()
   api.respond(CommandTypes.AI_CONFIG_SET, () => ({
     configured: true,
@@ -592,22 +592,24 @@ test('AI 接口测试：测试按钮不绕过授权，未授权时拦截并提�
     timeoutMs: 30000,
     permissionOrigin: 'https://api.openai.com',
   } satisfies AiConfigStatus))
+  api.respond(AI_CONFIG_TEST_COMMAND as any, () => ({
+    ok: true,
+    model: 'gpt-4o-mini',
+    durationMs: 80,
+    characterCount: 10,
+  }))
 
   const ctrl = new SettingsController({ api })
   ctrl.start()
   await ctrl.saveAiConfig({ apiKey: 'sk-test-valid' })
 
-  // originGranted 为 false 时拦截
+  // 不再有授权拦截，直接发起测试并成功
   const ok = await ctrl.testAiConnection({
-    originGranted: false,
     origin: 'https://api.openai.com',
   })
-  assert.equal(ok, false)
-  assert.equal(ctrl.getState().ai.testPhase, 'failed')
-  assert.ok(ctrl.getState().ai.testError?.includes('尚未获得授权'))
-  assert.equal(ctrl.getState().ai.testErrorView?.code, 'AI_PERMISSION_REQUIRED')
-  assert.ok(ctrl.getState().ai.testErrorView?.hint.includes('授权当前AI接口域名'))
-  assert.equal(api.calls.filter((c) => c.type === AI_CONFIG_TEST_COMMAND).length, 0)
+  assert.equal(ok, true)
+  assert.equal(ctrl.getState().ai.testPhase, 'ok')
+  assert.equal(api.calls.filter((c) => c.type === AI_CONFIG_TEST_COMMAND).length, 1)
 })
 
 test('AI 接口测试：调用 AI_CONFIG_TEST 空 payload 真实探测，展示模型/耗时/字符数且不泄露明文', async () => {
@@ -699,14 +701,14 @@ test('AI 接口测试：按钮 loading 防重复调用', async () => {
   assert.equal(ctrl.getState().ai.testPhase, 'ok')
 })
 
-test('AI 接口测试：失败显示可行动结构化错误与权限/HTTP 提示，敏感信息脱敏', async () => {
-  // 1. 权限错误
-  const viewPerm = formatAiTestError(new Error('Failed to fetch: net::ERR_NAME_NOT_RESOLVED'), {
+test('AI 接口测试：失败显示可行动结构化错误与网络/HTTP 提示，敏感信息脱敏', async () => {
+  // 1. 网络错误（原权限相关错误降级为普通网络连接失败）
+  const viewNet = formatAiTestError(new Error('Failed to fetch: net::ERR_NAME_NOT_RESOLVED'), {
     origin: 'https://api.deepseek.com',
   })
-  assert.equal(viewPerm.code, 'AI_PERMISSION_REQUIRED')
-  assert.ok(viewPerm.hint.includes('授权当前AI接口域名'))
-  assert.ok(viewPerm.hint.includes('https://api.deepseek.com'))
+  assert.equal(viewNet.code, 'NETWORK')
+  assert.ok(viewNet.title.includes('网络连接失败'))
+  assert.ok(viewNet.hint.includes('端点地址'))
 
   // 2. HTTP 端点错误
   const viewHttp = formatAiTestError(new Error('connect ECONNREFUSED 127.0.0.1:8080'), {

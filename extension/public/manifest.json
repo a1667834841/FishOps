@@ -7,9 +7,7 @@
   "host_permissions": [
     "https://www.goofish.com/*",
     "https://h5api.m.goofish.com/*",
-    "https://open.feishu.cn/*"
-  ],
-  "optional_host_permissions": [
+    "https://open.feishu.cn/*",
     "http://*/*",
     "https://*/*"
   ],

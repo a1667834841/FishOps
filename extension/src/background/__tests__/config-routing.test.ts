@@ -104,7 +104,7 @@ test('AI_CONFIG_SET：手动保存且响应不含明文密钥 / URL', async () =
   assert.equal(status.provider, 'deepseek')
   assert.equal(status.model, 'deepseek-chat')
   assert.equal(status.timeoutMs, 15000)
-  // 仅回显安全的 Origin 供前端按需授权，不回显完整 baseURL 路径与密钥
+  // 仅回显安全的 Origin 供前端展示与解析，不回显完整 baseURL 路径与密钥
   assert.equal(status.permissionOrigin, 'https://api.deepseek.com')
 
   // 响应序列化不得包含明文密钥，且不得包含完整 baseURL 路径（如 /v1）。
