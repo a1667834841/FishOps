@@ -1,0 +1,59 @@
+name: 构建插件
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 构建并上传插件压缩包
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 运行单元测试
+        run: npm test
+
+      - name: 检查类型
+        run: npm run typecheck
+
+      - name: 构建扩展和工作台
+        run: npm run build
+
+      - name: 运行安全回归测试
+        run: npm run test:security
+
+      - name: 验证构建产物
+        run: npm run test:smoke
+
+      - name: 打包插件
+        working-directory: extension/dist
+        run: |
+          test -f manifest.json
+          test -f workbench.html
+          mkdir -p ../../dist
+          zip -r ../../dist/fishops-extension.zip .
+
+      - name: 上传插件压缩包
+        uses: actions/upload-artifact@v4
+        with:
+          name: fishops-extension
+          path: dist/fishops-extension.zip
+          if-no-files-found: error
+          retention-days: 30

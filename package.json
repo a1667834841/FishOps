@@ -16,6 +16,7 @@
     "build:workbench": "npm run build --workspace @fishops/workbench",
     "build": "npm run clean && npm run build:extension && npm run build:workbench",
     "dev:workbench": "npm run dev --workspace @fishops/workbench",
+    "test": "npm run test:background && npm run test:platform --workspace @fishops/extension && npm run test:chat && npm run test:capture && npm run test:analysis && npm run test:publish && npm run test --workspace @fishops/workbench",
     "test:smoke": "node scripts/smoke.mjs",
     "test:background": "npm run test:background --workspace @fishops/extension",
     "test:sw-startup": "node scripts/service-worker-startup.mjs",

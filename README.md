@@ -1,171 +1,67 @@
 # FishOps Workbench
 
-FishOps Workbench 采用两层架构：
+面向闲鱼（goofish）卖家的运营工作台：以 MV3 浏览器扩展承载运行时，用 Vue 3 工作台把数据采集、聊天回复建议、商品库、发布与数据分析串成一条流程。
 
-- **Workbench**：Vue 3 + Vite + TypeScript 的工作台界面（`workbench/`）。
-- **Extension Runtime**：Manifest V3 浏览器扩展（`extension/`），负责与页面 / 闲鱼通信。
-- 两层通过 **Command / Event** 协议通信，协议类型与校验由 `shared/` 共享。
+## 背景介绍
 
-> 当前进度：**P1（工程骨架 + Bridge）**。只实现通信骨架，不含采集 / 聊天 / 发布 / AI。
+二手电商运营常要在多个页面之间反复手工操作：搜同类商品、逐条记录价格与想要人数、盯聊天回复、整理商品、再逐个上架。这些动作重复、耗时，且数据散落在各处，难以沉淀和对比。
 
-## 目录结构
+FishOps Workbench 把这些环节收进一个工作台：
 
-```text
-FishOps-Workbench/
-├── package.json            # npm workspaces 根（workspaces: shared/extension/workbench）
-├── tsconfig.base.json      # 共享 TS 编译选项
-├── shared/
-│   └── events/             # 协议类型 + 运行时校验/序列化（@fishops/shared）
-│       ├── protocol.ts     # 信封：Command / Response / Event、requestId、错误码
-│       ├── commands.ts     # 命令类型与负载/结果映射（PING/SUBSCRIBE/UNSUBSCRIBE/PUBLISH）
-│       ├── events.ts       # 事件类型与负载映射
-│       ├── codec.ts        # 工厂函数 + 运行时校验 + (反)序列化
-│       └── index.ts
-├── extension/
-│   ├── package.json        # @fishops/extension
-│   ├── vite.config.ts      # 多入口构建（按 ENTRY 切换）
-│   ├── public/manifest.json
-│   ├── bridge/             # Workbench 侧 runtime SDK（@fishops/bridge，经别名引用）
-│   │   ├── transport.ts        # ChromeRuntimeTransport / PostMessageTransport
-│   │   ├── runtime-client.ts   # RuntimeClient：call / ping / on / subscribe / publish
-│   │   ├── postmessage-protocol.ts
-│   │   └── errors.ts
-│   └── src/
-│       ├── background/     # service worker 入口 + 命令路由 + session 持久化
-│       └── content/        # ISOLATED bridge + MAIN world bridge
-├── scripts/
-│   └── smoke.mjs           # Bridge 冒烟测试（mock chrome.*，加载构建产物）
-└── workbench/
-    ├── package.json        # @fishops/workbench
-    ├── vite.config.ts
-    ├── workbench.html      # Workbench 页面入口（文件名即产物名）
-    └── src/
-        ├── main.ts / App.vue / styles.css
-        └── pages/BridgeDemo.vue   # PING 按钮 + 事件日志
-```
+- 运行时是 Chrome / Edge 的 MV3 扩展，在已登录的闲鱼网页会话内读取公开数据，不接管账号。
+- 界面是 `chrome-extension://` 内的单页工作台，通过 Command / Event 协议调用扩展能力。
+- 目标是减少机械劳动、让数据可复用；涉及发布、消息发送和 AI 输出的动作都保留人工确认。
 
-## 通信链路
+## 功能展示
 
-```text
-扩展内页 Workbench (chrome-extension://<id>/workbench.html)
-        │  Command → chrome.runtime.sendMessage ─────────┐
-        │  Event   ← chrome.runtime.connect (Port)  ←────┤
-        ▼                                                ▼
-   RuntimeClient (@fishops/bridge)              background service worker
-                                                         │
-闲鱼页面 (MAIN world) ──postMessage──► ISOLATED bridge ──┘  (P3/P4 预留)
-```
+### 数据采集
 
-- **扩展内页**是 P1 的推荐载体：Workbench 直接使用 `chrome.runtime`，无需 content script，也避免 localhost 来源限制。
-- **命令**（请求 / 响应）走 `chrome.runtime.sendMessage` + `requestId` 关联；
-- **事件**（单向推送）走 `chrome.runtime.connect` 长连接 Port，按订阅精确投递。service worker 被回收时 Port 自动断开，页面下次监听会重连。
-- **普通网页场景**（如 `localhost` 开发页）自动退化为 `postMessage` 传输层，经 `content/isolated-bridge.js` 转发。
+按关键词创建采集任务，可设置起始页、采集页数、每页数量，并按价格与「想要人数」过滤；任务支持暂停与断点续采，采集结果可同步到飞书表。
 
-## 命令 / 事件（P1）
+![采集任务列表局部截图](docs/images/capture.png)
 
-| 类型 | 说明 |
-|---|---|
-| `PING` → `PONG` | 连通性探测，返回 `nonce` / `pingCount` / `workerStartedAt` / `serverTime` |
-| `SUBSCRIBE` / `UNSUBSCRIBE` | 声明订阅的事件类型（页面侧通道使用） |
-| `PUBLISH` | 发布事件，由 background 广播给订阅者 |
-| 事件 `WORKER_STARTED` | service worker 启动 / 重启 |
-| 事件 `PING_RECEIVED` | 收到 PING |
-| 事件 `DEMO_TICK` | PING/PUBLISH demo |
+*采集任务列表局部截图（历史 mock 验证示例）。*
 
-## 安装与构建
+### 聊天中心
 
-```bash
-# 在 FishOps-Workbench/ 目录下
-npm install
+同步会话与历史消息，支持按回复规则或 AI 生成回复建议；建议由用户确认后再发送。也可配置回复规则并手动暂停 AI 回复。
 
-# 类型检查（shared / extension / workbench）
-npm run typecheck
+![聊天中心示例](docs/images/chat-center.png)
 
-# 构建扩展 + Workbench，产物输出到 extension/dist/
-npm run build
+*示例截图：展示聊天中心空会话状态，不包含聊天正文；实际界面以当前版本为准。*
 
-# Bridge 冒烟测试（mock chrome.*，加载构建产物；需先 npm run build）
-npm run test:smoke
+### 商品库
+查看、筛选并导出已采集商品，支持飞书采集表与自营商品两类来源，可带入发布草稿。
 
-# 仅开发 Workbench（localhost 开发页，Bridge 走 postMessage 通道）
-# 打开 http://localhost:5173/workbench.html
-npm run dev:workbench
-```
+![聊天中心示例](docs/images/goods.png)
 
-## 构建产物
+### 发布中心
 
-所有产物统一输出到 **`extension/dist/`**，该目录即为可加载的未打包扩展：
+商品可从草稿进入填表和校验流程；提交前会要求用户确认，发布结果以官方在售商品数变化为判据。
 
-```text
-extension/dist/
-├── manifest.json
-├── background.js                 # service worker（type: module）
-├── content/isolated-bridge.js    # ISOLATED world
-├── content/main-world-bridge.js  # MAIN world
-├── workbench.html                # Workbench 页面
-└── assets/*.js, *.css            # Workbench 资源
-```
+![发布流程与素材选择](docs/images/publish.png)
 
-## 自动化验证
+*发布流程与素材选择（窄屏，历史验证截图，记录标识已脱敏）*
 
-`npm run test:smoke` 会加载真实的 `extension/dist/background.js`，用最小 mock 模拟 `chrome.*`，覆盖：
+### 其他功能
 
-- PING → PONG（requestId 关联、nonce 回显、pingCount 递增）
-- 命令路由与负载校验（未知命令、非法负载、外部来源拒绝）
-- 长连接 Port 的事件订阅与广播（`WORKER_STARTED` / `PING_RECEIVED`）
-- 模拟 service worker 被回收后重启：`firstStart=false` 且 `pingCount` 从 `chrome.storage.session` 恢复
+- **数据分析**：选择本地或飞书数据源与提示词规则，生成结构化分析结果。
+- **设置**：配置外观、AI 模型、飞书与回复策略等。
 
-## Trace 排查
+## 免责说明
 
-Trace 默认关闭。它记录命令边界，不修改协议，也不改变原有超时、权限校验和业务错误处理。
+- 本项目**非闲鱼官方**产品，与闲鱼及其关联方无任何关系。
+- 仅供**学习研究**或**已获合法授权**的场景使用，使用者需自行确认用途合法合规。
+- 使用时应遵守闲鱼平台规则及适用法律法规，并尊重**数据与隐私**边界。
+- 发布、消息发送与 AI 生成内容均需**人工复核**后再执行，请勿依赖其自动化结果。
+- 使用风险由使用者自行承担；本说明不构成法律意见，也不夸大免责效力。
 
-在需要排查的上下文打开 DevTools Console：
+## 技术原理
 
-- Workbench：扩展内页的 Console，记录 `client`。覆盖 `RuntimeClient.call` 和业务 `createBridgeApi` 两个入口。
-- background：`chrome://extensions/` → 扩展的 Service Worker → Console，记录 `background`。
-- content：闲鱼页面 Console 的执行上下文切换到本扩展的 ISOLATED content script，记录 `content`。
+整体是「工作台 + 扩展运行时」两层：工作台（Vue 3 + Vite + TypeScript）运行在扩展内页，运行时（MV3 service worker + content scripts）负责与闲鱼页面通信，`shared/` 提供协议类型与运行时校验。闲鱼侧请求由一个注入 MAIN world 的平台 host 承载，在页面会话内完成 MTOP 调用与限速；采集、聊天、发布、分析各自作为独立模块构建在平台层之上。
 
-每个上下文单独开启，再复现问题：
+安装构建、通信链路、平台调用、目录结构、构建产物与 Trace 排查等细节，见 **[技术原理文档](docs/technical-principles.md)**。
 
-```js
-FishOpsTrace.enable()
-FishOpsTrace.isEnabled()
-FishOpsTrace.read()
-// Chrome DevTools 的 copy 可将 JSON 复制到剪贴板。
-copy(FishOpsTrace.exportJson())
-FishOpsTrace.disable()
-FishOpsTrace.clear()
-```
+## 问题反馈与 Issue 规范
 
-同一命令的 `traceId` 等于已有 `requestId`。在两端导出的 JSON 中按 `traceId` 对齐，检查 `start` → `success` / `error` / `timeout` / `rejected`，结束记录含 `durationMs`。也可筛选：
-
-```js
-FishOpsTrace.read().filter(record => record.traceId === 'req_替换为实际ID')
-```
-
-安全与使用边界：
-
-- 只记录时间、上下文、阶段、关联 ID、已知命令类型、耗时和允许的协议错误码；不记录 payload、result、原始异常文本、URL、密钥或聊天正文。非法关联 ID 记为 `untracked`。
-- 每个上下文最多保留 500 条，超出时删除最旧记录。`disable()` 停止新记录但保留已有缓冲；`clear()` 清空缓冲但不改变开关。
-- 开关和缓冲仅在内存中。页面刷新、扩展重载或 Service Worker 回收后重置，需重新开启；没有外部遥测或持久化日志。
-- Workbench 扩展内页直接与 background 通信，不经过 content。content 仅记录现有允许转发的 `CHAT_SOCKET_EVENT`，不会扩大页面权限，也不会放行 localhost Workbench 的业务命令。
-- 仅覆盖 Command 请求/响应边界。采集、分析等已返回任务 ID 的后台长任务、事件订阅及独立发布 API 不在本机制的完整关联范围内；独立发布 API 保留原有诊断日志。
-- 客户端超时只表示停止等待，不表示 background 操作已取消；后者仍可能记录成功。
-- 本机制不替换已有模块日志。分享控制台的完整输出前，仍需检查其中是否含敏感信息；建议只导出 `FishOpsTrace.exportJson()`。
-
-验证命令：`npm run typecheck`、`npm run test:background`、`npm run build`、`npm run test:smoke`。
-
-## 加载与验证（ego lite / Chrome）
-
-1. `npm run build`
-2. 在 `chrome://extensions/` 打开开发者模式 → 「加载已解压的扩展程序」→ 选择 `extension/dist`
-3. 扩展 ID 记为 `<id>`，打开 `chrome-extension://<id>/workbench.html`（或点扩展图标，或新标签页）
-4. 页面显示 `Bridge 连通性` 卡片 → 点「发送 PING」→ 应看到 PONG、往返时延与 `pingCount`
-5. 切换页面（`chrome://extensions/` 里点 service worker 的「终止」）后再次 PING：`pingCount` 继续累加，说明状态持久化在 `chrome.storage.session`，未放内存
-
-## 说明与边界（P1）
-
-- 不实现采集、聊天、发布、AI；`content/*` 仅为后续阶段搭好可选链路。
-- 不碰 Cookie / sign / MTOP；Workbench 不直接访问闲鱼。
-- 任务状态未放入内存（PING 计数在 `chrome.storage.session`）；P2 的 Task 模型将在此基础上扩展。
-- `manifest.json` 使用 `chrome_url_overrides.newtab` 声明 Workbench 入口，因此新标签页会被替换为 Workbench（测试用 ego lite 时注意）。
+提交 bug、功能需求或任务前，先检索已有 issue 避免重复，并统一使用 **[Issue 规范](docs/issue-guidelines.md)** 的标题写法与章节格式。
