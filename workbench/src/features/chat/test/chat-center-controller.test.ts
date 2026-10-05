@@ -8,6 +8,7 @@ import { CommandTypes, EventTypes } from '@fishops/shared'
 import {
   CHAT_CENTER_EVENTS,
   ChatCenterController,
+  MESSAGE_PAGE_SIZE,
   type ChatCenterApi,
   type ChatCenterEventType,
   type ChatCommandType,
@@ -245,7 +246,7 @@ test('已有数据时刷新失败：保留旧列表并附带错误，不清空�
   controller.dispose()
 })
 
-test('选择会话：按 asc 读取其本地缓存消息', async () => {
+test('选择会话：只读取最近 10 条本地缓存（desc + limit）并升序展示', async () => {
   const api = baseApi()
   const controller = make(api)
   controller.start()
@@ -258,7 +259,7 @@ test('选择会话：按 asc 读取其本地缓存消息', async () => {
   assert.equal(state.messages.phase, 'ready')
   assert.deepEqual(state.messages.items.map((m) => m.content), ['来自a的消息'])
   const call = api.calls.find((c) => c.type === CommandTypes.CHAT_GET_MESSAGES)
-  assert.deepEqual(call?.payload, { sessionId: 'a', order: 'asc' })
+  assert.deepEqual(call?.payload, { sessionId: 'a', order: 'desc', limit: MESSAGE_PAGE_SIZE })
   controller.dispose()
 })
 
@@ -816,4 +817,516 @@ test('已读单飞：ACK 期间同会话出现新水位，settle 后按新水位
   await settle()
   assert.equal(api.count(CommandTypes.CHAT_MARK_READ), 2, '同会话新水位应在 settle 后补一次')
   controller.dispose()
+})
+
+// ---------------- 历史分页：首次 10 条 / 连续向前 10 条 / 同刻边界 / 耗尽 / 失败 / 竞态 / 释放 ----------------
+
+/** 与扩展侧一致的稳定排序（createAt → messageId → id），用于模拟本地分页语义。 */
+function cmp(a: ChatMessage, b: ChatMessage): number {
+  if (a.createAt !== b.createAt) return a.createAt - b.createAt
+  if (a.messageId !== b.messageId) return a.messageId < b.messageId ? -1 : 1
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+/** 造一批本地缓存消息；groupSize>1 时若干条共享同一 createAt，用于覆盖同刻边界。 */
+function buildPool(sessionId: string, count: number, groupSize = 1): ChatMessage[] {
+  return Array.from({ length: count }, (_, index) =>
+    msg(sessionId, `${sessionId}-${String(index + 1).padStart(3, '0')}`, `消息${index + 1}`, {
+      createAt: 1000 + Math.floor(index / groupSize),
+    }),
+  )
+}
+
+/** 用消息池实现 CHAT_GET_MESSAGES 的分页语义（与扩展侧 getMessagePage 保持一致）。 */
+function poolResponder(pools: Record<string, ChatMessage[]>) {
+  return (payload: unknown): unknown => {
+    const { sessionId, order, limit, before } = payload as {
+      sessionId: string
+      order?: string
+      limit?: number
+      before?: { createAt: number; messageId: string; id: string }
+    }
+    let list = [...(pools[sessionId] ?? [])].sort(cmp)
+    if (before) list = list.filter((message) => cmp(message, before as ChatMessage) < 0)
+    let hasMore = false
+    if (limit !== undefined) {
+      hasMore = list.length > limit
+      list = list.slice(Math.max(0, list.length - limit))
+    }
+    if (order === 'desc') list = [...list].reverse()
+    return limit === undefined ? { messages: list } : { messages: list, hasMore }
+  }
+}
+
+function pagingApi(pools: Record<string, ChatMessage[]>): FakeApi {
+  const api = baseApi()
+  api.respond(CommandTypes.CHAT_GET_MESSAGES, poolResponder(pools))
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => ({ ok: true, added: 0, updated: 0, hasMore: false }))
+  return api
+}
+
+test('打开会话：只取最近 10 条（desc + limit）并按升序展示，hasMore 表示本地还有更早', async () => {
+  const api = pagingApi({ a: buildPool('a', 25) })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  const messages = controller.getState().messages
+  assert.equal(messages.phase, 'ready')
+  assert.equal(messages.items.length, MESSAGE_PAGE_SIZE)
+  assert.deepEqual(
+    messages.items.map((m) => m.content),
+    Array.from({ length: 10 }, (_, i) => `消息${i + 16}`),
+  )
+  assert.equal(messages.hasMore, true)
+  const first = api.calls.find((c) => c.type === CommandTypes.CHAT_GET_MESSAGES)
+  assert.deepEqual(first?.payload, { sessionId: 'a', order: 'desc', limit: MESSAGE_PAGE_SIZE })
+  controller.dispose()
+})
+
+test('向前翻页：连续 loadOlder 每次前插 10 条、不重复、顺序稳定', async () => {
+  const api = pagingApi({ a: buildPool('a', 25) })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  assert.equal(controller.getState().messages.items.length, 20)
+  await controller.loadOlder()
+  const items = controller.getState().messages.items
+  assert.equal(items.length, 25)
+  assert.equal(new Set(items.map((m) => m.id)).size, 25, '前插不得重复')
+  assert.deepEqual(items.map((m) => m.content), Array.from({ length: 25 }, (_, i) => `消息${i + 1}`))
+  controller.dispose()
+})
+
+test('同一 timestamp 分组：before 游标带 messageId 排序，不漏同刻消息也不重复', async () => {
+  const api = pagingApi({ a: buildPool('a', 25, 5) })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  await controller.loadOlder()
+  const items = controller.getState().messages.items
+  assert.equal(items.length, 25)
+  assert.deepEqual(items.map((m) => m.content), Array.from({ length: 25 }, (_, i) => `消息${i + 1}`))
+  controller.dispose()
+})
+
+test('耗尽：本地与平台都无更多后 hasMore=false，再调用 loadOlder 不再发请求', async () => {
+  const api = pagingApi({ a: buildPool('a', 25) })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  await controller.loadOlder()
+  const messages = controller.getState().messages
+  assert.equal(messages.items.length, 25)
+  assert.equal(messages.hasMore, false)
+  assert.equal(messages.olderPhase, 'idle')
+  const before = api.calls.length
+  await controller.loadOlder()
+  assert.equal(api.calls.length, before, '已确认耗尽不得再请求')
+  controller.dispose()
+})
+
+test('单飞：loadOlder 在途时重复触发只产生一次本地分页请求', async () => {
+  const api = pagingApi({ a: buildPool('a', 25) })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  const before = api.count(CommandTypes.CHAT_GET_MESSAGES)
+  await Promise.all([controller.loadOlder(), controller.loadOlder(), controller.loadOlder()])
+  assert.equal(api.count(CommandTypes.CHAT_GET_MESSAGES), before + 1)
+  controller.dispose()
+})
+
+test('本地耗尽但平台仍有更早历史：同步一页后继续前插，耗尽后才提示没有更多', async () => {
+  const pool = buildPool('a', 15)
+  const older = Array.from({ length: 5 }, (_, i) =>
+    msg('a', `a-old-${i + 1}`, `更早${i + 1}`, { createAt: 100 + i }),
+  )
+  const api = pagingApi({ a: pool })
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => {
+    // 模拟扩展把平台更早的一页写入本地缓存，供后续本地游标读到。
+    pool.unshift(...older)
+    return { ok: true, added: older.length, updated: 0, hasMore: false }
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  const messages = controller.getState().messages
+  assert.equal(messages.items.length, 20, '本地耗尽后应继续按平台同步补更早历史')
+  assert.equal(messages.items[0]?.content, '更早1')
+  assert.equal(messages.hasMore, false)
+  const syncCall = api.calls.find((c) => c.type === CommandTypes.CHAT_SYNC_HISTORY)
+  assert.deepEqual(syncCall?.payload, { sessionId: 'a', pages: 1, count: MESSAGE_PAGE_SIZE })
+  controller.dispose()
+})
+
+test('服务端游标只成功推进：每次 loadOlder 最多补一页，下一页携带上一跳返回的 nextCursor', async () => {
+  const pool = buildPool('a', 15)
+  const olderA = Array.from({ length: 5 }, (_, i) => msg('a', `a-old-${i + 1}`, `更早${i + 1}`, { createAt: 100 + i }))
+  const olderB = Array.from({ length: 5 }, (_, i) => msg('a', `a-older-${i + 1}`, `最旧${i + 1}`, { createAt: 50 + i }))
+  const api = pagingApi({ a: pool })
+  let hop = 0
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => {
+    hop += 1
+    if (hop === 1) {
+      pool.unshift(...olderA)
+      return { ok: true, added: olderA.length, updated: 0, hasMore: true, nextCursor: 7 }
+    }
+    pool.unshift(...olderB)
+    return { ok: true, added: olderB.length, updated: 0, hasMore: false }
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+
+  // 第一次：本地 5 条 + 平台一跳 5 条 = 10 条，恰好一页；平台仍有更早，不得宣称耗尽。
+  await controller.loadOlder()
+  let messages = controller.getState().messages
+  assert.equal(messages.items.length, 20, '单次 loadOlder 最多新增一页 10 条')
+  assert.equal(messages.items[0]?.content, '更早1')
+  assert.equal(messages.hasMore, true, '平台仍有更早历史时不得宣称耗尽')
+
+  // 第二次：用上一跳返回的游标继续，再补一页 10 条。
+  await controller.loadOlder()
+  messages = controller.getState().messages
+  assert.equal(messages.items.length, 25)
+  assert.equal(messages.items[0]?.content, '最旧1')
+  assert.equal(messages.hasMore, false)
+  assert.deepEqual(
+    api.calls.filter((c) => c.type === CommandTypes.CHAT_SYNC_HISTORY).map((c) => c.payload),
+    [
+      { sessionId: 'a', pages: 1, count: MESSAGE_PAGE_SIZE },
+      { sessionId: 'a', pages: 1, count: MESSAGE_PAGE_SIZE, cursor: 7 },
+    ],
+  )
+  controller.dispose()
+})
+
+test('平台同步失败：保留已加载消息、标记 error，重试成功后恢复', async () => {
+  const api = pagingApi({ a: buildPool('a', 15) })
+  let fail = true
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => {
+    if (fail) throw new Error('平台超时')
+    return { ok: true, added: 0, updated: 0, hasMore: false }
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  let messages = controller.getState().messages
+  assert.equal(messages.olderPhase, 'error')
+  assert.match(messages.olderError ?? '', /平台超时/)
+  assert.equal(messages.items.length, 15, '失败必须保留已加载消息')
+
+  fail = false
+  await controller.loadOlder()
+  messages = controller.getState().messages
+  assert.equal(messages.olderPhase, 'idle')
+  assert.equal(messages.olderError, null)
+  assert.equal(messages.items.length, 15, '重试不得重复插入')
+  controller.dispose()
+})
+
+test('竞态：loadOlder 在途时切换会话，旧会话的分页结果不污染新会话', async () => {
+  const api = pagingApi({ a: buildPool('a', 15), b: buildPool('b', 3) })
+  const slowSync = defer<unknown>()
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => slowSync.promise)
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  const pending = controller.loadOlder()
+  await settle()
+  controller.selectSession('b')
+  await settle()
+  slowSync.resolve({ ok: true, added: 0, updated: 0, hasMore: false })
+  await pending
+  const messages = controller.getState().messages
+  assert.equal(messages.sessionId, 'b')
+  assert.ok(messages.items.every((m) => m.sessionId === 'b'))
+  controller.dispose()
+})
+
+test('dispose：loadOlder 在途返回后不再写入状态', async () => {
+  const api = pagingApi({ a: buildPool('a', 15) })
+  const slowSync = defer<unknown>()
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => slowSync.promise)
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  const pending = controller.loadOlder()
+  await settle()
+  controller.dispose()
+  slowSync.resolve({ ok: true, added: 0, updated: 0, hasMore: false })
+  await pending
+  // 本地分页请求已先返回并合并，此处断言在途平台同步未继续写入。
+  assert.equal(controller.getState().messages.items.length, 15)
+})
+
+test('实时刷新：只取最近 10 条，但不缩回已展开窗口，并合并平台新消息', async () => {
+  const pool = buildPool('a', 25)
+  const api = pagingApi({ a: pool })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  assert.equal(controller.getState().messages.items.length, 20)
+
+  api.respond(
+    CommandTypes.CHAT_GET_MESSAGES,
+    poolResponder({ a: [...pool, msg('a', 'a-999', '新消息', { createAt: 2000 })] }),
+  )
+  api.emit(EventTypes.CHAT_MESSAGE_INGESTED, { kind: 'message', added: 1, updated: 0 })
+  await settle()
+  const items = controller.getState().messages.items
+  assert.equal(items.length, 21, '刷新不得把窗口缩回 10 条')
+  assert.equal(items.at(-1)?.content, '新消息')
+  assert.deepEqual(items.map((m) => m.content), [
+    ...Array.from({ length: 20 }, (_, i) => `消息${i + 6}`),
+    '新消息',
+  ])
+  controller.dispose()
+})
+
+// ---------------- 手动同步历史（refresh）在分页窗口下仍不缩水 ----------------
+
+test('手动同步历史：同步成功后重读本地最近 10 条但不覆盖已展开窗口', async () => {
+  const api = pagingApi({ a: buildPool('a', 25) })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  assert.equal(controller.getState().messages.items.length, 20)
+  await controller.syncHistory()
+  const items = controller.getState().messages.items
+  assert.equal(items.length, 20, '同步历史不得让已展开的窗口缩回')
+  assert.deepEqual(items.map((m) => m.content), Array.from({ length: 20 }, (_, i) => `消息${i + 6}`))
+  controller.dispose()
+})
+
+test('加载到底后刷新不会重新开启 hasMore，之后翻页不再发请求', async () => {
+  const api = pagingApi({ a: buildPool('a', 25) })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  await controller.loadOlder()
+  assert.equal(controller.getState().messages.items.length, 25)
+  assert.equal(controller.getState().messages.hasMore, false, '本地与平台都耗尽后 hasMore 必须为假')
+
+  // 实时刷新只读最近 10 条；本地库仍比这一页多，但这不代表窗口最旧消息之前还有数据。
+  api.emit(EventTypes.CHAT_MESSAGE_INGESTED, { kind: 'message', added: 1, updated: 0 })
+  await settle()
+  assert.equal(controller.getState().messages.items.length, 25, '刷新不得缩回窗口')
+  assert.equal(controller.getState().messages.hasMore, false, '刷新不得重新开启 hasMore')
+
+  const countBefore = api.calls.filter((c) => c.type === CommandTypes.CHAT_GET_MESSAGES).length
+  await controller.loadOlder()
+  const countAfter = api.calls.filter((c) => c.type === CommandTypes.CHAT_GET_MESSAGES).length
+  assert.equal(countAfter, countBefore, '已确认耗尽后不得再发分页请求')
+  controller.dispose()
+})
+
+test('单次 loadOlder 新增上限：本地不足时逐轮补同步，但一次最多前插一页 10 条', async () => {
+  const pool = buildPool('a', 15)
+  // 平台共有 20 条更早历史，按 5 条一批返回，模拟「平台明显还有多页」的情形。
+  const platform = Array.from({ length: 20 }, (_, i) =>
+    msg('a', `a-p-${String(i + 1).padStart(2, '0')}`, `平台${i + 1}`, { createAt: 100 + i }),
+  )
+  const api = pagingApi({ a: pool })
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, (payload) => {
+    const cursor = (payload as { cursor?: number }).cursor
+    const end = cursor ?? platform.length
+    const start = Math.max(0, end - MESSAGE_PAGE_SIZE)
+    const batch = platform.slice(start, end)
+    for (const message of batch) if (!pool.some((existing) => existing.id === message.id)) pool.push(message)
+    const hasMore = start > 0
+    return { ok: true, added: batch.length, updated: 0, hasMore, ...(hasMore ? { nextCursor: start } : {}) }
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  assert.equal(controller.getState().messages.items.length, MESSAGE_PAGE_SIZE)
+
+  await controller.loadOlder()
+  const messages = controller.getState().messages
+  assert.equal(messages.items.length, 20, '本地 15 条 + 平台一跳 5 条 = 一页 10 条，不得一次拉完平台全部 20 条')
+  assert.equal(api.count(CommandTypes.CHAT_SYNC_HISTORY), 1, '本地不足只补一轮同步即达上限')
+  assert.equal(new Set(messages.items.map((m) => m.id)).size, 20, '前插不得重复')
+  assert.equal(messages.hasMore, true)
+  controller.dispose()
+})
+
+test('并发实时 append：新增计数只算本次真正更早页，单次 loadOlder 仍前插满一页 10 条', async () => {
+  // 本地 14 条 = 窗口最近 10 条（消息 5..14）+ 更早 4 条（消息 1..4）；平台另有 6 条更早，在同步时写入本地。
+  const pool = buildPool('a', 14)
+  const platform = Array.from({ length: 6 }, (_, i) =>
+    msg('a', `a-p-${String(i + 1).padStart(2, '0')}`, `平台${i + 1}`, { createAt: 100 + i }),
+  )
+  const live = Array.from({ length: 6 }, (_, i) =>
+    msg('a', `a-live-${String(i + 1).padStart(2, '0')}`, `实时${i + 1}`, { createAt: 2000 + i }),
+  )
+  const api = pagingApi({ a: pool })
+  let controller!: ChatCenterController
+  let injected = false
+  const localPaging = poolResponder({ a: pool })
+  api.respond(CommandTypes.CHAT_GET_MESSAGES, async (payload) => {
+    // 只在带 before 的向前分页请求在途时注入实时消息：模拟分页与实时 append 并存。
+    // 刷新走无 before 的请求，不重复注入。
+    if (!injected && 'before' in (payload as Record<string, unknown>)) {
+      injected = true
+      pool.push(...live)
+      await controller.refresh()
+    }
+    return localPaging(payload)
+  })
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => {
+    for (const message of platform) if (!pool.some((m) => m.id === message.id)) pool.push(message)
+    return { ok: true, added: platform.length, updated: 0, hasMore: false }
+  })
+  controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  assert.equal(controller.getState().messages.items.length, MESSAGE_PAGE_SIZE)
+
+  await controller.loadOlder()
+  const messages = controller.getState().messages
+  assert.equal(
+    messages.items.length,
+    MESSAGE_PAGE_SIZE * 2 + live.length,
+    '窗口 = 原一页 + 一页更早 + 实时新消息，实时消息不得替代更早页',
+  )
+  // 最旧一条应是平台第 1 条（createAt 100），说明本地 4 条 + 平台 6 条更早已全部前插。
+  assert.equal(messages.items[0]?.content, '平台1', '并发实时 append 不得虚增计数、导致本次少前插更早页')
+  assert.equal(messages.hasMore, false)
+  controller.dispose()
+})
+
+test('空缓存：窗口为空时 loadOlder 仍取最近一页（无 before），不被 hasMore=false 永久卡死', async () => {
+  const pool: ChatMessage[] = []
+  const api = pagingApi({ a: pool })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  assert.equal(controller.getState().messages.items.length, 0)
+
+  // 第一步：空窗口先探明本地与平台都没有更早历史（无 before 查询 + 一轮同步），hasMore 转为 false。
+  await controller.loadOlder()
+  assert.equal(controller.getState().messages.items.length, 0)
+  assert.equal(controller.getState().messages.hasMore, false, '平台确认耗尽后 hasMore 为假')
+
+  // 第二步：后台把历史写入本地缓存（模拟其他入口补全缓存）。
+  pool.push(...buildPool('a', 15))
+
+  // 第三步：即使 hasMore=false 且窗口为空，loadOlder 仍必须发起一次无 before 的最近一页读取。
+  await controller.loadOlder()
+  const messages = controller.getState().messages
+  assert.equal(messages.items.length, MESSAGE_PAGE_SIZE, '空窗口应取到最近一页 10 条')
+  assert.equal(messages.hasMore, true)
+  const pagingCalls = api.calls.filter((c) => c.type === CommandTypes.CHAT_GET_MESSAGES)
+  assert.ok(pagingCalls.length >= 3, `选择会话 1 次 + loadOlder 至少 2 次，实际 ${pagingCalls.length}`)
+  const lastPayload = pagingCalls.at(-1)?.payload as Record<string, unknown>
+  assert.equal('before' in lastPayload, false, '空窗口没有边界游标，应无 before 查询最近一页')
+  controller.dispose()
+})
+
+test('刷新保留分页失败态：不自动重试，只有显式重试才恢复', async () => {
+  const api = pagingApi({ a: buildPool('a', 15) })
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => {
+    throw new Error('平台超时')
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  assert.equal(controller.getState().messages.olderPhase, 'error')
+  const syncBefore = api.count(CommandTypes.CHAT_SYNC_HISTORY)
+
+  // 实时事件触发 refresh（重读最近一页）后，失败态与可重试性必须保留。
+  api.emit(EventTypes.CHAT_MESSAGE_INGESTED, { kind: 'message', added: 1, updated: 0 })
+  await settle()
+  const messages = controller.getState().messages
+  assert.equal(messages.olderPhase, 'error', 'refresh 不得清除分页失败态')
+  assert.match(messages.olderError ?? '', /平台超时/)
+  assert.equal(messages.hasMore, true, '失败后仍应可重试，不得宣称耗尽')
+  assert.equal(api.count(CommandTypes.CHAT_SYNC_HISTORY), syncBefore, 'refresh 不得自动重试平台同步')
+
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => ({ ok: true, added: 0, updated: 0, hasMore: false }))
+  await controller.loadOlder()
+  assert.equal(controller.getState().messages.olderPhase, 'idle', '显式重试成功后恢复')
+  assert.equal(controller.getState().messages.olderError, null)
+  controller.dispose()
+})
+
+test('平台游标无进展或反向：按失败处理，不得宣称耗尽或继续推进', async () => {
+  const api = pagingApi({ a: buildPool('a', 15) })
+  let hop = 0
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => {
+    hop += 1
+    // 第一跳给出有效游标；后续跳返回不前进（同值）或反向（更大）的非法游标。
+    if (hop === 1) return { ok: true, added: 0, updated: 0, hasMore: true, nextCursor: 100 }
+    return { ok: true, added: 0, updated: 0, hasMore: true, nextCursor: 100 }
+  })
+  const controller = make(api)
+  controller.start()
+  await settle()
+  controller.selectSession('a')
+  await settle()
+  await controller.loadOlder()
+  const stalled = controller.getState().messages
+  assert.equal(stalled.olderPhase, 'error', '游标无进展必须按失败处理，而不是沉默耗尽')
+  assert.equal(stalled.hasMore, true, '不得宣称没有更多')
+
+  hop = 0
+  api.respond(CommandTypes.CHAT_SYNC_HISTORY, () => {
+    hop += 1
+    if (hop === 1) return { ok: true, added: 0, updated: 0, hasMore: true, nextCursor: 100 }
+    return { ok: true, added: 0, updated: 0, hasMore: true, nextCursor: 999 }
+  })
+  const second = make(api)
+  second.start()
+  await settle()
+  second.selectSession('a')
+  await settle()
+  await second.loadOlder()
+  assert.equal(second.getState().messages.olderPhase, 'error', '反向游标必须按失败处理')
+  assert.match(second.getState().messages.olderError ?? '', /游标/)
+  controller.dispose()
+  second.dispose()
 })

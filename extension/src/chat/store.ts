@@ -8,7 +8,7 @@
  * - 只保存净化后的标准模型，不保存原始 base64 / Cookie / token。
  */
 import { buildMessageKey } from '../../../shared/chat/index'
-import type { ChatMessage, Conversation } from '../../../shared/types/chat'
+import type { ChatMessage, Conversation, MessageCursor } from '../../../shared/types/chat'
 
 /** 持久化接口：由宿主实现（内存 / IndexedDB / 其他）。 */
 export interface ChatPersistence {
@@ -71,8 +71,29 @@ export interface QueryOptions {
   limit?: number
 }
 
-/** 消息排序：createAt 升序，其次 messageId，最后 id，保证稳定。 */
-export function compareMessages(a: ChatMessage, b: ChatMessage): number {
+/** 分页查询选项（在 {@link QueryOptions} 基础上增加向前边界）。 */
+export interface MessagePageQueryOptions extends QueryOptions {
+  /**
+   * 向前分页边界：只看**严格早于**该游标的消息。
+   *
+   * 与 `limit` 配合即可取「游标之前最近的一页」，这是把历史向前翻页的稳定做法。
+   */
+  before?: MessageCursor
+}
+
+/** 分页查询结果。 */
+export interface MessagePageResult {
+  messages: ChatMessage[]
+  /** 是否还存在比本页更早的消息（仅在传入 `limit` 时有意义）。 */
+  hasMore: boolean
+}
+
+/**
+ * 消息排序：createAt 升序，其次 messageId，最后 id，保证稳定。
+ *
+ * 参数放宽为 {@link MessageCursor}，使分页游标（只需排序键三要素）可直接参与比较。
+ */
+export function compareMessages(a: MessageCursor, b: MessageCursor): number {
   if (a.createAt !== b.createAt) return a.createAt - b.createAt
   if (a.messageId !== b.messageId) return a.messageId < b.messageId ? -1 : 1
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
@@ -149,6 +170,30 @@ export class ChatStore {
     const ordered = options.order === 'desc' ? sorted.reverse() : sorted
     const limited = options.limit === undefined ? ordered : ordered.slice(0, options.limit)
     return limited.map((m) => ({ ...m }))
+  }
+
+  /**
+   * 分页查询某会话的消息。
+   *
+   * 语义与 {@link getMessages} 的区别：`limit` 取的是**窗口内最近**的 N 条
+   * （而不是最早的 N 条），并额外返回 `hasMore`。专用于历史向前翻页，
+   * 因此不影响 `getMessages` 的既有语义（reply-runtime 依赖其 asc+limit 取最早）。
+   */
+  getMessagePage(sessionId: string, options: MessagePageQueryOptions = {}): MessagePageResult {
+    const bucket = this.messagesBySession.get(sessionId)
+    const sorted = bucket ? [...bucket.values()].sort(compareMessages) : []
+    const window = options.before ? sorted.filter((m) => compareMessages(m, options.before as MessageCursor) < 0) : sorted
+    const limit = options.limit
+    if (limit === undefined) {
+      const ordered = options.order === 'desc' ? window.reverse() : window
+      return { messages: ordered.map((m) => ({ ...m })), hasMore: false }
+    }
+    // 本页之前是否还有更早的消息：窗口比 limit 长就说明有。
+    const hasMore = window.length > limit
+    // 取窗口内最近的 limit 条（升序下即尾部），再按请求方向输出。
+    const page = window.slice(Math.max(0, window.length - limit))
+    const ordered = options.order === 'desc' ? page.reverse() : page
+    return { messages: ordered.map((m) => ({ ...m })), hasMore }
   }
 
   /** 获取全部消息（可选跨会话排序）。 */

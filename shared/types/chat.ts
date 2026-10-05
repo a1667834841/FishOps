@@ -186,3 +186,12 @@ export interface MessagePage {
   /** 下一页锚点（nextCursor）；无更多时为 0。 */
   nextCursor: number
 }
+
+/**
+ * 消息排序游标（向前分页边界）。
+ *
+ * 取值来自某条消息的排序键三要素：`createAt` → `messageId` → `id`，
+ * 与存储层 `compareMessages` 的完整排序一致；只用 timestamp 会在同一毫秒
+ * 的多条消息上产生歧义，所以必须携带全部三个字段。
+ */
+export type MessageCursor = Pick<ChatMessage, 'createAt' | 'messageId' | 'id'>

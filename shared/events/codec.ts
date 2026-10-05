@@ -53,6 +53,7 @@ import type {
   PublishSubmitPayload,
   ProductCatalogQueryCommandPayload as ProductCatalogQueryPayload,
 } from './commands'
+import type { MessageCursor } from '../types/chat'
 import type { MigrateLegacyConfigPayload, LegacyConfigTransfer } from '../types/legacy-migration'
 import { LEGACY_TRANSFER_LIMITS, LEGACY_TRANSFER_SECTIONS } from '../types/legacy-migration'
 import type { AiConfigSetPayload, FeishuConfigSetPayload } from '../types/config-setup'
@@ -290,9 +291,10 @@ export function isChatGetMessagesPayload(value: unknown): value is ChatGetMessag
   if (!isRecord(value)) return false
   if (typeof value['sessionId'] !== 'string' || value['sessionId'].length === 0) return false
   if (value['order'] !== undefined && value['order'] !== 'asc' && value['order'] !== 'desc') return false
-  if (value['limit'] !== undefined && (typeof value['limit'] !== 'number' || !Number.isFinite(value['limit']))) {
-    return false
-  }
+  // limit 沿用旧契约（只要求有限数字），不因新增 before 而收紧：旧调用方可能传 0/负数/小数/较大值。
+  if (value['limit'] !== undefined && (typeof value['limit'] !== 'number' || !Number.isFinite(value['limit']))) return false
+  // before 是本次新增的向前分页边界；非法游标（缺字段 / 非数字 / 空 id）直接拒绝，避免上游用它做任意查询。
+  if (value['before'] !== undefined && !isMessageCursor(value['before'])) return false
   return true
 }
 
@@ -300,7 +302,28 @@ export function isChatGetMessagesPayload(value: unknown): value is ChatGetMessag
 export function isChatSyncHistoryPayload(value: unknown): value is ChatSyncHistoryPayload {
   if (!isRecord(value)) return false
   if (typeof value['sessionId'] !== 'string' || value['sessionId'].length === 0) return false
-  return isOptionalPositiveNumber(value['pages']) && isOptionalPositiveNumber(value['count'])
+  // pages/count 沿用旧契约（有限非负数），不因新增 cursor 而收紧。
+  if (!isOptionalPositiveNumber(value['pages']) || !isOptionalPositiveNumber(value['count'])) return false
+  // cursor 是本次新增的服务端历史游标，必须为严格正 safe integer：0/小数/超界/非数字一律拒绝，
+  // 避免上游用它构造非法或重复的历史查询。
+  if (value['cursor'] !== undefined && (typeof value['cursor'] !== 'number' || !Number.isSafeInteger(value['cursor']) || value['cursor'] <= 0)) {
+    return false
+  }
+  return true
+}
+
+/**
+ * 校验消息排序游标（分页边界）。
+ *
+ * 与存储层 `compareMessages` 的排序键一致：`createAt` 为有限数字，
+ * `messageId` 可为空（指纹消息），`id` 必须是非空去重键，否则拒绝。
+ */
+export function isMessageCursor(value: unknown): value is MessageCursor {
+  if (!isRecord(value)) return false
+  if (typeof value['createAt'] !== 'number' || !Number.isFinite(value['createAt'])) return false
+  if (typeof value['messageId'] !== 'string') return false
+  if (typeof value['id'] !== 'string' || value['id'].length === 0) return false
+  return true
 }
 
 /** 校验 CHAT_MARK_READ 负载；限制长度并拒绝空白/非服务端 ID。 */
