@@ -8,8 +8,10 @@ import {
   type DirectPublishControllerOptions,
 } from './direct-publish-controller'
 
+let sharedController: DirectPublishController | null = null
+
 export function useDirectPublish(options?: DirectPublishControllerOptions) {
-  const controller = new DirectPublishController(options)
+  const controller = options ? new DirectPublishController(options) : (sharedController ??= new DirectPublishController())
 
   const phase = ref(controller.getPhase())
   const sourceProduct = shallowRef(controller.getSourceProduct())

@@ -22,6 +22,7 @@ import {
   messageKindLabel,
   peerAvatarUrl,
   safeHttpsUrl,
+  socketStatusView,
 } from '../features/chat/chat-format'
 import { REPLY_EVENTS, ReplyController, type ReplyState } from '../features/reply/reply-controller'
 
@@ -41,6 +42,9 @@ const selectedId = computed(() => state.value.selectedId)
 const selectedConversation = computed(
   () => conversations.value.items.find((item) => item.sessionId === selectedId.value) ?? null,
 )
+
+// Socket 状态展示：标题旁紧凑小点，不单占一行，不使用脉冲动画。
+const socketView = computed(() => socketStatusView(state.value.socketStatus))
 
 // 准备阶段可能先于聊天 socket 建立而失败；收到后续 open 事件时自动补一次准备与会话同步。
 watch(
@@ -198,8 +202,17 @@ watch(
       <!-- 会话列表 -->
       <PanelCard title="会话" flush class="chat__col">
         <template #actions>
+          <span
+            id="socket-status-dot"
+            class="status-dot-compact"
+            :class="`status-dot-compact--${socketView.tone}`"
+            :title="`Socket ${socketView.label}`"
+            :aria-label="`Socket ${socketView.label}`"
+            role="status"
+          ></span>
           <StatusTag v-if="conversations.phase === 'ready'" mono>{{ conversations.items.length }}</StatusTag>
           <button
+            id="chat-refresh-conv-btn"
             type="button"
             class="btn btn--icon"
             title="同步最近平台记录"
@@ -207,10 +220,10 @@ watch(
             :disabled="state.recentSyncing || conversations.phase === 'loading' || conversations.refreshing"
             @click="controller.syncRecent()"
           >
-            <PhArrowsClockwise :size="18" />
+            <PhArrowsClockwise :size="16" />
           </button>
           <button type="button" class="btn btn--icon" title="系统状态" aria-label="查看系统状态" @click="emit('diagnostics')">
-            <PhWrench :size="18" />
+            <PhWrench :size="16" />
           </button>
         </template>
 
@@ -309,6 +322,7 @@ watch(
       <PanelCard title="消息" flush class="chat__col chat__col--main">
         <template v-if="selectedId" #actions>
           <button
+            id="chat-sync-history-btn"
             type="button"
             class="btn btn--sm"
             :disabled="state.historySync.phase === 'running'"
@@ -320,10 +334,10 @@ watch(
         </template>
 
         <div class="thread">
-          <!-- 买家 / 商品紧凑摘要：不再单独占右侧列 -->
-          <div v-if="selectedId" class="contextbar" role="group" aria-label="买家与商品信息">
+          <!-- 买家 / 商品紧凑摘要：对齐 Seline contextbar -->
+          <div v-if="selectedId" id="chat-contextbar" class="contextbar" role="group" aria-label="买家与商品信息">
             <div class="contextbar__peer">
-              <span class="contextbar__avatar" aria-hidden="true">
+              <span id="contextbar-avatar" class="contextbar__avatar" aria-hidden="true">
                 <img
                   v-if="contextbarAvatar"
                   :src="contextbarAvatar ?? undefined"
@@ -335,32 +349,33 @@ watch(
                 />
                 <template v-else>{{ (peer.name || '对').slice(0, 1) }}</template>
               </span>
-              <span class="contextbar__peer-text">
-                <span class="contextbar__name">{{ peer.name ?? '未知买家' }}</span>
-                <span class="contextbar__sub">
+              <div class="contextbar__peer-text">
+                <span id="chat-peer-name" class="contextbar__name">{{ peer.name ?? '未知买家' }}</span>
+                <span id="chat-peer-meta" class="contextbar__sub">
                   <span v-if="peer.userId" class="mono">ID {{ peer.userId }}</span>
                   <span v-if="selectedConversation" class="mono">未读 {{ selectedConversation.unreadCount }}</span>
                 </span>
-              </span>
+              </div>
             </div>
-            <div class="contextbar__item">
-              <span class="contextbar__item-label"><PhStorefront :size="15" aria-hidden="true" />关联商品</span>
+            <div id="contextbar-item" class="contextbar__item">
+              <span class="contextbar__item-tag"><PhStorefront :size="13" aria-hidden="true" />关联商品</span>
               <template v-if="itemContext">
-                <span class="contextbar__item-title" :title="itemContext.itemTitle ?? itemContext.itemId">
+                <span id="contextbar-item-title" class="contextbar__item-title" :title="itemContext.itemTitle ?? itemContext.itemId">
                   {{ itemContext.itemTitle || itemContext.itemId }}
                 </span>
                 <a
                   v-if="itemContext.url"
-                  class="btn btn--sm contextbar__link"
+                  id="contextbar-item-link"
+                  class="contextbar__link"
                   :href="itemContext.url"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  <PhArrowSquareOut :size="15" aria-hidden="true" />在闲鱼打开商品
+                  <PhArrowSquareOut :size="13" aria-hidden="true" />在闲鱼打开 ↗
                 </a>
-                <span v-else class="contextbar__muted">商品 ID 格式无法识别，未生成链接</span>
+                <span v-else class="contextbar__muted">商品 ID 格式无法识别</span>
               </template>
-              <span v-else class="contextbar__muted">这个会话没有关联商品信息</span>
+              <span v-else class="contextbar__muted">暂无关联商品</span>
             </div>
           </div>
 
@@ -398,7 +413,7 @@ watch(
             <p v-if="state.messages.error" class="col-note col-note--error" role="alert">
               最近一次刷新失败（已保留旧数据）：{{ state.messages.error }}
             </p>
-            <ol ref="threadRef" class="msgs" aria-label="消息记录" tabindex="0" @scroll.passive="onThreadScroll">
+            <ol id="message-stream" ref="threadRef" class="msgs" aria-label="消息记录" tabindex="0" @scroll.passive="onThreadScroll">
               <li
                 v-for="message in threadMessages"
                 :key="message.id"
@@ -433,7 +448,7 @@ watch(
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    在新标签页查看图片
+                    在新标签页查看图片 ↗
                   </a>
                 </div>
               </li>
@@ -454,43 +469,67 @@ watch(
 </template>
 
 <style scoped>
+/* Seline 紧凑状态小点：语义化色调，无脉冲，标题旁水平对齐 */
+.status-dot-compact {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  background: var(--status-success, #10B981);
+}
+
+.status-dot-compact--ok {
+  background: var(--status-success, #10B981);
+}
+
+.status-dot-compact--warn {
+  background: var(--brand-yellow, #EAB308);
+}
+
+.status-dot-compact--error {
+  background: var(--status-danger, #EF4444);
+}
+
+.status-dot-compact--neutral {
+  background: var(--text-faint, #A8A29E);
+}
+
 .sync {
-  font-size: 13px;
+  font-size: 12.5px;
   overflow-wrap: anywhere;
 }
 
 .sync--ok {
-  color: var(--ok);
+  color: var(--ok, #15803D);
 }
 
 .sync--failed {
-  color: var(--error);
-}
-
-.sync--warn {
-  color: var(--warn);
+  color: var(--error, #DC2626);
 }
 
 .sync--inline {
   padding: 8px 14px;
-  background: var(--surface-sunken);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle, #F5F2EB);
+  border-bottom: 1px solid var(--border-line, #EFECE6);
 }
 
 .chat {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
   align-items: stretch;
-  min-height: 420px;
-  /* 聊天中心不再有规则/会话标签栏，减去该栏及其间距占位，把空间让给消息列表。 */
-  height: max(420px, calc(100dvh - 180px));
+  min-height: 480px;
+  /* 聊天中心移除标签栏后，减去该栏及其间距占位 180px，把完整高度给会话与消息流 */
+  height: max(480px, calc(100dvh - 180px));
 }
 
 .chat__col {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg-card, #FFFFFF);
+  border: 1px solid var(--border-line, #EFECE6);
 }
 
 .chat__col :deep(.panel__body) {
@@ -498,6 +537,7 @@ watch(
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  padding: 0;
 }
 
 .state {
@@ -517,7 +557,7 @@ watch(
 }
 
 .list__row + .list__row {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-line, #EFECE6);
 }
 
 .list__lines {
@@ -528,15 +568,15 @@ watch(
 
 .skel {
   display: block;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
+  background: var(--bg-subtle, #F5F2EB);
+  border: 1px solid var(--border-line, #EFECE6);
 }
 
 .skel--avatar {
   flex: none;
   width: 34px;
   height: 34px;
-  border-radius: var(--radius-control);
+  border-radius: 50%;
 }
 
 .skel--line {
@@ -549,18 +589,14 @@ watch(
 }
 
 .col-note {
-  padding: 14px;
-  font-size: 12.5px;
-  color: var(--text-muted);
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--text-muted, #8C867E);
   overflow-wrap: anywhere;
 }
 
-.col-note--flat {
-  padding: 8px 0 0;
-}
-
 .col-note--error {
-  color: var(--error);
+  color: var(--error, #DC2626);
 }
 
 .col-actions {
@@ -570,7 +606,7 @@ watch(
   padding: 0 14px 14px;
 }
 
-/* 会话列表 */
+/* 会话列表：Seline 暖纸黄色微调 */
 .convs {
   display: grid;
   max-height: 100%;
@@ -581,7 +617,7 @@ watch(
 }
 
 .convs > li + li {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-line, #EFECE6);
 }
 
 .conv {
@@ -596,36 +632,43 @@ watch(
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: background 0.12s ease;
 }
 
 .conv:hover {
-  background: var(--surface-sunken);
+  background: var(--bg-subtle, #F5F2EB);
 }
 
 .conv--active,
 .conv--active:hover {
-  background: var(--accent-soft);
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--brand-yellow-bg, #FEF9C3);
 }
 
 .conv:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--brand-yellow, #FACC15);
   outline-offset: -2px;
 }
 
 .conv__avatar {
-  display: grid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
-  place-items: center;
   width: 34px;
   height: 34px;
   overflow: hidden;
-  border-radius: var(--radius-control);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  font-weight: 600;
-  color: var(--text-muted);
+  border-radius: 50%;
+  background: var(--bg-subtle, #F5F2EB);
+  border: 1px solid var(--border-line, #EFECE6);
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text-main, #1C1917);
+}
+
+.conv--active .conv__avatar {
+  background: var(--brand-yellow, #FACC15);
+  border-color: var(--brand-yellow, #FACC15);
+  color: #1C1917;
 }
 
 .conv__avatar img {
@@ -635,9 +678,10 @@ watch(
 }
 
 .conv__body {
-  display: grid;
-  flex: 1;
+  display: flex;
+  flex-direction: column;
   gap: 3px;
+  flex: 1;
   min-width: 0;
 }
 
@@ -652,37 +696,40 @@ watch(
 
 .conv__name {
   overflow: hidden;
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-main, #1C1917);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .conv__time {
   flex: none;
-  font-size: 11.5px;
-  color: var(--text-muted);
+  font-size: 11px;
+  color: var(--text-muted, #8C867E);
 }
 
 .conv__last {
   overflow: hidden;
-  font-size: 12.5px;
-  color: var(--text-muted);
+  font-size: 11.5px;
+  color: var(--text-secondary, #78716C);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .conv__unread {
   flex: none;
-  min-width: 18px;
-  padding: 2px 6px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1.2;
-  text-align: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 9999px;
+  background: var(--status-danger, #EF4444);
+  color: #FFFFFF;
+  font-size: 10.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* 消息区 */
@@ -705,18 +752,20 @@ watch(
 }
 
 .thread__title {
-  font-weight: 650;
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--text-main, #1C1917);
 }
 
 .thread__text {
   max-width: 44ch;
-  font-size: 13px;
-  color: var(--text-muted);
+  font-size: 12.5px;
+  color: var(--text-muted, #8C867E);
   overflow-wrap: anywhere;
 }
 
 .thread__text--error {
-  color: var(--error);
+  color: var(--error, #DC2626);
 }
 
 .msgs {
@@ -725,15 +774,15 @@ watch(
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  max-height: none;
   overflow-y: auto;
   list-style: none;
   margin: 0;
-  padding: 14px;
+  padding: 16px;
+  background: var(--bg-canvas, #FBF9F4);
 }
 
 .msgs:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--brand-yellow, #FACC15);
   outline-offset: -2px;
 }
 
@@ -741,7 +790,7 @@ watch(
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  max-width: min(78%, 560px);
+  max-width: min(76%, 560px);
 }
 
 .msg--in {
@@ -750,21 +799,23 @@ watch(
 
 .msg--out {
   align-self: flex-end;
+  flex-direction: row-reverse;
 }
 
 .msg__avatar {
-  display: grid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
-  place-items: center;
   width: 28px;
   height: 28px;
   overflow: hidden;
   border-radius: 50%;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
+  background: var(--bg-subtle, #F5F2EB);
+  border: 1px solid var(--border-line, #EFECE6);
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
+  font-weight: 550;
+  color: var(--text-muted, #8C867E);
 }
 
 .msg__avatar img {
@@ -774,7 +825,8 @@ watch(
 }
 
 .msg__content {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   min-width: 0;
 }
@@ -782,10 +834,9 @@ watch(
 .msg__meta {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  font-size: 11.5px;
-  color: var(--text-muted);
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-muted, #8C867E);
 }
 
 .msg--out .msg__meta {
@@ -793,39 +844,48 @@ watch(
 }
 
 .msg__who {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .msg__bubble {
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface-sunken);
-  font-size: 13.5px;
+  padding: 8px 11px;
+  border: 1px solid var(--border-line, #EFECE6);
+  border-radius: 10px;
+  background: var(--bg-card, #FFFFFF);
+  font-size: 12.5px;
+  color: var(--text-main, #1C1917);
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .msg--out .msg__bubble {
-  border-color: transparent;
-  background: var(--accent-soft);
+  background: var(--brand-yellow, #FACC15);
+  border-color: var(--brand-yellow, #FACC15);
+  color: #1C1917;
 }
 
 .msg__link {
-  font-size: 12px;
-  color: var(--info);
+  font-size: 11.5px;
+  color: var(--brand-yellow-text, #854D0E);
+  text-decoration: none;
 }
 
-/* 买家 / 商品紧凑摘要条 */
+.msg__link:hover {
+  text-decoration: underline;
+}
+
+/* 买家 / 商品紧凑摘要条：对齐 Seline contextbar */
 .contextbar {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-sunken);
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--bg-subtle, #F5F2EB);
+  border-bottom: 1px solid var(--border-line, #EFECE6);
+  gap: 12px;
+  flex-shrink: 0;
 }
 
 .contextbar__peer {
@@ -836,18 +896,19 @@ watch(
 }
 
 .contextbar__avatar {
-  display: grid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
-  place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   overflow: hidden;
   border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  font-size: 12.5px;
+  background: var(--brand-yellow-bg, #FEF9C3);
+  border: 1px solid var(--brand-yellow-border, #FDE047);
+  color: var(--brand-yellow-text, #854D0E);
+  font-size: 12px;
   font-weight: 600;
-  color: var(--text-muted);
 }
 
 .contextbar__avatar img {
@@ -857,62 +918,79 @@ watch(
 }
 
 .contextbar__peer-text {
-  display: grid;
-  gap: 1px;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 
 .contextbar__name {
-  font-size: 13px;
-  font-weight: 650;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text-main, #1C1917);
+  line-height: 1.2;
 }
 
 .contextbar__sub {
+  font-size: 11px;
+  color: var(--text-muted, #8C867E);
+  line-height: 1.2;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 11.5px;
-  color: var(--text-muted);
+  gap: 6px;
 }
 
 .contextbar__item {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  font-size: 12px;
   min-width: 0;
-  margin-left: auto;
+  max-width: 58%;
 }
 
-.contextbar__item-label {
+.contextbar__item-tag {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-card, #FFFFFF);
+  border: 1px solid var(--border-line, #EFECE6);
+  font-size: 11px;
+  color: var(--text-muted, #8C867E);
+  flex-shrink: 0;
 }
 
 .contextbar__item-title {
-  max-width: 260px;
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: 12px;
+  color: var(--text-secondary, #78716C);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .contextbar__link {
+  color: var(--brand-yellow-text, #854D0E);
   text-decoration: none;
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.contextbar__link:hover {
+  text-decoration: underline;
 }
 
 .contextbar__muted {
-  font-size: 12.5px;
-  color: var(--text-muted);
+  font-size: 11.5px;
+  color: var(--text-muted, #8C867E);
 }
 
 .mono {
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 11px;
 }
 
 @media (max-width: 719px) {

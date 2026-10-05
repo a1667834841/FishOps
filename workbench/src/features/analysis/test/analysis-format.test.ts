@@ -105,3 +105,33 @@ test('buildPromptRule：正常规则通过；含疑似密钥被拒绝', () => {
   })
   assert.equal(rejected.ok, false)
 })
+
+test('parseAnalysisResult：完整保留 keyFindings/priceAnalysis/opportunities/risks 字段契约', () => {
+  const fullResult = {
+    result: {
+      ...VALID_RESULT.result,
+      output: {
+        summary: '总体平稳',
+        keyFindings: ['关键发现项1', '关键发现项2'],
+        priceAnalysis: {
+          avgPrice: 2999,
+          medianPrice: 2800,
+          priceRange: '¥2500 - ¥3500',
+          recommendation: '建议定价 ¥2799',
+        },
+        opportunities: ['成色好溢价高'],
+        risks: ['低价翻新较多'],
+      },
+    },
+  }
+  const parsed = parseAnalysisResult(fullResult)
+  assert.equal(parsed.ok, true)
+  if (parsed.ok) {
+    // 验证底层仍然解析并兼容 keyFindings，确保数据契约无断裂
+    assert.deepEqual(parsed.result.output.keyFindings, ['关键发现项1', '关键发现项2'])
+    assert.equal(parsed.result.output.priceAnalysis?.avgPrice, 2999)
+    assert.equal(parsed.result.output.priceAnalysis?.recommendation, '建议定价 ¥2799')
+    assert.deepEqual(parsed.result.output.opportunities, ['成色好溢价高'])
+    assert.deepEqual(parsed.result.output.risks, ['低价翻新较多'])
+  }
+})

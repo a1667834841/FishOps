@@ -4,7 +4,7 @@ import type { ErrorView } from '../features/shared/error-format'
 
 /**
  * 提示块：成功 / 提示 / 警告 / 错误。
- * 错误与警告使用 role="alert"，其余使用 role="status"，读屏会按重要程度播报。
+ * 错误与警告使用 role="alert"，其余使用 role="status"。
  * 传入 `view` 时按 ErrorView 渲染标题、建议与脱敏后的原始说明。
  */
 const props = withDefaults(
@@ -48,50 +48,69 @@ const role = computed(() => (props.tone === 'error' || props.tone === 'warn' ? '
   justify-content: space-between;
   gap: 8px 14px;
   padding: 10px 14px;
-  border-radius: var(--radius-control);
-  border: 1px solid transparent;
-  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border-line);
+  font-size: 12.5px;
   min-width: 0;
 }
 
 .callout--info {
-  background: var(--info-soft);
-  color: var(--text);
+  background: var(--bg-subtle);
+  border-color: var(--border-line);
+  color: var(--text-main);
 }
 
 .callout--ok {
-  background: var(--ok-soft);
-  color: var(--ok);
+  background: var(--status-success-bg);
+  border-color: var(--status-success-border);
+  color: var(--status-success);
 }
 
 .callout--warn {
-  background: var(--warn-soft);
-  color: var(--warn);
+  background: var(--brand-yellow-bg);
+  border-color: var(--brand-yellow-border);
+  border-style: dashed;
+  color: var(--brand-yellow-text);
 }
 
 .callout--error {
-  background: var(--error-soft);
-  color: var(--error);
+  background: var(--status-danger-bg);
+  border-color: var(--status-danger-border);
+  color: var(--status-danger);
 }
 
 .callout__body {
   flex: 1 1 260px;
   display: grid;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
 .callout__title {
-  font-weight: 650;
+  font-weight: 500;
+  color: inherit;
 }
 
 .callout__text {
   white-space: pre-wrap;
+  color: var(--text-secondary);
+}
+
+.callout--ok .callout__text {
+  color: var(--status-success);
+}
+
+.callout--warn .callout__text {
+  color: var(--brand-yellow-text);
+}
+
+.callout--error .callout__text {
+  color: var(--status-danger);
 }
 
 .callout__detail {
-  font-size: 12px;
+  font-size: 11px;
   opacity: 0.85;
   font-family: var(--mono);
 }

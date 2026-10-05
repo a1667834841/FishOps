@@ -22,40 +22,48 @@ const clamped = computed(() => Math.max(0, Math.min(100, Math.round(props.value)
     aria-valuemax="100"
     :aria-valuenow="clamped"
   >
-    <span class="bar__fill" :class="`bar__fill--${tone ?? 'accent'}`" :style="{ width: `${clamped}%` }"></span>
+    <span
+      class="bar__fill"
+      :class="`bar__fill--${tone ?? 'accent'}`"
+      :style="{ width: `${clamped}%` }"
+    ></span>
   </div>
 </template>
 
 <style scoped>
 .bar {
-  height: 8px;
+  height: 5px;
   overflow: hidden;
-  border-radius: 4px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-line);
 }
 
 .bar__fill {
   display: block;
   height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
+  border-radius: 9999px;
+  background: var(--brand-yellow);
   transition: width 0.25s ease;
 }
 
+.bar__fill--accent {
+  background: var(--brand-yellow);
+}
+
 .bar__fill--ok {
-  background: var(--ok);
+  background: var(--status-success);
 }
 
 .bar__fill--warn {
-  background: var(--warn);
+  background: var(--brand-yellow-hover);
 }
 
 .bar__fill--error {
-  background: var(--error);
+  background: var(--status-danger);
 }
 
 .bar__fill--neutral {
-  background: var(--border-strong);
+  background: var(--border-hover);
 }
 </style>

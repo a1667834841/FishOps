@@ -428,7 +428,9 @@ export class DirectPublishController {
         this.initSource(source)
         this.phase = 'prepare_failed'
         this.errorCode = detail.code || 'DETAIL_FAILED'
-        this.errorMessage = detail.message || '获取商品最新详情失败，未回退到旧数据'
+        const sourceLabel = source.title?.trim() || '未知商品'
+        const sourceId = source.itemId ? `（商品 ID：${source.itemId}）` : ''
+        this.errorMessage = `${sourceLabel}${sourceId}：${detail.message || '获取商品最新详情失败，未回退到旧数据'}`
         this.failureStage = 'source'
         this.notify()
         return { status: 'rejected', code: this.errorCode, message: this.errorMessage, failureStage: 'source' }

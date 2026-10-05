@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
-import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
 import DiagnosticsDrawer from './components/DiagnosticsDrawer.vue'
 import { useAppBootstrap } from './composables/useAppBootstrap'
@@ -10,6 +9,7 @@ import type { PublishDraft } from './features/publish/publish-draft-store'
 import { publishDraftStore } from './features/publish/publish-draft-store'
 import BridgeDemo from './pages/BridgeDemo.vue'
 import OverviewPage from './pages/OverviewPage.vue'
+
 const AnalyticsPage = defineAsyncComponent(() => import('./pages/AnalyticsPage.vue'))
 const ChatCenterPage = defineAsyncComponent(() => import('./pages/ChatCenterPage.vue'))
 const CollectPage = defineAsyncComponent(() => import('./pages/CollectPage.vue'))
@@ -17,15 +17,16 @@ const ProductsPage = defineAsyncComponent(() => import('./pages/ProductsPage.vue
 const PublishPage = defineAsyncComponent(() => import('./pages/PublishPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./pages/SettingsPage.vue'))
 
-/** 页面导航只用本地状态：不写入 URL 或存储，刷新后回到概览。 */
+/** 页面导航使用本地状态：不写入 URL 或存储，刷新后回到概览。 */
 const page = ref<PageId>(DEFAULT_PAGE)
 const diagnosticsOpen = ref(false)
 const mainRef = ref<HTMLElement | null>(null)
-/** 跨页面传递的待发布草稿（从 ProductsPage 飞书 Tab 或自营 Tab 传递到 PublishPage） */
+/** 跨页面传递的待发布草稿（从 ProductsPage 传递到 PublishPage） */
 const pendingDraft = ref<PublishDraft | null>(null)
 
 const currentItem = computed(() => findNavItem(page.value))
 const { status, inExtension } = useBridgeStatus()
+
 // 应用级启动时自动准备聊天运行时并同步会话
 useAppBootstrap()
 
@@ -34,7 +35,7 @@ const envNotice = computed<{ tone: 'warn' | 'error'; text: string } | null>(() =
   if (!inExtension) {
     return {
       tone: 'warn',
-      text: '未连接扩展，请从浏览器扩展打开工作台。',
+      text: '未连接扩展，请从 Chrome/Edge 扩展中打开工作台。',
     }
   }
   if (status.value.state === 'error') {
@@ -61,7 +62,7 @@ async function go(next: PageId): Promise<void> {
   if (next === page.value) return
   page.value = next
   window.scrollTo({ top: 0 })
-  // 把键盘焦点移到内容区，便于读屏与键盘用户感知页面已切换。
+  // 将焦点切换到主内容区，保障键盘与读屏辅助感知
   await nextTick()
   mainRef.value?.focus({ preventScroll: true })
 }
@@ -82,12 +83,25 @@ function handleClearDraft(): void {
 <template>
   <div class="shell">
     <a class="skip" href="#main" @click.prevent="mainRef?.focus()">跳到主内容</a>
-    <AppSidebar :current="page" @navigate="go" />
 
-    <div class="workspace">
-      <AppTopbar :page="currentItem" @diagnostics="diagnosticsOpen = true" @settings="go('settings')" />
+    <!-- 顶部轻量导航：1200 内容宽居中，收拢全部页面胶囊 Tab 与全局操作 -->
+    <AppTopbar
+      :current="page"
+      :page="currentItem"
+      @navigate="go"
+      @diagnostics="diagnosticsOpen = true"
+      @settings="go('settings')"
+    />
 
-      <main id="main" ref="mainRef" class="content" :class="{ 'content--wide': page === 'chat' || page === 'products' }" tabindex="-1">
+    <!-- 工作区主体：统一最大内容宽度 1200px 暖纸画布 -->
+    <div class="workspace-wrap">
+      <main
+        id="main"
+        ref="mainRef"
+        class="content"
+        :class="{ 'content--wide': page === 'chat' || page === 'products' }"
+        tabindex="-1"
+      >
         <div v-if="envNotice" class="notice" :class="`notice--${envNotice.tone}`" role="status">
           <p class="notice__text">{{ envNotice.text }}</p>
           <button type="button" class="btn btn--sm" @click="diagnosticsOpen = true">查看诊断</button>
@@ -110,6 +124,7 @@ function handleClearDraft(): void {
       </main>
     </div>
 
+    <!-- 系统状态与开发诊断抽屉 -->
     <DiagnosticsDrawer :open="diagnosticsOpen" @close="diagnosticsOpen = false">
       <BridgeDemo />
     </DiagnosticsDrawer>
@@ -118,10 +133,10 @@ function handleClearDraft(): void {
 
 <style scoped>
 .shell {
-  display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  align-items: start;
-  min-height: 100dvh;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-canvas);
 }
 
 .skip {
@@ -129,26 +144,29 @@ function handleClearDraft(): void {
   left: 16px;
   top: -48px;
   z-index: 100;
-  padding: 8px 14px;
-  border-radius: var(--radius-control);
-  background: var(--accent);
-  color: var(--on-accent);
+  padding: 6px 14px;
+  border-radius: 9999px;
+  background: var(--brand-yellow);
+  color: #1c1917;
   font-weight: 600;
   text-decoration: none;
+  font-size: 12px;
+  box-shadow: var(--shadow-card);
 }
 
 .skip:focus {
   top: 12px;
 }
 
-.workspace {
-  min-width: 0;
-  padding: 20px 24px 32px;
+.workspace-wrap {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px 20px 48px;
+  flex: 1;
 }
 
 .content {
-  max-width: 1440px;
-  margin-inline: auto;
   display: grid;
   gap: 16px;
   align-content: start;
@@ -157,7 +175,10 @@ function handleClearDraft(): void {
 .content:focus {
   outline: none;
 }
-.content--wide { max-width: none; }
+
+.content--wide {
+  max-width: none;
+}
 
 .notice {
   display: flex;
@@ -166,18 +187,24 @@ function handleClearDraft(): void {
   justify-content: space-between;
   gap: 8px 14px;
   padding: 10px 14px;
-  border-radius: var(--radius-control);
-  font-size: 13px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: var(--bg-card);
+  border: 1px solid var(--border-line);
 }
 
 .notice--warn {
-  background: var(--warn-soft);
-  color: var(--warn);
+  border-color: var(--brand-yellow-border);
+  background: var(--brand-yellow-bg);
+  color: var(--brand-yellow-text);
+  border-style: dashed;
 }
 
 .notice--error {
-  background: var(--error-soft);
-  color: var(--error);
+  border-color: var(--status-danger-border);
+  background: var(--status-danger-bg);
+  color: var(--status-danger);
 }
 
 .notice__text {
@@ -200,12 +227,8 @@ function handleClearDraft(): void {
 }
 
 @media (max-width: 899px) {
-  .shell {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .workspace {
-    padding: 16px 12px 40px;
+  .workspace-wrap {
+    padding: 14px 12px 36px;
   }
 }
 </style>
