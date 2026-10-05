@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import {
   PhArrowSquareOut,
   PhArrowsClockwise,
@@ -9,27 +9,18 @@ import {
   PhImage,
   PhMagnifyingGlass,
   PhPackage,
-  PhPaperPlaneTilt,
+
   PhTable,
-  PhUploadSimple,
   PhX,
 } from '@phosphor-icons/vue'
-import AppModal from '../components/AppModal.vue'
 import Callout from '../components/Callout.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PanelCard from '../components/PanelCard.vue'
-import StatusTag from '../components/StatusTag.vue'
 import { useBridgeController } from '../composables/useBridgeController'
 import type { PageId } from '../data/navigation'
-import { formatShortTime } from '../features/chat/chat-format'
 import type { PublishDraft } from '../features/publish/publish-draft-store'
 import { publishDraftStore } from '../features/publish/publish-draft-store'
-import {
-  FeishuWriteController,
-  isFeishuPreviewExpired,
-  type FeishuWriteState,
-} from '../features/products/feishu-write-controller'
-import { formatFeishuTypeName } from '../features/products/feishu-schema-controller'
+import { publishProductDraft } from '../features/publish/products-publish-entry'
 import { PRODUCTS_EVENTS, ProductsController, type ProductsState } from '../features/products/products-controller'
 import {
   PRODUCT_ORDER_OPTIONS,
@@ -43,6 +34,12 @@ import {
   type ProductTab,
   type ProductTableItem,
 } from '../features/products/products-format'
+import {
+  buildPublishDraft,
+  filterPageProducts,
+  getItemKey,
+  type PageShipFilter,
+} from '../features/products/products-publish-draft'
 import type { ProductOrder } from '../features/contracts'
 
 const emit = defineEmits<{
@@ -50,7 +47,7 @@ const emit = defineEmits<{
   publishItem: [draft: PublishDraft]
 }>()
 
-/** 缺值只说明本次数据未提供，不能据此断言该字段永远无法采集。 */
+/** 缺值提示辅助说明 */
 function missingFieldHint(product: ProductTableItem, field: string): string {
   return product.source === 'feishu_material'
     ? `飞书记录未提供${field}，请检查表格对应字段。`
@@ -62,15 +59,6 @@ const { state, controller } = useBridgeController<ProductsState, ProductsControl
   create: (api) => new ProductsController({ api }),
 })
 
-const { state: feishuState, controller: feishuController } = useBridgeController<
-  FeishuWriteState,
-  FeishuWriteController
->({
-  events: [],
-  timeoutMs: 30000,
-  create: (api) => new FeishuWriteController({ api }),
-})
-
 const available = computed(() => state.value.availability === 'ready')
 const currentTab = computed(() => state.value.tab)
 const isFeishuTab = computed(() => state.value.tab === 'feishu')
@@ -78,17 +66,24 @@ const result = computed(() => state.value.result)
 const query = computed(() => state.value.query)
 const keywordInput = ref('')
 const exportNote = ref('')
-const showWritePanel = ref(false)
 const failedCovers = ref(new Set<string>())
 
 const tabFeishuRef = ref<HTMLButtonElement | null>(null)
 const tabMyPublishedRef = ref<HTMLButtonElement | null>(null)
 
-/** 组合 source + recordId/itemId + coverUrl 作为坏图 key，避免无 ID 或缺 ID 条目互相污染 */
+/** 行距密度切换：默认 'normal'（行高约 64-72px）或紧凑 'compact'（行高约 52-58px） */
+const density = ref<'normal' | 'compact'>('normal')
+
+/** 本页包邮筛选（仅作用于当前页商品，不修改扩展全库分页协议） */
+const shipFilter = ref<PageShipFilter>('all')
+
+
+
+/** 组合 source + tableId + recordId/itemId + coverUrl 作为坏图 key，避免无 ID 或缺 ID 条目互相污染 */
 function getCoverKey(product: ProductTableItem): string {
-  const id = product.recordId || product.itemId || ''
+  const rowKey = getItemKey(product, result.value.targetTableId)
   const src = product.source || currentTab.value
-  return `${src}:${id}:${product.coverUrl || ''}`
+  return `${src}:${rowKey}:${product.coverUrl || ''}`
 }
 
 function hideFailedCover(product: ProductTableItem): void {
@@ -98,6 +93,7 @@ function hideFailedCover(product: ProductTableItem): void {
 
 const paging = computed(() => pageInfo(result.value.total ?? 0, query.value.pageSize, query.value.page))
 const busy = computed(() => result.value.phase === 'loading' || result.value.refreshing)
+
 /** 当前列表是否与输入框 / 控件对应的查询不一致（上一次查询失败时会出现）。 */
 const showingPrevious = computed(() => {
   const queried = result.value.queriedWith
@@ -111,131 +107,70 @@ const showingPrevious = computed(() => {
   )
 })
 
-// ---------------- 飞书写入勾选与交互状态 ----------------
-const selectedSet = computed(() => new Set(feishuState.value.selectedItemIds))
-const selectedCount = computed(() => feishuState.value.selectedItemIds.length)
+// ---------------- 选品与多选状态 ----------------
+const selectedKeys = ref<Set<string>>(new Set())
 
-const currentPageItemIds = computed(() => result.value.items.map((p) => p.itemId))
+function getRowKey(product: ProductTableItem): string {
+  return getItemKey(product, result.value.targetTableId)
+}
+
+
+
+/** 过滤后的本页展示商品列表（结合本页包邮状态筛选） */
+const displayItems = computed(() => {
+  return filterPageProducts(result.value.items, shipFilter.value)
+})
+
+const currentPageKeys = computed(() => displayItems.value.map(getRowKey).filter(Boolean))
 
 const isPageAllSelected = computed(() => {
-  const ids = currentPageItemIds.value
-  return ids.length > 0 && ids.every((id) => selectedSet.value.has(id))
+  const keys = currentPageKeys.value
+  return keys.length > 0 && keys.every((key) => selectedKeys.value.has(key))
 })
 
 const isPagePartialSelected = computed(() => {
-  const ids = currentPageItemIds.value
-  const count = ids.filter((id) => selectedSet.value.has(id)).length
-  return count > 0 && count < ids.length
+  const keys = currentPageKeys.value
+  const count = keys.filter((key) => selectedKeys.value.has(key)).length
+  return count > 0 && count < keys.length
 })
 
-/** 用户显式确认复选框。一旦选品发生变化或非 ready 状态，立即重置为 false。 */
-const userConfirmed = ref(false)
-/** 是否展开待写入清单的全部条目。 */
-const showAllPreviewItems = ref(false)
-
-// 当选品发生变动时，重置用户显式确认勾选框
-watch(
-  () => feishuState.value.selectedItemIds,
-  () => {
-    userConfirmed.value = false
-    showAllPreviewItems.value = false
-  },
-)
-
-// 当 preview 状态离开 ready 时重置确认
-watch(
-  () => feishuState.value.preview.phase,
-  (phase) => {
-    if (phase !== 'ready') {
-      userConfirmed.value = false
-    }
-  },
-)
-
-const previewBusy = computed(() => feishuState.value.preview.phase === 'loading')
-const executeBusy = computed(() => feishuState.value.execute.phase === 'loading')
-const previewResult = computed(() => feishuState.value.preview.result)
-const executeResult = computed(() => feishuState.value.execute.result)
-
-/** 响应式时间刻度，用于驱动 isPreviewExpired 在到期时自动响应式触发更新。 */
-const nowTick = ref(Date.now())
-let nowTickTimer: ReturnType<typeof setInterval> | null = null
-
-onMounted(() => {
-  nowTickTimer = setInterval(() => {
-    nowTick.value = Date.now()
-  }, 1000)
-})
-
-onBeforeUnmount(() => {
-  if (nowTickTimer) {
-    clearInterval(nowTickTimer)
-    nowTickTimer = null
-  }
-})
-
-const isPreviewExpired = computed(() => {
-  const pr = previewResult.value
-  if (!pr) return false
-  return isFeishuPreviewExpired(pr.expiresAt, nowTick.value)
-})
-
-const hasFieldIncompatibility = computed(() => {
-  const pr = previewResult.value
-  if (!pr) return false
-  return !pr.fieldCompatible || (pr.missingFields?.length ?? 0) > 0 || (pr.typeConflicts?.length ?? 0) > 0
-})
-
-const canExecute = computed(() => {
-  const pr = previewResult.value
-  return (
-    feishuState.value.preview.phase === 'ready' &&
-    pr !== null &&
-    !hasFieldIncompatibility.value &&
-    pr.toCreate.length > 0 &&
-    !isPreviewExpired.value &&
-    userConfirmed.value &&
-    !executeBusy.value
-  )
-})
-
-function toggleItemSelect(itemId: string): void {
-  feishuController.toggle(itemId)
+function toggleItemSelect(product: ProductTableItem): void {
+  const key = getRowKey(product)
+  if (!key) return
+  const next = new Set(selectedKeys.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  selectedKeys.value = next
 }
 
 function toggleSelectPage(): void {
+  const next = new Set(selectedKeys.value)
   if (isPageAllSelected.value) {
-    feishuController.deselectMultiple(currentPageItemIds.value)
+    for (const key of currentPageKeys.value) {
+      next.delete(key)
+    }
   } else {
-    feishuController.selectMultiple(currentPageItemIds.value)
+    for (const key of currentPageKeys.value) {
+      next.add(key)
+    }
   }
+  selectedKeys.value = next
 }
 
-function clearSelection(): void {
-  feishuController.clearSelection()
-}
 
-/** 写入后台真实执行中（禁止切 tab，避免假取消真实 write）。 */
-const isExecuting = computed(() => executeBusy.value)
 
-/** 切换商品库菜单 Tab。 */
+/** 切换商品库菜单 Tab */
 function onTabChange(tab: ProductTab): void {
-  if (isExecuting.value) return
   if (tab === state.value.tab) return
-  // 切 Tab 必须清空已选商品、清空写入预览与执行、作废 controller 预览、关闭弹窗、重置确认标记，杜绝竞态与自动写入
-  clearSelection()
-  feishuController.invalidatePreview()
-  feishuController.resetExecute()
-  showWritePanel.value = false
-  userConfirmed.value = false
+  selectedKeys.value = new Set()
   exportNote.value = ''
-  keywordInput.value = '' // 切Tab同步清空输入框，保持与 controller.query 同步
+  keywordInput.value = ''
+  shipFilter.value = 'all'
   void controller.setTab(tab)
 }
 
-/** WAI-ARIA Accessible Tabs 键盘漫游导航（ArrowLeft / ArrowRight / Home / End）。 */
+/** WAI-ARIA Accessible Tabs 键盘漫游导航 */
 function onTabKeydown(event: KeyboardEvent, current: ProductTab): void {
-  if (isExecuting.value) return
   if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
     event.preventDefault()
     const targetTab: ProductTab = current === 'feishu' ? 'my_published' : 'feishu'
@@ -266,29 +201,25 @@ function clearSearch(): void {
   submitSearch()
 }
 
+function resetFilters(): void {
+  keywordInput.value = ''
+  shipFilter.value = 'all'
+  submitSearch()
+}
+
+
 /**
- * 点击商品行“发布”按钮：
- * 仅导航至发布中心并传递选中的记录（精确携带 recordId/targetTableId 或真实 itemId），
- * 绝不自动调用 PUBLISH_CREATE、PUBLISH_FILL_FORM 或 PUBLISH_SUBMIT！
+ * 点击单行“发布”按钮：
+ * 保持原有旧单品去发布安全流程（保留真实草稿，导航至发布中心，绝不自动提交）。
  */
 function onPublishRow(product: ProductTableItem): void {
-  const isFeishu = currentTab.value === 'feishu' || product.source === 'feishu_material'
-  const draft: PublishDraft = {
-    source: isFeishu ? 'feishu' : 'my_published',
-    recordId: (product as any).recordId || undefined,
-    targetTableId: product.targetTableId || result.value.targetTableId || undefined,
-    itemId: product.itemId || undefined,
-    title: product.title || '',
-    desc: (product as any).desc || (product as any).description || '',
-    price: product.priceNumber || 0,
-    originalPrice: product.originalPriceNumber || 0,
-    coverUrl: product.coverUrl || '',
-    imageUrls: product.coverUrl ? [product.coverUrl] : [],
-  }
-  publishDraftStore.setDraft(draft)
-  emit('publishItem', draft)
-  emit('navigate', 'publish')
+  const draft = buildPublishDraft(product, currentTab.value, result.value.targetTableId)
+  publishProductDraft(draft, publishDraftStore, () => {
+    emit('publishItem', draft)
+    emit('navigate', 'publish')
+  })
 }
+
 
 function onRefreshProducts(): void {
   void controller.refresh()
@@ -302,9 +233,21 @@ function onPageSize(event: Event): void {
   void controller.setPageSize(Number((event.target as HTMLSelectElement).value))
 }
 
-/** 只导出当前页已经查询到的商品；不会再向后台请求、也不会补全其它页。 */
+/** 表头点击快速排序（仅支持后端真实支持的 wantCntDesc 与 captureTime） */
+function toggleSort(type: 'time' | 'wants'): void {
+  if (type === 'wants') {
+    void controller.setOrder('wantCntDesc')
+  } else if (type === 'time') {
+    const nextOrder = query.value.order === 'captureTimeDesc' ? 'captureTimeAsc' : 'captureTimeDesc'
+    void controller.setOrder(nextOrder)
+  }
+}
+
+/**
+ * CSV 导出：导出 displayItems（严格符合当前用户看到的本页筛选条目）。
+ */
 function exportCsv(): void {
-  const items = result.value.items
+  const items = displayItems.value
   if (result.value.phase !== 'ready' || items.length === 0) return
   const blob = new Blob([buildProductsCsv(items)], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -314,109 +257,96 @@ function exportCsv(): void {
   document.body.appendChild(link)
   link.click()
   link.remove()
-  // 延后释放，保证浏览器已经开始下载。
   setTimeout(() => URL.revokeObjectURL(url), 1000)
-  if (isFeishuTab.value) {
-    exportNote.value = `已导出当前页 ${items.length} 条飞书采集商品${typeof result.value.total === 'number' ? `（已加载共 ${result.value.total} 件）` : ''}。`
-  } else {
-    exportNote.value = `已导出当前页 ${items.length} 条发布商品（商品库共 ${result.value.total ?? items.length} 件，未导出的部分需翻页后分别导出）。`
-  }
-}
 
-function handlePreview(): void {
-  showWritePanel.value = true
-  userConfirmed.value = false
-  void feishuController.preview()
-}
-
-async function handleExecute(): Promise<void> {
-  if (!canExecute.value) return
-  await feishuController.execute({ confirm: true })
+  const filterText = shipFilter.value === 'all' ? '' : `（${shipFilter.value === 'free' ? '仅包邮' : '仅不包邮'}）`
+  exportNote.value = `已导出当前页筛选的 ${items.length} 条商品${filterText}。`
 }
 
 function navigateToSettings(): void {
-  showWritePanel.value = false
   emit('navigate', 'settings')
 }
 
-/** 格式化商品标题：最多 40 字 */
+/** 格式化商品标题：最多 36 字单行截断，避免撑大行高 */
 function formatProductTitle(title?: string): string {
   if (!title) return '（无标题）'
-  return title.length > 40 ? `${title.slice(0, 40)}…` : title
-}
-
-/** 获取商品描述原文 */
-function getProductDesc(product: ProductTableItem): string {
-  return (product as any).desc || (product as any).description || ''
-}
-
-/** 格式化商品描述：最多 80 字，缺失时必须显示「暂无描述」 */
-function formatProductDesc(desc: string): string {
-  const trimmed = desc?.trim()
-  if (!trimmed) return '暂无描述'
-  return trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed
+  return title.length > 36 ? `${title.slice(0, 36)}…` : title
 }
 </script>
 
 <template>
-  <div class="page">
-    <Callout v-if="state.hasNewCapture" tone="info">
-      <template #default>后台任务有新的进展，当前账号商品目录可能已更新。</template>
+  <div class="page products-view">
+    <!-- 顶部状态提示 -->
+    <Callout v-if="state.hasNewCapture" tone="info" class="status-banner">
+      <template #default>后台采集任务有新进展，当前账号商品目录可能已更新。</template>
       <template #actions>
-        <button type="button" class="btn btn--sm btn--primary" :disabled="busy" @click="controller.refresh()">刷新商品目录</button>
+        <button type="button" class="btn btn--sm btn--primary" :disabled="busy" @click="controller.refresh()">
+          刷新商品目录
+        </button>
       </template>
     </Callout>
 
-    <PanelCard flush>
-      <!-- 恰好两个菜单 Tab：默认「飞书采集的商品库」，第二「自己发布的商品库」 -->
-      <nav class="tabs-nav" role="tablist" aria-label="商品库来源分类">
-        <button
-          id="tab-feishu"
-          ref="tabFeishuRef"
-          type="button"
-          role="tab"
-          class="tab-btn"
-          :class="{ 'tab-btn--active': currentTab === 'feishu' }"
-          :aria-selected="currentTab === 'feishu'"
-          aria-controls="panel-products"
-          :tabindex="currentTab === 'feishu' ? 0 : -1"
-          :disabled="isExecuting"
-          @click="onTabChange('feishu')"
-          @keydown="onTabKeydown($event, 'feishu')"
-        >
-          <PhTable :size="18" class="tab-btn__icon" />
-          <span class="tab-btn__text">飞书采集的商品库</span>
-          <span
-            v-if="currentTab === 'feishu' && result.phase === 'ready' && typeof result.total === 'number'"
-            class="tab-btn__badge"
+
+    <!-- Seline 暖纸白卡容器 -->
+    <PanelCard flush class="feature-card">
+      <!-- 页面轻标题与 Tab 导航 -->
+      <div class="card-header-row">
+        <div class="view-title-group">
+          <h1 class="view-title">
+            <span class="title-dot" aria-hidden="true"></span>
+            商品库
+          </h1>
+          <span class="view-sub">采集结果检索、筛选、排序与发布流转</span>
+        </div>
+
+        <nav class="tabs-nav" role="tablist" aria-label="商品库来源分类">
+          <button
+            id="tab-feishu"
+            ref="tabFeishuRef"
+            type="button"
+            role="tab"
+            class="tab-btn"
+            :class="{ 'tab-btn--active': currentTab === 'feishu' }"
+            :aria-selected="currentTab === 'feishu'"
+            aria-controls="panel-products"
+            :tabindex="currentTab === 'feishu' ? 0 : -1"
+            @click="onTabChange('feishu')"
+            @keydown="onTabKeydown($event, 'feishu')"
           >
-            {{ result.total }}
-          </span>
-        </button>
-        <button
-          id="tab-my_published"
-          ref="tabMyPublishedRef"
-          type="button"
-          role="tab"
-          class="tab-btn"
-          :class="{ 'tab-btn--active': currentTab === 'my_published' }"
-          :aria-selected="currentTab === 'my_published'"
-          aria-controls="panel-products"
-          :tabindex="currentTab === 'my_published' ? 0 : -1"
-          :disabled="isExecuting"
-          @click="onTabChange('my_published')"
-          @keydown="onTabKeydown($event, 'my_published')"
-        >
-          <PhPackage :size="18" class="tab-btn__icon" />
-          <span class="tab-btn__text">自己发布的商品库</span>
-          <span
-            v-if="currentTab === 'my_published' && result.phase === 'ready' && typeof result.total === 'number'"
-            class="tab-btn__badge"
+            <PhTable :size="16" class="tab-btn__icon" />
+            <span class="tab-btn__text">飞书采集的商品库</span>
+            <span
+              v-if="currentTab === 'feishu' && result.phase === 'ready' && typeof result.total === 'number'"
+              class="tab-btn__badge"
+            >
+              {{ result.total }}
+            </span>
+          </button>
+
+          <button
+            id="tab-my_published"
+            ref="tabMyPublishedRef"
+            type="button"
+            role="tab"
+            class="tab-btn"
+            :class="{ 'tab-btn--active': currentTab === 'my_published' }"
+            :aria-selected="currentTab === 'my_published'"
+            aria-controls="panel-products"
+            :tabindex="currentTab === 'my_published' ? 0 : -1"
+            @click="onTabChange('my_published')"
+            @keydown="onTabKeydown($event, 'my_published')"
           >
-            {{ result.total }}
-          </span>
-        </button>
-      </nav>
+            <PhPackage :size="16" class="tab-btn__icon" />
+            <span class="tab-btn__text">自己发布的商品库</span>
+            <span
+              v-if="currentTab === 'my_published' && result.phase === 'ready' && typeof result.total === 'number'"
+              class="tab-btn__badge"
+            >
+              {{ result.total }}
+            </span>
+          </button>
+        </nav>
+      </div>
 
       <div
         id="panel-products"
@@ -425,326 +355,117 @@ function formatProductDesc(desc: string): string {
         class="tab-panel"
         tabindex="0"
       >
-        <p v-if="isFeishuTab" class="muted">北京时间今天和昨天的全部采集记录，同一商品可显示多条。</p>
-        <form class="toolbar" role="search" @submit.prevent="submitSearch">
-          <div class="toolbar__search">
-            <label class="sr-only" for="products-keyword">{{ isFeishuTab ? '按采集关键字、标题或商品 ID 搜索' : '按标题或商品 ID 搜索' }}</label>
-            <input
-              id="products-keyword"
-              v-model="keywordInput"
-              class="input"
-              type="search"
-              autocomplete="off"
-              :placeholder="isFeishuTab ? '搜索采集关键字、商品标题或 ID，回车确认' : '搜索已发布标题或 ID，回车确认'"
-              :disabled="!available"
-            />
-          </div>
-          <button type="submit" class="btn btn--sm btn--icon" aria-label="搜索商品" title="搜索" :disabled="!available || busy"><PhMagnifyingGlass :size="18" /></button>
-          <button v-if="query.keyword" type="button" class="btn btn--sm btn--ghost btn--icon" aria-label="清除搜索" title="清除搜索" :disabled="busy" @click="clearSearch"><PhX :size="18" /></button>
+        <!-- 紧凑工具栏 -->
+        <div class="toolbar-row">
+          <div class="toolbar-left">
+            <div class="search-input-wrap">
+              <PhMagnifyingGlass :size="14" class="search-lens" aria-hidden="true" />
+              <input
+                id="product-search"
+                v-model="keywordInput"
+                type="text"
+                class="input-text"
+                placeholder="搜索标题、卖家、地区..."
+                aria-label="搜索商品"
+                :disabled="!available || busy"
+                @keydown.enter.prevent="submitSearch"
+              />
+              <button
+                v-if="keywordInput"
+                type="button"
+                class="clear-btn"
+                aria-label="清除搜索"
+                title="清除"
+                @click="clearSearch"
+              >
+                <PhX :size="13" />
+              </button>
+            </div>
 
-          <label class="toolbar__select">
-            <span class="sr-only">排序方式</span>
-            <select class="input" :value="query.order" :disabled="!available" @change="onOrder">
-              <option v-for="option in PRODUCT_ORDER_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+            <!-- 明确为本页包邮筛选，不修改全库协议 -->
+            <select v-model="shipFilter" class="select-dropdown" aria-label="本页包邮筛选">
+              <option value="all">本页包邮筛选：全部</option>
+              <option value="free">本页仅包邮</option>
+              <option value="paid">本页仅不包邮</option>
             </select>
-          </label>
-          <span class="toolbar__spacer"></span>
-          <button type="button" class="btn btn--sm btn--icon" aria-label="刷新商品列表" :title="result.refreshing ? '刷新中…' : '刷新'" :disabled="!available || busy" @click="onRefreshProducts">
-            <PhArrowsClockwise :size="18" />
-          </button>
-          <button
-            type="button"
-            class="btn btn--sm"
-            :disabled="result.phase !== 'ready' || result.items.length === 0"
-            title="仅导出当前页已查询到的商品"
-            @click="exportCsv"
-          >
-            <PhDownloadSimple :size="18" /> 导出本页
-          </button>
-        </form>
 
-        <!-- 飞书写入选品操作条（只在自己发布的商品库勾选时展示，飞书商品已在表中严禁重复写入） -->
-        <section v-if="!isFeishuTab && selectedCount > 0" class="feishu-bar" aria-label="飞书写入选品操作">
-          <div class="feishu-bar__info">
-            <span class="feishu-bar__badge">
-              已勾选 <strong>{{ selectedCount }}</strong> / 200 件商品
-            </span>
-            <span v-if="feishuState.warningMessage" class="feishu-bar__warn" role="alert">
-              {{ feishuState.warningMessage }}
-            </span>
+            <select
+              class="select-dropdown"
+              :value="query.order"
+              :disabled="!available || busy"
+              aria-label="排序方式"
+              @change="onOrder"
+            >
+              <option v-for="option in PRODUCT_ORDER_OPTIONS" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+
+            <button
+              type="button"
+              class="btn btn--sm"
+              :disabled="!available || busy"
+              @click="resetFilters"
+            >
+              重置筛选
+            </button>
           </div>
-          <div class="feishu-bar__actions">
+
+          <div class="toolbar-right">
+            <span class="density-label">行距密度：</span>
+            <div class="density-switch" role="group" aria-label="表格行距密度">
+              <button
+                type="button"
+                class="density-btn"
+                :class="{ active: density === 'normal' }"
+                @click="density = 'normal'"
+              >
+                默认
+              </button>
+              <button
+                type="button"
+                class="density-btn"
+                :class="{ active: density === 'compact' }"
+                @click="density = 'compact'"
+              >
+                紧凑
+              </button>
+            </div>
+
             <button
               type="button"
-              class="btn btn--sm btn--ghost"
-              :disabled="!available || previewBusy || executeBusy"
-              @click="toggleSelectPage"
+              class="btn btn--sm btn--icon"
+              aria-label="刷新商品列表"
+              :title="result.refreshing ? '刷新中…' : '刷新'"
+              :disabled="!available || busy"
+              @click="onRefreshProducts"
             >
-              {{ isPageAllSelected ? '取消全选本页' : '全选本页' }}
+              <PhArrowsClockwise :size="15" :class="{ 'spin-icon': result.refreshing }" />
             </button>
+
             <button
               type="button"
-              class="btn btn--sm btn--ghost"
-              :disabled="!available || previewBusy || executeBusy"
-              @click="clearSelection"
+              class="btn btn--sm"
+              :disabled="result.phase !== 'ready' || displayItems.length === 0"
+              title="仅导出当前页已筛选到的商品"
+              @click="exportCsv"
             >
-              清空选择
+              <PhDownloadSimple :size="15" />
+              <span>导出本页</span>
             </button>
-            <button
-              type="button"
-              class="btn btn--sm btn--primary"
-              :disabled="!available || selectedCount === 0 || previewBusy || executeBusy"
-              @click="handlePreview"
-            >
-              <PhUploadSimple :size="18" /> {{ previewBusy ? '正在生成预览…' : '写入飞书' }}
-            </button>
-            <button v-if="feishuState.preview.phase !== 'idle' || feishuState.execute.phase !== 'idle'" type="button" class="btn btn--sm" @click="showWritePanel = true">查看写入结果</button>
+
+
           </div>
-        </section>
+        </div>
 
-        <!-- 飞书写入预览与确认区域 -->
-        <AppModal :open="showWritePanel" title="写入飞书商品表" wide :busy="previewBusy || executeBusy" @close="showWritePanel = false">
-          <section class="feishu-panel" aria-live="polite">
-            <!-- 预览加载中 -->
-            <div v-if="feishuState.preview.phase === 'loading'" class="feishu-loading">
-              <div class="skeleton__row" style="width: 60%"></div>
-              <p class="muted">正在读取飞书商品表配置、字段结构与已有记录，进行只读比对（绝不写入）…</p>
-            </div>
+        <!-- 选品与辅助状态提示 -->
 
-            <!-- 预览报错 -->
-            <div v-else-if="feishuState.preview.phase === 'error'" class="feishu-error">
-              <Callout tone="error" :view="feishuState.preview.error">
-                <template #actions>
-                  <button
-                    v-if="feishuState.isConfigMissing"
-                    type="button"
-                    class="btn btn--sm btn--primary"
-                    @click="navigateToSettings"
-                  >
-                    前往设置页配置飞书
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn--sm"
-                    :disabled="previewBusy"
-                    @click="handlePreview"
-                  >
-                    重试预览
-                  </button>
-                </template>
-              </Callout>
-            </div>
 
-            <!-- 预览成功：展示核对面板与显式确认区 -->
-            <div v-else-if="feishuState.preview.phase === 'ready' && previewResult" class="feishu-preview">
-              <div class="feishu-preview__header">
-                <div>
-                  <h3 class="feishu-preview__title">核对待写入商品</h3>
-                  <p class="feishu-preview__desc">
-                    目标商品表：<code>{{ previewResult.targetTableId }}</code>
-                    <span v-if="previewResult.previewId">
-                      · 预览 ID：<code>{{ previewResult.previewId }}</code>
-                    </span>
-                    <span v-if="feishuState.preview.previewedAt">
-                      · 预览于 {{ formatShortTime(feishuState.preview.previewedAt) }}
-                    </span>
-                  </p>
-                </div>
-                <div class="feishu-header-actions">
-                  <StatusTag v-if="!hasFieldIncompatibility && !isPreviewExpired" tone="ok">字段完全兼容</StatusTag>
-                  <StatusTag v-else-if="isPreviewExpired" tone="warn">预览已过期</StatusTag>
-                  <StatusTag v-else tone="error">字段不兼容</StatusTag>
-                  <button type="button" class="btn btn--sm" :disabled="previewBusy || executeBusy" @click="handlePreview"><PhArrowsClockwise :size="18" /> 重新生成预览</button>
-                </div>
-              </div>
+        <div v-if="exportNote" class="notice-bar">
+          <Callout tone="ok">{{ exportNote }}</Callout>
+        </div>
 
-              <!-- 预览已过期提示 -->
-              <div v-if="isPreviewExpired" class="feishu-preview__field-alert">
-                <Callout tone="warn" title="写入预览已过期">
-                  <template #default>
-                    本次预览已超过有效期限（5 分钟）。为了保证飞书目标表与去重数据绝对准确，<strong>已作废旧预览并禁止继续执行</strong>。请重新点击「重新生成预览」核对。
-                  </template>
-                  <template #actions>
-                    <button type="button" class="btn btn--sm btn--primary" :disabled="previewBusy" @click="handlePreview">
-                      重新生成预览
-                    </button>
-                  </template>
-                </Callout>
-              </div>
-
-              <!-- 字段不兼容警告：缺失字段 或 字段类型冲突（禁止自动创建修改字段） -->
-              <div v-if="hasFieldIncompatibility" class="feishu-preview__field-alert">
-                <Callout tone="error" title="飞书目标表字段不兼容（已禁止写入）">
-                  <template #default>
-                    <div class="field-issues">
-                      <div v-if="previewResult.missingFields.length > 0" class="field-issue">
-                        <strong>缺失必需字段：</strong>{{ previewResult.missingFields.join('、') }}
-                      </div>
-                      <div v-if="previewResult.typeConflicts.length > 0" class="field-issue">
-                        <strong>字段类型冲突：</strong>
-                        <ul class="conflict-list">
-                          <li v-for="conflict in previewResult.typeConflicts" :key="conflict.name">
-                            「{{ conflict.name }}」：期望类型为 <strong>{{ formatFeishuTypeName(conflict.expectedType) }}</strong>，飞书表中实际为 <strong>{{ formatFeishuTypeName(conflict.actualType) }}</strong>
-                          </li>
-                        </ul>
-                      </div>
-                      <p class="field-issue__notice">
-                        根据安全规范，<strong>系统严禁自动创建或修改飞书表格字段</strong>。请前往飞书多维表格手动调整或添加对应字段后重新生成预览。
-                      </p>
-                    </div>
-                  </template>
-                </Callout>
-              </div>
-
-              <!-- 数据比对栅格看板 -->
-              <div class="metric-grid">
-                <div class="metric-item">
-                  <span class="metric-label">勾选请求</span>
-                  <strong class="metric-value">{{ previewResult.requestedCount }}</strong>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-label">唯一有效</span>
-                  <strong class="metric-value">{{ previewResult.uniqueCount }}</strong>
-                  <small v-if="previewResult.duplicateItemIds.length > 0" class="metric-sub">
-                    去重 {{ previewResult.duplicateItemIds.length }}
-                  </small>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-label">飞书已有(跳过)</span>
-                  <strong class="metric-value">{{ previewResult.alreadyExistsItemIds.length }}</strong>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-label">本地缺失</span>
-                  <strong class="metric-value">{{ previewResult.missingItemIds.length }}</strong>
-                </div>
-                <div class="metric-item metric-item--accent">
-                  <span class="metric-label">待写入记录</span>
-                  <strong class="metric-value">{{ previewResult.toCreate.length }}</strong>
-                </div>
-              </div>
-
-              <!-- 待写入清单预览 -->
-              <div v-if="previewResult.toCreate.length > 0" class="preview-list-wrap">
-                <div class="preview-list-header">
-                  <span>待写入商品清单预览（共 {{ previewResult.toCreate.length }} 件）</span>
-                  <button
-                    v-if="previewResult.toCreate.length > 5"
-                    type="button"
-                    class="btn btn--sm btn--ghost"
-                    @click="showAllPreviewItems = !showAllPreviewItems"
-                  >
-                    {{ showAllPreviewItems ? '收起部分' : `展开全部 (${previewResult.toCreate.length})` }}
-                  </button>
-                </div>
-                <ul class="preview-list">
-                  <li
-                    v-for="item in showAllPreviewItems ? previewResult.toCreate : previewResult.toCreate.slice(0, 5)"
-                    :key="item.itemId"
-                    class="preview-list-item"
-                  >
-                    <div class="preview-list-item__main">
-                      <span class="preview-list-item__title">{{ item.title || '（无标题）' }}</span>
-                      <span class="preview-list-item__id">{{ item.itemId }}</span>
-                    </div>
-                    <div class="preview-list-item__meta">
-                      <span class="num">¥{{ item.price }}</span>
-                      <span class="muted">{{ item.wantCnt }} 想要</span>
-                    </div>
-                  </li>
-                </ul>
-              </div>
-
-              <!-- 待写入条数为 0 时的说明 -->
-              <div v-else class="feishu-empty-notice">
-                <Callout tone="info">
-                  选中的商品在飞书表中均已存在（按商品 ID、想要数、价格组合键比对），无需重复写入。
-                </Callout>
-              </div>
-
-              <!-- 显式确认与执行操作区 -->
-              <div class="feishu-confirm-box">
-                <div class="feishu-confirm-box__left">
-                  <label v-if="!hasFieldIncompatibility && !isPreviewExpired && previewResult.toCreate.length > 0" class="confirm-check">
-                    <input
-                      v-model="userConfirmed"
-                      type="checkbox"
-                      :disabled="executeBusy"
-                    />
-                    <span>我已核对上述待写入列表，确认向飞书商品表创建 <strong>{{ previewResult.toCreate.length }}</strong> 条记录</span>
-                  </label>
-                  <span v-else-if="isPreviewExpired" class="text-error">
-                    预览已过期，请重新点击上方「重新生成预览」。
-                  </span>
-                  <span v-else-if="hasFieldIncompatibility" class="text-error">
-                    字段不兼容或类型冲突，必须先在飞书表格中调整字段，无法执行写入。
-                  </span>
-                  <span v-else class="text-muted">
-                    当前无可写入记录。
-                  </span>
-                </div>
-                <div class="feishu-confirm-box__right">
-                  <button
-                    type="button"
-                    class="btn btn--primary"
-                    :disabled="!canExecute"
-                    @click="handleExecute"
-                  >
-                    <PhUploadSimple :size="18" />
-                    {{ executeBusy ? '正在写入飞书…' : `确认执行写入飞书 (${previewResult.toCreate.length})` }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- 执行成功报告 -->
-            <div v-if="feishuState.execute.phase === 'ready' && executeResult" class="feishu-result">
-              <Callout tone="ok" title="飞书写入成功（已禁止重放）">
-                <template #default>
-                  已在目标表（<code>{{ executeResult.targetTableId }}</code>）创建 <strong>{{ executeResult.createdCount }}</strong> 条商品记录。
-                  <span v-if="executeResult.alreadyExistsItemIds.length > 0">
-                    （跳过表中已有 {{ executeResult.alreadyExistsItemIds.length }} 条）
-                  </span>
-                </template>
-                <template #actions>
-                  <button type="button" class="btn btn--sm" @click="clearSelection">清空已选商品</button>
-                  <button type="button" class="btn btn--sm btn--ghost" @click="feishuController.resetExecute()">关闭提示</button>
-                </template>
-              </Callout>
-            </div>
-
-            <!-- 执行失败报告：突出实际风险、作废原预览与严禁自动重试 -->
-            <div v-if="feishuState.execute.phase === 'error'" class="feishu-result">
-              <Callout tone="error" :view="feishuState.execute.error">
-                <template #actions>
-                  <button
-                    v-if="feishuState.isConfigMissing"
-                    type="button"
-                    class="btn btn--sm btn--primary"
-                    @click="navigateToSettings"
-                  >
-                    前往设置页配置飞书
-                  </button>
-                  <button type="button" class="btn btn--sm btn--ghost" @click="feishuController.resetExecute()">
-                    关闭错误提示
-                  </button>
-                </template>
-              </Callout>
-              <div v-if="feishuState.execute.riskNotice" class="feishu-risk">
-                <Callout tone="warn" title="实际风险提示（严禁自动重试 · 本次预览已作废）">
-                  <template #default>
-                    {{ feishuState.execute.riskNotice }}
-                  </template>
-                </Callout>
-              </div>
-            </div>
-          </section>
-        </AppModal>
-
-        <!-- 导出说明提示 -->
-        <div v-if="exportNote" class="note"><Callout tone="ok">{{ exportNote }}</Callout></div>
-
-        <!-- 非致命详情补充告警/提示（warnings） -->
-        <div v-if="result.warnings && result.warnings.length > 0" class="note">
+        <div v-if="result.warnings && result.warnings.length > 0" class="notice-bar">
           <Callout tone="warn" title="商品详情提示">
             <template #default>
               <ul class="warning-list">
@@ -754,969 +475,932 @@ function formatProductDesc(desc: string): string {
           </Callout>
         </div>
 
-        <!-- 异常/加载/空状态呈现 -->
-        <div v-if="!available" class="blank">
+        <!-- 空态 / 错误 / 加载中完整状态分支 -->
+        <div v-if="!available" class="blank-container">
           <EmptyState mark="品" title="未连接扩展" description="商品数据由扩展运行时负责同步与管理，需要在扩展内页打开工作台才能读取。" />
         </div>
 
-        <!-- 未配置飞书引导（只在飞书 Tab 且明确检测到配置缺失时呈现） -->
-        <div v-else-if="isFeishuTab && state.isConfigMissing" class="blank">
+        <div v-else-if="isFeishuTab && state.isConfigMissing" class="blank-container">
           <Callout tone="error" title="飞书商品表尚未配置完整">
-            <template #default>
-              飞书多维表格数据源尚未配置完整（缺少 App ID、Secret、Spreadsheet Token 或商品表 Table ID），无法直接读取飞书采集的商品库。
-            </template>
+            <template #default>缺少飞书多维表格对应配置或授权凭据，无法查询采集数据。</template>
             <template #actions>
-              <button type="button" class="btn btn--primary" @click="navigateToSettings">前往设置页配置飞书</button>
+              <button type="button" class="btn btn--primary" @click="navigateToSettings">前往设置</button>
             </template>
           </Callout>
         </div>
 
-        <!-- 加载中状态骨架屏 -->
-        <div v-else-if="result.phase === 'idle' || result.phase === 'loading'" class="blank" role="status">
+        <div v-else-if="result.phase === 'idle' || result.phase === 'loading'" class="blank-container" role="status">
           <div class="skeleton" aria-hidden="true">
-            <span v-for="n in 5" :key="n" class="skeleton__row"></span>
+            <span v-for="n in 6" :key="n" class="skeleton__row"></span>
           </div>
-          <p class="muted">{{ isFeishuTab ? '正在读取飞书多维表格商品数据…' : '正在读取当前账号已发布商品…' }}</p>
+          <p class="muted">正在读取商品库数据…</p>
         </div>
 
-        <!-- 首次/全量查询失败（Phase 为 error，决不伪装成暂无商品） -->
-        <div v-else-if="result.phase === 'error'" class="blank">
+        <div v-else-if="result.phase === 'error'" class="blank-container">
           <Callout tone="error" :view="result.error">
             <template #actions>
               <button type="button" class="btn btn--sm btn--primary" :disabled="busy" @click="controller.refresh()">重试</button>
-              <button v-if="state.isConfigMissing" type="button" class="btn btn--sm" @click="navigateToSettings">前往设置页配置飞书</button>
+              <button v-if="state.isConfigMissing" type="button" class="btn btn--sm" @click="navigateToSettings">前往设置</button>
             </template>
           </Callout>
         </div>
 
-        <!-- 查询发生错误且暂无可用数据（决不能落入 EmptyState 伪装成暂无商品） -->
-        <div v-else-if="result.error && result.items.length === 0" class="blank">
-          <Callout tone="error" :view="result.error">
-            <template #actions>
-              <button type="button" class="btn btn--sm btn--primary" :disabled="busy" @click="controller.refresh()">重试</button>
-              <button v-if="state.isConfigMissing" type="button" class="btn btn--sm" @click="navigateToSettings">前往设置页配置飞书</button>
-            </template>
-          </Callout>
-        </div>
-
-        <!-- 真正的空状态（仅在查询成功无错但结果确实为空时展示） -->
-        <div v-else-if="result.items.length === 0" class="blank">
-          <!-- 搜索无结果 -->
+        <div v-else-if="displayItems.length === 0" class="blank-container">
           <EmptyState
-            v-if="result.queriedWith?.query.keyword"
-            mark="品"
-            :title="isFeishuTab ? '飞书商品表中没有符合条件的记录' : '没有符合条件的已发布商品'"
-            :description="isFeishuTab
-              ? `近两天没有采集关键字、标题或 ID 包含「${result.queriedWith.query.keyword}」的记录。`
-              : `当前账号已发布商品中没有标题或 ID 包含「${result.queriedWith.query.keyword}」的商品。`"
+            v-if="query.keyword || shipFilter !== 'all'"
+            mark="搜"
+            title="未找到匹配的商品"
+            :description="`当前筛选条件下未检索到任何商品，请尝试更换关键词或重置本页筛选。`"
           >
-            <button type="button" class="btn" @click="clearSearch">清除搜索</button>
+            <button type="button" class="btn" @click="resetFilters">重置筛选</button>
           </EmptyState>
-
-          <!-- 飞书 Tab 空态 -->
           <EmptyState
             v-else-if="isFeishuTab"
-            mark="飞"
-            title="飞书商品表暂无记录"
-            description="今天和昨天的每日表中暂无采集记录。您可在采集中心发起搜索采集，同步时会自动创建每日表。"
+            mark="采"
+            title="暂无采集商品记录"
+            description="飞书表格中暂无昨天和今天的采集结果。可先到采集中心创建采集任务或前往设置检查表格配置。"
           >
-            <button type="button" class="btn btn--primary" @click="emit('navigate', 'collect')">前往采集中心</button>
-            <button type="button" class="btn" @click="navigateToSettings">检查飞书配置</button>
+            <button type="button" class="btn btn--primary" @click="emit('navigate', 'collect')">去采集商品</button>
+            <button type="button" class="btn" @click="navigateToSettings">检查配置</button>
           </EmptyState>
-
-          <!-- 自己发布 Tab 空态 -->
           <EmptyState
             v-else
-            mark="品"
-            title="当前账号暂无发布商品"
-            description="本地商品目录仅收录当前登录账号已发布的商品。市场搜索采集的竞品不会冒充为已发布商品；您可在发布中心发布商品。"
+            mark="发"
+            title="暂无已发布商品"
+            description="当前闲鱼账号尚未同步到在售商品，可以从飞书采集表挑选商品并直接进入人工核对。"
           >
-            <button type="button" class="btn btn--primary" @click="emit('navigate', 'publish')">去发布商品</button>
+            <button type="button" class="btn btn--primary" @click="emit('navigate', 'publish')">去发布中心</button>
           </EmptyState>
         </div>
 
-        <!-- 正常商品列表展示 -->
+        <!-- 真实数据紧凑表格 -->
         <template v-else>
-          <!-- 已有数据时若刷新发生错误，以警告条清晰提示，保留旧数据不白屏，同时决不伪装成暂无商品 -->
-          <div v-if="result.error && result.phase === 'ready'" class="note">
+          <div v-if="result.error && result.phase === 'ready'" class="notice-bar">
             <Callout tone="warn" :view="result.error">
               <template #actions>
                 <button type="button" class="btn btn--sm btn--primary" :disabled="busy" @click="controller.refresh()">重试</button>
-                <button v-if="state.isConfigMissing" type="button" class="btn btn--sm" @click="navigateToSettings">前往设置</button>
+                <button v-if="state.isConfigMissing" type="button" class="btn btn--sm" @click="navigateToSettings">设置</button>
               </template>
             </Callout>
-            <p v-if="showingPrevious" class="note__text">下方仍是上一次成功查询的结果，与当前筛选条件不一定一致。</p>
+            <p v-if="showingPrevious" class="note__text">由于网络或查询异常，当前显示上一次加载成功的商品缓存。</p>
           </div>
 
-          <div class="table-wrap" tabindex="0" role="region" aria-label="商品列表，可横向滚动">
-            <table class="table">
+          <div class="table-responsive" tabindex="0" role="region" aria-label="商品列表，可横向滚动">
+            <table class="seline-table" :class="{ 'density-compact': density === 'compact' }" id="product-table">
               <caption class="sr-only">
-                商品列表，当前显示第 {{ paging.from }} 到 {{ paging.to }} 条
-                <template v-if="typeof result.total === 'number'">，共 {{ result.total }} 件</template>
+                <template v-if="typeof result.total === 'number'">商品列表，共 {{ result.total }} 件</template>
+                <template v-else>商品列表</template>
               </caption>
               <thead>
                 <tr>
-                  <!-- 飞书数据已在飞书多维表中，严禁提供重复写入操作；仅自己发布库展示勾选列 -->
-                  <th v-if="!isFeishuTab" scope="col" class="cell-check">
-                    <span class="sr-only">全选当前页</span>
+                  <th style="width: 40px; text-align: center;">
                     <input
                       type="checkbox"
+                      class="row-check"
+                      id="check-all"
+                      aria-label="全选本页商品"
                       :checked="isPageAllSelected"
                       :indeterminate="isPagePartialSelected"
-                      :disabled="!available || result.items.length === 0"
-                      aria-label="全选当前页商品"
                       @change="toggleSelectPage"
                     />
                   </th>
-                  <th scope="col" class="cell-title-head">商品</th>
-                  <th scope="col" class="cell-id-head">商品 ID</th>
-                  <th v-if="isFeishuTab" scope="col">关键字</th>
-                  <th scope="col" class="num">价格</th>
-                  <th scope="col" class="num">想要</th>
-                  <th scope="col" class="cell-seller-head">卖家</th>
-                  <th scope="col" class="cell-city-head">地区</th>
-                  <th scope="col">包邮</th>
-                  <th scope="col">采集时间</th>
-                  <th scope="col">链接</th>
-                  <th scope="col" class="cell-action">操作</th>
+                  <th style="width: 66px;">图片</th>
+                  <th>商品（itemId）</th>
+                  <!-- 后端无价格排序，严格展示为普通表头 -->
+                  <th>价格</th>
+                  <th class="sortable" title="点击按想要数排序" @click="toggleSort('wants')">
+                    想要数 <span class="sort-icon">↕</span>
+                  </th>
+                  <th>卖家</th>
+                  <th>地区</th>
+                  <th>包邮</th>
+                  <th class="sortable" title="点击按采集时间排序" @click="toggleSort('time')">
+                    采集时间 <span class="sort-icon">↕</span>
+                  </th>
+                  <th style="width: 140px; text-align: right;">操作</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="product-tbody">
                 <tr
-                  v-for="product in result.items"
-                  :key="product.recordId ? `${product.targetTableId || ''}:${product.recordId}` : product.itemId"
-                  :class="{ 'tr--selected': selectedSet.has(product.itemId) }"
+                  v-for="product in displayItems"
+                  :key="getRowKey(product)"
+                  :class="{ 'tr--selected': selectedKeys.has(getRowKey(product)) }"
                 >
-                  <td v-if="!isFeishuTab" class="cell-check">
+                  <td style="text-align: center;">
                     <input
                       type="checkbox"
-                      :checked="selectedSet.has(product.itemId)"
-                      :disabled="!available"
-                      :aria-label="`勾选商品 ${product.title || product.itemId}`"
-                      @change="toggleItemSelect(product.itemId)"
+                      class="row-check"
+                      aria-label="选择此行"
+                      :checked="selectedKeys.has(getRowKey(product))"
+                      @change="toggleItemSelect(product)"
                     />
                   </td>
-                  <td class="cell-title">
-                    <div class="product-summary">
+                  <td>
+                    <div class="product-thumb">
                       <img
                         v-if="product.coverUrl && !failedCovers.has(getCoverKey(product))"
-                        class="product-cover"
                         :src="product.coverUrl"
                         :alt="product.title || '商品图片'"
                         loading="lazy"
-                        referrerpolicy="no-referrer"
                         @error="hideFailedCover(product)"
                       />
-                      <span v-else class="product-cover product-cover--empty" aria-hidden="true">
-                        <PhImage :size="28" />
+                      <span v-else class="product-thumb-empty" aria-hidden="true">
+                        <PhImage :size="22" />
                       </span>
-                      <div class="product-copy">
-                        <div class="product-title" :title="product.title || '（无标题）'">
-                          {{ formatProductTitle(product.title) }}
-                        </div>
-                        <div
-                          class="product-desc"
-                          :class="{ 'product-desc--empty': !getProductDesc(product)?.trim() }"
-                          :title="getProductDesc(product)?.trim() || '暂无描述'"
-                        >
-                          {{ formatProductDesc(getProductDesc(product)) }}
-                        </div>
-                      </div>
                     </div>
                   </td>
-                  <td class="cell-id" :title="product.itemId || product.recordId || ''">
-                    <span class="id-text">
-                      <template v-if="product.itemId">{{ product.itemId }}</template>
-                      <template v-else-if="product.recordId">Record: {{ product.recordId }}</template>
-                      <template v-else>—</template>
+                  <td>
+                    <div class="product-info-wrap">
+                      <span class="product-name" :title="product.title || '（无标题）'">
+                        {{ formatProductTitle(product.title) }}
+                      </span>
+                      <span class="product-sku" :title="product.itemId || product.recordId || ''">
+                        <template v-if="product.itemId">itemId: {{ product.itemId }}</template>
+                        <template v-else-if="product.recordId">recordId: {{ product.recordId }}</template>
+                        <template v-else>无商品 ID</template>
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="product-price">{{ displayPrice(product) }}</span>
+                  </td>
+                  <td>
+                    <span v-if="typeof product.wantCnt === 'number' && product.wantCnt > 0">
+                      <strong>{{ product.wantCnt }}</strong> 人想要
                     </span>
+                    <span v-else class="text-muted">—</span>
                   </td>
-                  <td v-if="isFeishuTab" class="cell-ellipsis nowrap" :title="product.captureKeyword || ''">{{ product.captureKeyword || '未提供' }}</td>
-                  <td class="num">{{ displayPrice(product) }}</td>
-                  <td class="num">{{ product.wantCnt }}</td>
-                  <td class="cell-ellipsis cell-seller" :title="product.sellerNick || missingFieldHint(product, '卖家昵称')">
-                    {{ product.sellerNick || '未提供' }}
+                  <td class="cell-ellipsis" :title="product.sellerNick || missingFieldHint(product, '卖家昵称')">
+                    {{ product.sellerNick || '—' }}
                   </td>
-                  <td class="cell-ellipsis cell-city" :title="product.sellerCity || missingFieldHint(product, '地区')">
-                    {{ product.sellerCity || '未提供' }}
+                  <td class="cell-ellipsis" :title="product.sellerCity || missingFieldHint(product, '地区')">
+                    {{ product.sellerCity || '—' }}
                   </td>
                   <td>
-                    <StatusTag v-if="product.freeShip === '是'" tone="ok">包邮</StatusTag>
-                    <span v-else-if="product.freeShip === '否'" class="muted">否</span>
-                    <span v-else class="muted nowrap" :title="missingFieldHint(product, '包邮信息')">未提供</span>
+                    <span v-if="product.freeShip === '是'" class="pill pill-yellow">包邮</span>
+                    <span v-else-if="product.freeShip === '否'" class="pill">不包邮</span>
+                    <span v-else class="text-muted" :title="missingFieldHint(product, '包邮信息')">—</span>
                   </td>
-                  <td class="nowrap" :title="displayCaptureTime(product) || missingFieldHint(product, '采集时间')">{{ displayCaptureTime(product) || '未提供' }}</td>
-                  <td>
-                    <a
-                      v-if="productLink(product)"
-                      class="open"
-                      :aria-label="`打开商品 ${product.title || product.itemId}`"
-                      title="在新标签页打开商品"
-                      :href="productLink(product) ?? undefined"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <PhArrowSquareOut :size="18" />
-                    </a>
-                    <span v-else class="muted">无可用链接</span>
+                  <td class="nowrap" :title="displayCaptureTime(product) || missingFieldHint(product, '采集时间')">
+                    {{ displayCaptureTime(product) }}
                   </td>
-                  <td class="cell-action">
-                    <button
-                      type="button"
-                      class="btn btn--sm btn--primary publish-action-btn"
-                      title="前往发布中心并载入该商品进行编辑与发布"
-                      :aria-label="`发布商品 ${product.title || product.itemId}`"
-                      @click="onPublishRow(product)"
-                    >
-                      <PhPaperPlaneTilt :size="14" aria-hidden="true" />
-                      <span>发布</span>
-                    </button>
+                  <td style="text-align: right;">
+                    <div class="cell-actions-wrap">
+                      <a
+                        v-if="productLink(product)"
+                        :href="productLink(product)!"
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        class="action-btn"
+                        title="在新标签页查看闲鱼商品详情"
+                      >
+                        <PhArrowSquareOut :size="13" />
+                        <span>详情</span>
+                      </a>
+
+                      <button
+                        type="button"
+                        class="action-btn action-btn--brand"
+                        title="去发布中心编辑发布"
+                        @click="onPublishRow(product)"
+                      >
+                        发布
+                      </button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <nav class="pager" aria-label="商品库分页">
-            <span class="pager__total">
+          <!-- 分页器（明确全库 total 与本页筛选命中数量，不冒充过滤总数） -->
+          <div class="table-footer">
+            <div id="pagination-summary" class="pagination-summary">
               <template v-if="typeof result.total === 'number'">
-                共 {{ result.total }} 件商品
+                全库共 {{ result.total }} 件商品 · 当前第 {{ paging.page + 1 }} / {{ paging.totalPages }} 页
+                <span v-if="shipFilter !== 'all'" class="filter-count-badge">
+                  （本页筛选命中 {{ displayItems.length }} / {{ result.items.length }} 条）
+                </span>
+                <span v-else class="filter-count-badge">（本页共 {{ result.items.length }} 条）</span>
               </template>
               <template v-else>
-                第 {{ query.page + 1 }} 页
+                本页已加载 {{ result.items.length }} 条 · 第 {{ paging.page + 1 }} 页
+                <span v-if="shipFilter !== 'all'" class="filter-count-badge">
+                  （本页筛选命中 {{ displayItems.length }} 条）
+                </span>
               </template>
-            </span>
-            <label class="toolbar__size">
-              <span class="sr-only">每页数量</span>
-              <select class="input" :value="query.pageSize" :disabled="!available || busy" @change="onPageSize">
-                <option v-for="size in PRODUCT_PAGE_SIZES" :key="size" :value="size">每页 {{ size }} 条</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              class="btn btn--sm btn--icon"
-              aria-label="上一页"
-              title="上一页"
-              :disabled="busy || !state.canPrev"
-              @click="controller.prevPage()"
-            >
-              <PhCaretLeft :size="18" />
-            </button>
-            <span class="pager__info">
-              第 {{ query.page + 1 }} 页
-              <template v-if="typeof result.total === 'number' && Number.isFinite(result.total)">
-                / {{ Math.max(1, Math.ceil(result.total / query.pageSize)) }} 页
-              </template>
-            </span>
-            <button
-              type="button"
-              class="btn btn--sm btn--icon"
-              aria-label="下一页"
-              title="下一页"
-              :disabled="busy || !state.canNext"
-              @click="controller.nextPage()"
-            >
-              <PhCaretRight :size="18" />
-            </button>
-          </nav>
+            </div>
+
+            <div class="page-controls" id="pagination-pages">
+              <label class="page-size-wrap">
+                <span class="sr-only">每页条数</span>
+                <select
+                  class="select-dropdown-sm"
+                  :value="query.pageSize"
+                  :disabled="!available || busy"
+                  @change="onPageSize"
+                >
+                  <option v-for="size in PRODUCT_PAGE_SIZES" :key="size" :value="size">{{ size }} 条/页</option>
+                </select>
+              </label>
+
+              <button
+                type="button"
+                class="page-nav-btn"
+                aria-label="上一页"
+                title="上一页"
+                :disabled="!available || busy || !state.canPrev"
+                @click="controller.prevPage()"
+              >
+                <PhCaretLeft :size="14" />
+              </button>
+              <span class="page-current">{{ paging.page + 1 }}</span>
+              <button
+                type="button"
+                class="page-nav-btn"
+                aria-label="下一页"
+                title="下一页"
+                :disabled="!available || busy || !state.canNext"
+                @click="controller.nextPage()"
+              >
+                <PhCaretRight :size="14" />
+              </button>
+            </div>
+          </div>
         </template>
-      </div><!-- end of #panel-products -->
+      </div>
     </PanelCard>
   </div>
 </template>
 
 <style scoped>
-/* 双菜单 Tab 导航栏（无缝融入闲鱼黄设计系统） */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.status-banner,
+.feedback-banner,
+.notice-bar {
+  margin-bottom: 2px;
+}
+
+.feature-card {
+  background: var(--bg-card, #ffffff);
+  border: 1px solid var(--border-line, #ede8df);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* ============ 轻标题与 Tab 栏 ============ */
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-line, #ede8df);
+  background: var(--bg-card, #ffffff);
+  flex-wrap: wrap;
+}
+
+.view-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.view-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-main, #1c1a17);
+  letter-spacing: -0.01em;
+}
+
+.title-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--brand-yellow, #f5c400);
+  display: inline-block;
+}
+
+.view-sub {
+  font-size: 12px;
+  color: var(--text-muted, #948e85);
+}
+
 .tabs-nav {
   display: flex;
-  align-items: stretch;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 0 10px;
+  align-items: center;
   gap: 4px;
+  background: var(--bg-subtle, #faf8f5);
+  padding: 3px;
+  border-radius: 6px;
+  border: 1px solid var(--border-line, #ede8df);
 }
 
 .tab-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 18px;
-  font-size: 13.5px;
-  font-weight: 550;
-  color: var(--text-muted);
-  background: transparent;
+  gap: 6px;
+  padding: 5px 12px;
   border: none;
-  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary, #706b65);
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 4px;
   cursor: pointer;
-  position: relative;
-  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-  user-select: none;
+  transition: all 0.15s ease;
+  font-family: inherit;
 }
 
 .tab-btn:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--surface-sunken);
-}
-
-.tab-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  color: var(--text-main, #1c1a17);
+  background: rgba(0, 0, 0, 0.03);
 }
 
 .tab-btn--active {
-  color: var(--text);
-  font-weight: 650;
-  border-bottom-color: var(--accent);
-  background: var(--accent-soft, rgba(255, 218, 0, 0.08));
-}
-
-.tab-btn__icon {
-  flex-shrink: 0;
-}
-
-.tab-btn__text {
-  letter-spacing: -0.01em;
+  background: #ffffff !important;
+  color: var(--text-main, #1c1a17) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .tab-btn__badge {
-  display: inline-block;
-  padding: 1px 7px;
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-size: 11px;
+  padding: 1px 6px;
   border-radius: 10px;
-  background: var(--border);
-  color: var(--text-muted);
-  transition: background 0.15s ease, color 0.15s ease;
+  background: var(--bg-subtle, #faf8f5);
+  border: 1px solid var(--border-line, #ede8df);
+  color: var(--text-muted, #948e85);
+  font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
 .tab-btn--active .tab-btn__badge {
-  background: var(--accent);
-  color: #000000;
+  background: var(--brand-yellow-bg, #fff9e6);
+  border-color: rgba(245, 196, 0, 0.3);
+  color: var(--text-main, #1c1a17);
 }
 
 .tab-panel {
-  display: flex;
-  flex-direction: column;
-}
-
-.tab-panel:focus-visible {
   outline: none;
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
-}
-
-.toolbar__search {
-  flex: 1 1 220px;
-  max-width: 360px;
-}
-
-.toolbar__select {
-  flex: 0 0 170px;
-}
-
-.toolbar__size {
-  flex: 0 0 120px;
-}
-
-.toolbar__spacer {
-  flex: 1 1 0;
-}
-
-/* 飞书写入操作条 */
-.feishu-bar {
+/* ============ 工具栏 ============ */
+.toolbar-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-  padding: 10px 18px;
-  background: var(--surface-sunken);
-  border-bottom: 1px solid var(--border);
-}
-
-.feishu-bar__info {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-}
-
-.feishu-bar__badge {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.feishu-bar__warn {
-  font-size: 12px;
-  color: var(--warn);
-  font-weight: 600;
-}
-
-.feishu-bar__actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* 飞书写入预览面板 */
-.feishu-panel {
-  padding: 0;
-  background: var(--surface);
-  display: grid;
   gap: 12px;
-}
-
-.feishu-loading {
-  padding: 10px 0;
-}
-
-.feishu-error {
-  margin: 4px 0;
-}
-
-.feishu-preview {
-  display: grid;
-  gap: 12px;
-}
-
-.feishu-preview__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-line, #ede8df);
+  background: var(--bg-card, #ffffff);
   flex-wrap: wrap;
-  gap: 8px;
 }
 
-.feishu-header-actions {
+.toolbar-left,
+.toolbar-right {
   display: flex;
   align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 8px;
 }
 
-.feishu-preview__title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 650;
-  color: var(--text);
+.search-input-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 
-.feishu-preview__desc {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--text-muted);
+.search-lens {
+  position: absolute;
+  left: 8px;
+  color: var(--text-muted, #948e85);
+  pointer-events: none;
 }
 
-.feishu-preview__field-alert {
-  margin: 2px 0;
+.input-text {
+  height: 30px;
+  padding: 0 26px 0 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border-line, #ede8df);
+  background: var(--bg-card, #ffffff);
+  color: var(--text-main, #1c1a17);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.15s ease;
+  width: 210px;
+  font-family: inherit;
 }
 
-.field-issues {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
+.input-text:focus {
+  border-color: var(--brand-yellow, #f5c400);
+  box-shadow: 0 0 0 2px var(--brand-yellow-bg, #fff9e6);
 }
 
-.field-issue {
-  overflow-wrap: anywhere;
-}
-
-.conflict-list {
-  margin: 4px 0 0 16px;
-  padding: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.field-issue__notice {
-  margin: 4px 0 0;
-  font-size: 12px;
-}
-
-/* 栅格看板 */
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 8px;
-}
-
-.metric-item {
+.clear-btn {
+  position: absolute;
+  right: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #948e85);
+  cursor: pointer;
+  padding: 2px;
   display: flex;
-  flex-direction: column;
-  padding: 8px 12px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  align-items: center;
 }
 
-.metric-item--accent {
-  background: var(--accent-soft);
-  border-color: var(--accent);
+.clear-btn:hover {
+  color: var(--text-main, #1c1a17);
 }
 
-.metric-label {
+.select-dropdown {
+  height: 30px;
+  padding: 0 24px 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-line, #ede8df);
+  background-color: var(--bg-card, #ffffff);
+  color: var(--text-main, #1c1a17);
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted, #948e85) 50%),
+    linear-gradient(135deg, var(--text-muted, #948e85) 50%, transparent 50%);
+  background-position: calc(100% - 13px) center, calc(100% - 8px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  transition: border-color 0.15s ease;
+  font-family: inherit;
+}
+
+.select-dropdown:focus {
+  border-color: var(--brand-yellow, #f5c400);
+  box-shadow: 0 0 0 2px var(--brand-yellow-bg, #fff9e6);
+}
+
+.select-dropdown-sm {
+  height: 24px;
+  padding: 0 18px 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-line, #ede8df);
+  background: var(--bg-card, #ffffff);
+  color: var(--text-main, #1c1a17);
   font-size: 11.5px;
-  color: var(--text-muted);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted, #948e85) 50%),
+    linear-gradient(135deg, var(--text-muted, #948e85) 50%, transparent 50%);
+  background-position: calc(100% - 10px) center, calc(100% - 6px) center;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
 }
 
-.metric-value {
-  font-size: 17px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  color: var(--text);
-  margin-top: 2px;
-}
-
-.metric-sub {
-  font-size: 10.5px;
-  color: var(--warn);
-  margin-top: 2px;
-}
-
-/* 清单预览 */
-.preview-list-wrap {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface-sunken);
-  overflow: hidden;
-}
-
-.preview-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
+.density-label {
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
+  color: var(--text-muted, #948e85);
 }
 
-.preview-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.preview-list-item {
-  display: flex;
+.density-switch {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 12px;
-  font-size: 12px;
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle, #faf8f5);
+  border: 1px solid var(--border-line, #ede8df);
+  border-radius: 6px;
+  padding: 2px;
 }
 
-.preview-list-item:last-child {
-  border-bottom: none;
+.density-btn {
+  border: none;
+  background: transparent;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary, #706b65);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.preview-list-item__main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.preview-list-item__title {
-  display: block;
+.density-btn.active {
+  background: #ffffff;
+  color: var(--text-main, #1c1a17);
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
-.preview-list-item__id {
-  display: block;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-muted);
+.btn-brand {
+  background: var(--brand-yellow, #f5c400) !important;
+  color: #1c1a17 !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  font-weight: 600 !important;
+  cursor: pointer;
 }
 
-.preview-list-item__meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 0 0 auto;
-  text-align: right;
+.btn-brand:hover:not(:disabled) {
+  filter: brightness(0.96);
 }
 
-.feishu-empty-notice {
-  margin: 4px 0;
+.btn-brand:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-/* 确认执行区 */
-.feishu-confirm-box {
+/* ============ 选品提示条 ============ */
+.selection-status-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-  padding: 10px 14px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
+  padding: 6px 16px;
+  background: var(--brand-yellow-bg, #fff9e6);
+  border-bottom: 1px solid rgba(245, 196, 0, 0.25);
+  font-size: 12px;
 }
 
-.confirm-check {
+.brand-text {
+  color: var(--text-main, #1c1a17);
+  font-weight: 600;
+}
+
+.selection-quick-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  cursor: pointer;
-  user-select: none;
 }
 
-.confirm-check input[type="checkbox"] {
-  cursor: pointer;
-  accent-color: var(--accent);
-}
-
-.feishu-result {
-  margin: 6px 0;
-}
-
-.feishu-risk {
-  margin-top: 8px;
-}
-
-.note {
-  display: grid;
-  gap: 6px;
-  padding: 10px 18px 0;
-}
-
-.note__text {
+.action-link {
+  border: none;
+  background: transparent;
+  color: var(--text-main, #1c1a17);
   font-size: 12px;
-  color: var(--text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
 }
 
-.warning-list {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 12.5px;
+.action-link:hover {
+  color: #000000;
 }
 
-.blank {
-  padding: 16px 18px 24px;
+.sep-dot {
+  color: var(--text-muted, #948e85);
 }
 
-.muted {
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
-.text-muted {
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
-.text-error {
-  font-size: 12.5px;
-  color: var(--error);
-  font-weight: 600;
-}
-
-.skeleton {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.skeleton__row {
-  height: 34px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface-sunken);
-}
-
-.table-wrap {
-  overflow-x: auto;
-  border-top: 1px solid var(--border);
-}
-
-.table-wrap:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
-}
-
-.table {
+/* ============ 表格与行高规范 ============ */
+.table-responsive {
   width: 100%;
-  min-width: 980px;
+  overflow-x: auto;
+}
+
+.seline-table {
+  width: 100%;
   border-collapse: collapse;
-}
-
-.table th {
-  padding: 10px 14px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12.5px;
   text-align: left;
+}
+
+/* 紧凑表格头约 34px */
+.seline-table th {
+  background: var(--bg-subtle, #faf8f5);
+  color: var(--text-secondary, #706b65);
+  font-weight: 500;
+  padding: 6px 12px;
+  height: 34px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border-line, #ede8df);
   white-space: nowrap;
-  color: var(--text-muted);
-  background: var(--surface-sunken);
-  border-bottom: 1px solid var(--border);
+  user-select: none;
+  font-size: 12px;
 }
 
-/* 统一行高 112px，列垂直居中；padding 上下为 0，防止 80px + 32px padding + 1px border 撑大至 113px */
-.table tr {
-  height: 112px;
+.seline-table th.sortable {
+  cursor: pointer;
 }
 
-.table td {
-  padding: 0 14px;
+.seline-table th.sortable:hover {
+  color: var(--text-main, #1c1a17);
+  background: var(--bg-hover, #f2efe9);
+}
+
+.sort-icon {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* 默认模式：行高 64-72px */
+.seline-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-line, #ede8df);
+  color: var(--text-main, #1c1a17);
   vertical-align: middle;
-  font-size: 13px;
-  border-bottom: 1px solid var(--border);
-  height: 112px;
-  max-height: 112px;
+  transition: background 0.1s ease;
   box-sizing: border-box;
 }
 
-.cell-check {
-  width: 44px;
-  text-align: center;
-  vertical-align: middle !important;
-  padding: 0 8px !important;
-}
-
-.cell-check input[type="checkbox"] {
-  cursor: pointer;
-  width: 15px;
-  height: 15px;
-  accent-color: var(--accent);
-}
-
-.cell-action {
-  width: 80px;
-  text-align: center;
-  vertical-align: middle !important;
-  padding: 0 12px !important;
-  white-space: nowrap;
-}
-
-.publish-action-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
+.seline-table tr:hover td {
+  background: var(--bg-subtle, #faf8f5);
 }
 
 .tr--selected td {
-  background: var(--accent-soft);
+  background: rgba(245, 196, 0, 0.06) !important;
 }
 
-.num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+/* 紧凑模式：行高 52-58px */
+.seline-table.density-compact th {
+  height: 28px;
+  padding: 4px 10px;
+  font-size: 11.5px;
 }
 
-/* 商品摘要与主图（80x80，坏图/缺图等尺寸占位） */
-.cell-title-head {
-  min-width: 300px;
+.seline-table.density-compact td {
+  padding: 4px 10px;
+  font-size: 11.5px;
 }
 
-.cell-title {
-  min-width: 300px;
-  max-width: 420px;
+.seline-table.density-compact .product-thumb {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
 }
 
-.product-summary {
+.row-check {
+  cursor: pointer;
+  accent-color: var(--brand-yellow, #f5c400);
+}
+
+/* ============ 商品图片 48px ============ */
+.product-thumb {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  border-radius: 6px;
+  border: 1px solid var(--border-line, #ede8df);
+  background: var(--bg-subtle, #faf8f5);
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  overflow: hidden;
 }
 
-.product-cover {
-  width: 80px;
-  height: 80px;
-  flex: 0 0 80px;
-  min-width: 80px;
+.product-thumb img {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  border-radius: 6px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  box-sizing: border-box;
+  display: block;
 }
 
-.product-cover--empty {
-  display: grid;
-  place-items: center;
-  color: var(--text-muted);
-  width: 80px;
-  height: 80px;
-  flex: 0 0 80px;
-  min-width: 80px;
-  border-radius: 6px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  box-sizing: border-box;
+.product-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #948e85);
 }
 
-.product-copy {
-  min-width: 0;
-  flex: 1 1 auto;
+/* ============ 商品信息与防撑高 ============ */
+.product-info-wrap {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  gap: 2px;
+  max-width: 320px;
 }
 
-/* 标题最多 40 字两行，悬停完整内容 */
-.product-title {
+.product-name {
+  font-size: 13px;
+  color: var(--text-main, #1c1a17);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.product-sku {
+  font-size: 11px;
+  color: var(--text-muted, #948e85);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
+.product-price {
   font-size: 13px;
   font-weight: 600;
-  line-height: 1.35;
-  color: var(--text);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-}
-
-/* 描述最多 80 字两行，悬停完整内容 */
-.product-desc {
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--text-muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-  margin-top: 4px;
-}
-
-.product-desc--empty {
-  color: var(--text-muted);
-  opacity: 0.65;
-}
-
-/* 商品 ID 独立列 */
-.cell-id-head {
-  min-width: 140px;
-  max-width: 180px;
-}
-
-.cell-id {
-  min-width: 140px;
-  max-width: 180px;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--text-muted);
-}
-
-.id-text {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--text-main, #1c1a17);
   white-space: nowrap;
 }
 
-/* 卖家昵称 / 地区单行省略 */
 .cell-ellipsis {
+  max-width: 140px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.cell-seller-head {
-  max-width: 120px;
-}
-
-.cell-seller {
-  max-width: 120px;
-}
-
-.cell-city-head {
-  max-width: 100px;
-}
-
-.cell-city {
-  max-width: 100px;
 }
 
 .nowrap {
   white-space: nowrap;
 }
 
-.open {
+/* ============ 药丸标签 ============ */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-subtle, #faf8f5);
+  border: 1px solid var(--border-line, #ede8df);
+  color: var(--text-secondary, #706b65);
+  white-space: nowrap;
+}
+
+.pill-yellow {
+  background: var(--brand-yellow-bg, #fff9e6);
+  border-color: rgba(245, 196, 0, 0.4);
+  color: #8c6d00;
+}
+
+/* ============ 行内操作按钮 ============ */
+.cell-actions-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.action-btn {
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-line, #ede8df);
+  background: var(--bg-card, #ffffff);
+  color: var(--text-secondary, #706b65);
+  font-size: 11.5px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.12s ease;
+  font-family: inherit;
+}
+
+.action-btn:hover {
+  color: var(--text-main, #1c1a17);
+  background: var(--bg-hover, #f2efe9);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+.action-btn--brand {
+  background: var(--brand-yellow-bg, #fff9e6);
+  border-color: rgba(245, 196, 0, 0.4);
+  color: #735900;
+  font-weight: 500;
+}
+
+.action-btn--brand:hover {
+  background: var(--brand-yellow, #f5c400);
+  color: #1c1a17;
+}
+
+/* ============ 分页底栏 ============ */
+.table-footer {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-line, #ede8df);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-card, #ffffff);
+  font-size: 12px;
+  color: var(--text-muted, #948e85);
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pagination-summary {
+  font-size: 12px;
+}
+
+.filter-count-badge {
+  color: var(--text-secondary, #706b65);
+  font-size: 11.5px;
+}
+
+.page-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-size-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.page-nav-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--border-line, #ede8df);
+  background: var(--bg-card, #ffffff);
+  color: var(--text-main, #1c1a17);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 32px;
-  min-height: 32px;
-  border-radius: 6px;
-  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
 }
 
-.open:hover {
-  background: var(--surface-sunken);
-  color: var(--text);
+.page-nav-btn:hover:not(:disabled) {
+  background: var(--bg-subtle, #faf8f5);
+  border-color: rgba(0, 0, 0, 0.15);
 }
 
-.open:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+.page-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
-.pager {
+.page-current {
+  min-width: 20px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--text-main, #1c1a17);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ============ 空白态与骨架屏 ============ */
+.blank-container {
+  padding: 48px 16px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 14px;
-  padding: 12px 18px;
+  justify-content: center;
+  text-align: center;
 }
 
-.pager__total {
-  margin-right: auto;
-  font-size: 12.5px;
-  color: var(--text-muted);
+.skeleton {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
-.pager__info {
-  font-size: 12.5px;
-  color: var(--text-muted);
+.skeleton__row {
+  height: 16px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #ede8df 25%, #f7f5f0 37%, #ede8df 63%);
+  background-size: 400% 100%;
+  animation: skeleton-glow 1.4s ease infinite;
 }
 
-@media (max-width: 599px) {
-  .toolbar {
-    padding: 12px;
+@keyframes skeleton-glow {
+  0% {
+    background-position: 100% 50%;
   }
+  100% {
+    background-position: 0 50%;
+  }
+}
 
-  .toolbar__search,
-  .toolbar__select,
-  .toolbar__size {
-    flex: 1 1 100%;
-    max-width: none;
-  }
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
 
-  .feishu-bar,
-  .feishu-confirm-box {
-    flex-direction: column;
-    align-items: flex-start;
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
   }
+  to {
+    transform: rotate(360deg);
+  }
+}
 
-  .feishu-bar__actions,
-  .feishu-confirm-box__right {
-    width: 100%;
-    justify-content: flex-start;
-  }
+.text-muted {
+  color: var(--text-muted, #948e85);
+}
+
+.warning-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.note__text {
+  font-size: 12px;
+  color: var(--text-muted, #948e85);
+  margin: 4px 0 0;
 }
 </style>

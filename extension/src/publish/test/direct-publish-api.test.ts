@@ -25,6 +25,7 @@ import {
   type DirectPublishTabsApi,
 } from '../../background/direct-publish-api'
 import type { DirectPublishPageRequest, DirectPublishPageResult } from '../../background/direct-publish-page'
+import { isCommandEnvelope } from '@fishops/shared'
 
 // ==================== 测试夹具 ====================
 
@@ -506,6 +507,7 @@ test('getJob：可查询审计记录', async () => {
 
 function installCapture(options: { createApi?: () => DirectPublishApi | null } = {}): {
   listener: (message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean
+  listeners: Array<(message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean>
 } {
   const listeners: Array<(message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean> = []
   const chromeMock = {
@@ -517,7 +519,7 @@ function installCapture(options: { createApi?: () => DirectPublishApi | null } =
   ;(globalThis as { chrome?: unknown }).chrome = chromeMock
   __resetDirectPublishListenerForTests()
   installDirectPublishApiListener(options)
-  return { listener: listeners[0]! }
+  return { listener: listeners[0]!, listeners }
 }
 
 function invokeListener(
@@ -611,6 +613,40 @@ test('监听器：接受扩展内页 getProduct 并返回最小商品', async ()
     assert.equal(payload.ok, true)
     assert.equal(payload.result?.status, 'ok')
     assert.equal(payload.result?.product?.price, '34')
+  } finally {
+    delete (globalThis as { chrome?: unknown }).chrome
+  }
+})
+
+test('真实多监听器链：Workbench envelope 不匹配时 getJob listener 异步响应账本', async () => {
+  const harness = setup(successPage())
+  await harness.api.publish(itemInput())
+  const { listeners } = installCapture({ createApi: () => harness.api })
+  const unrelatedResponses: unknown[] = []
+  const workbenchListener = (message: unknown, _sender: unknown, sendResponse: (response: unknown) => void) => {
+    if (!isCommandEnvelope(message)) return false
+    sendResponse({ kind: 'response', protocol: 1 })
+    return true
+  }
+  listeners.unshift(workbenchListener)
+  try {
+    const { returned, response } = invokeListener(
+      listeners[1]!,
+      { kind: 'fishops-direct-publish', method: 'getJob', request: {} },
+      { id: 'ext-id', url: 'chrome-extension://ext-id/workbench.html' },
+    )
+    assert.equal(returned, true)
+    const workbenchReturned = listeners[0]!({ kind: 'fishops-direct-publish', method: 'getJob', request: {} }, { id: 'ext-id', url: 'chrome-extension://ext-id/workbench.html' }, (value) => unrelatedResponses.push(value))
+    assert.equal(workbenchReturned, false)
+    assert.equal(unrelatedResponses.length, 0)
+    const payload = (await response) as { kind: string; method: string; ok: boolean; result?: { ok: boolean; jobs: Array<{ status: string; itemId?: string }> } }
+    assert.equal(payload.kind, 'fishops-direct-publish')
+    assert.equal(payload.method, 'getJob')
+    assert.equal(payload.ok, true)
+    assert.equal(payload.result?.ok, true)
+    assert.equal(payload.result?.jobs.length, 1)
+    assert.equal(payload.result?.jobs[0]?.status, 'published')
+    assert.equal(payload.result?.jobs[0]?.itemId, '1087978938358')
   } finally {
     delete (globalThis as { chrome?: unknown }).chrome
   }

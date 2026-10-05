@@ -32,7 +32,7 @@ function onKeydown(event: KeyboardEvent): void {
   }
   if (event.key !== 'Tab' || !panelRef.value) return
 
-  // 简单焦点陷阱：Tab 在抽屉内首尾循环。
+  // 焦点陷阱：Tab 在抽屉内首尾循环。
   const focusables = Array.from(
     panelRef.value.querySelectorAll<HTMLElement>(
       'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
@@ -52,10 +52,6 @@ function onKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <!--
-    用 v-show 而非 v-if：BridgeDemo 的订阅、日志和 PING 状态在抽屉关闭后仍需保留，
-    顶部栏的环境状态也依赖它持续运行。
-  -->
   <Transition name="drawer">
     <div v-show="open" class="drawer" @keydown="onKeydown">
       <div class="drawer__scrim" @click="emit('close')"></div>
@@ -67,11 +63,20 @@ function onKeydown(event: KeyboardEvent): void {
         aria-labelledby="diagnostics-title"
       >
         <header class="drawer__head">
-          <div>
+          <div class="drawer__title-wrap">
             <h2 id="diagnostics-title" class="drawer__title">系统状态与开发诊断</h2>
-            <p class="drawer__desc">验证 Workbench 与扩展 background 之间的 Bridge 链路。</p>
+            <p class="drawer__desc">验证 Workbench 与扩展 background 之间的 Bridge 链路</p>
           </div>
-          <button ref="closeRef" type="button" class="btn btn--ghost btn--icon" aria-label="关闭诊断" title="关闭" @click="emit('close')"><PhX :size="20" /></button>
+          <button
+            ref="closeRef"
+            type="button"
+            class="btn btn-icon-only btn--ghost"
+            aria-label="关闭诊断"
+            title="关闭"
+            @click="emit('close')"
+          >
+            <PhX :size="18" aria-hidden="true" />
+          </button>
         </header>
         <div class="drawer__body">
           <slot />
@@ -85,13 +90,14 @@ function onKeydown(event: KeyboardEvent): void {
 .drawer {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 60;
 }
 
 .drawer__scrim {
   position: absolute;
   inset: 0;
   background: var(--scrim);
+  backdrop-filter: blur(2px);
 }
 
 .drawer__panel {
@@ -102,29 +108,36 @@ function onKeydown(event: KeyboardEvent): void {
   display: flex;
   flex-direction: column;
   width: min(580px, 100%);
-  background: var(--bg);
-  border-left: 1px solid var(--border);
+  background: var(--bg-canvas);
+  border-left: 1px solid var(--border-line);
   box-shadow: var(--shadow-drawer);
 }
 
 .drawer__head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 20px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-line);
+  background: var(--bg-card);
+}
+
+.drawer__title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .drawer__title {
-  font-size: 16px;
-  font-weight: 650;
+  font-size: 14.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text-main);
 }
 
 .drawer__desc {
-  margin-top: 2px;
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--text-muted);
 }
 
@@ -132,7 +145,7 @@ function onKeydown(event: KeyboardEvent): void {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 20px 28px;
+  padding: 16px 18px 28px;
 }
 
 .drawer-enter-active,
@@ -142,7 +155,7 @@ function onKeydown(event: KeyboardEvent): void {
 
 .drawer-enter-active .drawer__panel,
 .drawer-leave-active .drawer__panel {
-  transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .drawer-enter-from,
@@ -152,6 +165,6 @@ function onKeydown(event: KeyboardEvent): void {
 
 .drawer-enter-from .drawer__panel,
 .drawer-leave-to .drawer__panel {
-  transform: translateX(32px);
+  transform: translateX(36px);
 }
 </style>

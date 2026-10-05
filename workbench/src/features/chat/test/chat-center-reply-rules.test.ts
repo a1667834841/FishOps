@@ -54,3 +54,26 @@ test('聊天中心把释放的标签栏空间让给消息区', () => {
   assert.ok(!body.includes('220px'), '.chat 高度不再保留含标签栏的 220px 偏移')
   assert.ok(body.includes('180px'), '.chat 高度需减去标签栏及其间距占位，把空间让给消息')
 })
+
+test('Socket 状态使用标题旁紧凑小点，不单占一行且不带 pulse 动画', () => {
+  assert.ok(pageSource.includes('id="socket-status-dot"'), '会话卡片头部必须渲染 id="socket-status-dot"')
+  assert.ok(pageSource.includes('class="status-dot-compact"'), '必须使用 status-dot-compact 紧凑小点类')
+  assert.ok(pageSource.includes(':title='), '必须配置 title 提供可访问语义')
+  assert.ok(pageSource.includes(':aria-label='), '必须配置 aria-label 提供屏幕阅读器支持')
+
+  const css = styleBlock(pageSource)
+  assert.ok(!css.includes('pulse'), '禁止使用 pulse 装饰动画')
+  assert.ok(css.includes('.status-dot-compact'), '必须包含 status-dot-compact 紧凑小点样式')
+})
+
+test('聊天中心忠实 Seline 暖纸白卡细线轻字重黄色，不包含 HTML 假数据与平均响应', () => {
+  assert.ok(!pageSource.includes('摄影小陈'), '严禁复制 HTML 原型中写死的买家假数据')
+  assert.ok(!pageSource.includes('Sony A7M4'), '严禁复制 HTML 原型中写死的商品假数据')
+  assert.ok(!pageSource.includes('平均响应'), '严禁展示或造假平均响应时长')
+
+  const composerSource = readFileSync(resolve(here, '../../../components/chat/ReplyComposer.vue'), 'utf8')
+  assert.ok(composerSource.includes('reply-suggest-btn'), '回复区必须包含 Seline 风格建议按钮')
+  assert.ok(composerSource.includes('suggestion-filled-badge'), '回复区必须包含建议已填入标记')
+  assert.ok(composerSource.includes('textareaRef.value?.focus()'), '回填建议必须自动聚焦输入框')
+  assert.ok(composerSource.includes("manualText.value = ''"), '切换会话与发送成功必须清理草稿')
+})

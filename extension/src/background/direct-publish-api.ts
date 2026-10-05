@@ -46,14 +46,14 @@ import type {
 export const DIRECT_PUBLISH_MESSAGE_KIND = 'fishops-direct-publish'
 
 /** 监听器支持的方法。 */
-export type DirectPublishMessageMethod = 'publish' | 'prepare' | 'submit' | 'getProduct' | 'uploadImage'
+export type DirectPublishMessageMethod = 'publish' | 'prepare' | 'submit' | 'getProduct' | 'uploadImage' | 'getJob'
 
 /** 扩展内页发来的请求消息。 */
 export interface DirectPublishMessage {
   kind: typeof DIRECT_PUBLISH_MESSAGE_KIND
   method: DirectPublishMessageMethod
   /** publish/
-   * prepare/submit：对应请求体；getProduct：`{ itemId }`。 */
+   * prepare/submit：对应请求体；getProduct：`{ itemId }`；getJob：可选 `{ jobId }`。 */
   request: unknown
 }
 
@@ -62,7 +62,7 @@ export interface DirectPublishMessageResponse {
   kind: typeof DIRECT_PUBLISH_MESSAGE_KIND
   method: DirectPublishMessageMethod
   ok: boolean
-  result?: DirectPublishResult | DirectPublishPreparedResult | DirectPublishSubmitResult | DirectProductResult | DirectUploadImageResult
+  result?: DirectPublishResult | DirectPublishPreparedResult | DirectPublishSubmitResult | DirectProductResult | DirectUploadImageResult | DirectPublishJobResult
   error?: { code: string; message: string }
 }
 
@@ -2270,8 +2270,12 @@ export function isDirectPublishMessage(message: unknown): message is DirectPubli
   if (!isRecord(message)) return false
   if (message['kind'] !== DIRECT_PUBLISH_MESSAGE_KIND) return false
   const method = message['method']
-  if (method !== 'publish' && method !== 'prepare' && method !== 'submit' && method !== 'getProduct' && method !== 'uploadImage') return false
+  if (method !== 'publish' && method !== 'prepare' && method !== 'submit' && method !== 'getProduct' && method !== 'uploadImage' && method !== 'getJob') return false
   if (!isRecord(message['request'])) return false
+  if (method === 'getJob') {
+    const jobId = message['request']['jobId']
+    return jobId === undefined || typeof jobId === 'string'
+  }
   if (method === 'uploadImage') {
     const dataUrl = message['request']['dataUrl']
     return typeof dataUrl === 'string' && dataUrl.startsWith('data:') && dataUrl.length <= 14_000_000
@@ -2370,6 +2374,14 @@ async function handleDirectPublishMessage(
       const itemId = (message.request as { itemId?: string | number })?.itemId ?? ''
       const result = await api.getProduct(itemId)
       return respond({ ok: result.status === 'ok', result })
+    }
+    if (message.method === 'getJob') {
+      if (typeof api.getJob !== 'function') {
+        return respond({ ok: false, error: { code: 'METHOD_UNAVAILABLE', message: '当前 API 不支持 getJob' } })
+      }
+      const jobId = (message.request as { jobId?: string }).jobId
+      const result = await api.getJob(jobId)
+      return respond({ ok: result.ok, result })
     }
     if (typeof api.uploadImage !== 'function') {
       return respond({ ok: false, error: { code: 'METHOD_UNAVAILABLE', message: '当前 API 不支持 uploadImage' } })

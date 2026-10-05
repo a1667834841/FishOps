@@ -19,6 +19,15 @@ import type {
   DirectPublishSubmitResult,
 } from './direct-publish-types'
 
+export interface DirectPublishJob {
+  idempotencyKey: string
+  status: string
+  itemId?: string
+  at: string
+  code?: string
+  actionRequired?: string
+}
+
 export interface DirectPublishProductResult {
   status: 'ok' | 'action_required' | 'rejected' | 'unknown'
   itemId: string
@@ -43,9 +52,14 @@ export const DIRECT_PUBLISH_MESSAGE_KIND = 'fishops-direct-publish'
 export const DEFAULT_DIRECT_PUBLISH_TIMEOUT_MS = 300000
 
 export interface DirectPublishClientDeps {
-  /** 允许外部注入 sendMessage（便于纯 Node 单测）。 */
-  sendMessage?: (message: unknown) => Promise<unknown>
+  /** 允许外部注入 Promise 或 Chrome callback 风格的 sendMessage（便于纯 Node 单测）。 */
+  sendMessage?: (message: unknown, callback?: (response: unknown) => void) => Promise<unknown> | void
   timeoutMs?: number
+}
+
+interface ChromeRuntimeLike {
+  lastError?: { message?: string }
+  sendMessage(message: unknown, callback: (response: unknown) => void): void
 }
 
 interface BackgroundResponse<T> {
@@ -57,7 +71,7 @@ interface BackgroundResponse<T> {
 }
 
 export class DirectPublishClient {
-  private readonly injectedSendMessage?: (message: unknown) => Promise<unknown>
+  private readonly injectedSendMessage?: (message: unknown, callback?: (response: unknown) => void) => Promise<unknown> | void
   private readonly timeoutMs: number
 
   constructor(deps: DirectPublishClientDeps = {}) {
@@ -73,7 +87,7 @@ export class DirectPublishClient {
   }
 
   /** 发送底层消息（带超时与环境守卫）。 */
-  private async send<TReq, TRes>(method: 'prepare' | 'submit' | 'uploadImage' | 'getProduct', request: TReq): Promise<TRes> {
+  private async send<TReq, TRes>(method: 'prepare' | 'submit' | 'uploadImage' | 'getProduct' | 'getJob', request: TReq): Promise<TRes> {
     if (!this.isRuntimeAvailable()) {
       throw new Error(
         JSON.stringify({
@@ -91,9 +105,22 @@ export class DirectPublishClient {
 
     const sendFn =
       this.injectedSendMessage ||
-      ((msg: unknown) => {
-        const chromeRuntime = (globalThis as unknown as { chrome: { runtime: { sendMessage: (m: unknown) => Promise<unknown> } } }).chrome.runtime
-        return chromeRuntime.sendMessage(msg)
+      ((msg: unknown, callback?: (response: unknown) => void) => {
+        const chromeRuntime = (globalThis as unknown as { chrome: { runtime: ChromeRuntimeLike } }).chrome.runtime
+        return new Promise<unknown>((resolve, reject) => {
+          chromeRuntime.sendMessage(msg, (response) => {
+            const lastError = chromeRuntime.lastError
+            if (lastError) {
+              reject(new Error(JSON.stringify({
+                code: 'RUNTIME_MESSAGE_FAILED',
+                message: lastError.message || '后台消息通道失败',
+              })))
+              return
+            }
+            callback?.(response)
+            resolve(response)
+          })
+        })
       })
 
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -104,7 +131,19 @@ export class DirectPublishClient {
     })
 
     try {
-      const raw = (await Promise.race([sendFn(message), timeoutPromise])) as BackgroundResponse<TRes>
+      const raw = (await Promise.race([
+        new Promise<unknown>((resolve, reject) => {
+          try {
+            const returned = sendFn(message, (response) => resolve(response))
+            if (returned && typeof (returned as Promise<unknown>).then === 'function') {
+              ;(returned as Promise<unknown>).then(resolve, reject)
+            }
+          } catch (error) {
+            reject(error)
+          }
+        }),
+        timeoutPromise,
+      ])) as BackgroundResponse<TRes>
       if (!raw || raw.kind !== DIRECT_PUBLISH_MESSAGE_KIND || raw.method !== method) {
         throw new Error(
           JSON.stringify({
@@ -172,11 +211,25 @@ export class DirectPublishClient {
     }
   }
 
+  /** 只读查询后台持久化的直接发布审计历史。 */
+  public async getJobs(): Promise<{ ok: boolean; jobs: DirectPublishJob[]; error?: { code: string; message: string } }> {
+    try {
+      const response = await this.send<Record<string, never>, { ok: boolean; jobs: DirectPublishJob[]; error?: { code: string; message: string } }>('getJob', {})
+      if (!response || typeof response.ok !== 'boolean' || !Array.isArray(response.jobs)) {
+        return { ok: false, jobs: [], error: { code: 'INVALID_JOB_RESPONSE', message: '后台 getJob 响应缺少审计记录列表' } }
+      }
+      return response
+    } catch (error) {
+      return { ok: false, jobs: [], error: { code: 'AUDIT_QUERY_FAILED', message: error instanceof Error ? error.message : '读取发布审计失败' } }
+    }
+  }
+
   /** 在闲鱼页面上下文上传本地图片，返回平台图片对象。 */
   /** 获取自营商品最新详情；失败时不回退到旧缓存。 */
   public async getProduct(itemId: string): Promise<DirectPublishProductResult> {
     return this.send<{ itemId: string }, DirectPublishProductResult>('getProduct', { itemId })
   }
+
 
   public async uploadImage(dataUrl: string): Promise<Record<string, unknown>> {
     try {

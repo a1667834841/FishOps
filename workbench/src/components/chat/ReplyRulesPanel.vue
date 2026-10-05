@@ -494,8 +494,8 @@ const sortedRules = computed(() => [...config.value.rules].sort((a, b) => b.prio
 }
 
 .mode:has(input:checked) {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--brand-yellow, #FACC15);
+  background: var(--brand-yellow-bg, #FEF9C3);
 }
 
 .mode--auto:has(input:checked) {

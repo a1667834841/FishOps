@@ -15,7 +15,7 @@ withDefaults(
 </script>
 
 <template>
-  <span class="tag" :class="[`tag--${tone}`, { 'tag--mono': mono }]">
+  <span class="pill tag" :class="[`tag--${tone}`, { 'tag--mono': mono }]">
     <span v-if="dot" class="tag__dot" :class="{ 'tag__dot--pulse': pulse }" aria-hidden="true"></span>
     <slot />
   </span>
@@ -25,58 +25,55 @@ withDefaults(
 .tag {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 22px;
-  padding: 0 8px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1;
+  gap: 5px;
+  min-height: 20px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.2;
   white-space: nowrap;
-  border-radius: var(--radius-tag);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
+  border-radius: 9999px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-line);
+  color: var(--text-secondary);
 }
 
 .tag--mono {
   font-family: var(--mono);
 }
 
-.tag--accent {
-  background: var(--accent-soft);
-  border-color: transparent;
-  color: var(--accent-text);
+.tag--accent,
+.tag--warn {
+  background: var(--brand-yellow-bg);
+  border-color: var(--brand-yellow-border);
+  color: var(--brand-yellow-text);
+  font-weight: 500;
 }
 
 .tag--ok {
-  background: var(--ok-soft);
-  border-color: transparent;
-  color: var(--ok);
-}
-
-.tag--info {
-  background: var(--info-soft);
-  border-color: transparent;
-  color: var(--info);
-}
-
-.tag--warn {
-  background: var(--warn-soft);
-  border-color: transparent;
-  color: var(--warn);
+  background: var(--status-success-bg);
+  border-color: var(--status-success-border);
+  color: var(--status-success);
 }
 
 .tag--error {
-  background: var(--error-soft);
-  border-color: transparent;
-  color: var(--error);
+  background: var(--status-danger-bg);
+  border-color: var(--status-danger-border);
+  color: var(--status-danger);
+}
+
+.tag--info {
+  background: var(--bg-subtle);
+  border-color: var(--border-line);
+  color: var(--text-secondary);
 }
 
 .tag__dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: currentColor;
+  flex-shrink: 0;
 }
 
 .tag__dot--pulse {
@@ -84,8 +81,13 @@ withDefaults(
 }
 
 @keyframes tag-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
   50% {
-    opacity: 0.3;
+    opacity: 0.35;
+    transform: scale(0.85);
   }
 }
 </style>

@@ -22,8 +22,10 @@ import { formatPublishServiceName } from './direct-publish-labels'
 
 const props = defineProps<{
   sourceProduct: DirectPublishSourceProduct | null
+  sourceLabel?: string
   controller: DirectPublishController
 }>()
+const sourceLabel = computed(() => props.sourceLabel?.trim() || '当前商品')
 
 // 响应式镜像状态
 const phase = ref(props.controller.getPhase())
@@ -288,17 +290,17 @@ function onManualUnlock() {
 
         <!-- 准备失败视图（保留 returned draft / propertyCards，展示原因与指引） -->
         <div v-else-if="phase === 'prepare_failed'" class="prepare-failed-card">
-          <Callout tone="error" :title="`准备发布未完成：${errorMessage}`">
+          <Callout tone="error" :title="`准备发布未完成：${sourceLabel ? `${sourceLabel}：` : ''}${errorMessage}`">
             <div class="failure-details">
               <p v-if="failureStage" class="failure-stage-text">
-                <strong>失败阶段：</strong>{{ FAILURE_STAGE_MAP[failureStage] || failureStage }}
+                <strong>失败阶段：</strong>{{ failureStage === 'source' ? '商品详情读取阶段' : FAILURE_STAGE_MAP[failureStage] || failureStage }}
                 <span v-if="errorCode" class="error-code-badge">（错误码: {{ errorCode }}）</span>
               </p>
               <p v-if="missingFields && missingFields.length > 0" class="missing-fields-text">
                 <strong>缺失字段：</strong>{{ missingFields.join('、') }}
               </p>
               <p class="guide-text">
-                💡 <strong>操作指导：</strong>如遇到平台登录失效或需要安全验证，请在浏览器中打开闲鱼官方发布页完成登录或滑动验证，完成后点击下方按钮重新获取。
+                💡 <strong>操作指导：</strong>请先按上方错误信息排查当前失败阶段；仅当明确返回登录或验证要求时，再前往闲鱼完成相应操作。
               </p>
             </div>
           </Callout>

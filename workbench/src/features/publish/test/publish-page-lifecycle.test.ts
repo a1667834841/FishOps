@@ -16,6 +16,7 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { startPublishReturnCountdown } from '../direct-publish-countdown'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const pageSource = readFileSync(resolve(here, '../../../pages/PublishPage.vue'), 'utf8')
@@ -79,7 +80,7 @@ test('P0 回归：props.draft 初始加载与 store immediate 回调不会重复
   assert.ok(pageSource.includes('function ensureLoadDraft'), '必须通过统一的 ensureLoadDraft 载入草稿')
 
   const subscribeIdx = pageSource.indexOf('publishDraftStore.subscribe(')
-  const initIdx = pageSource.indexOf('ensureLoadDraft(props.draft ?? publishDraftStore.getDraft())')
+  const initIdx = pageSource.indexOf('ensureLoadDraft(initialDraft)')
   assert.ok(subscribeIdx >= 0, '必须订阅 publishDraftStore')
   assert.ok(initIdx > subscribeIdx, '应先订阅 store（immediate）再初始载入，同一草稿不会重复 loadDraft')
 
@@ -94,13 +95,13 @@ test('发布成功后 5 秒倒计时，结束时自动展开任务历史（纯�
   // 倒计时状态：秒数 + 任务历史展开标记
   assert.ok(/const\s+countdownSeconds\s*=\s*ref\(0\)/.test(pageSource), '必须用 countdownSeconds ref 保存剩余秒数')
   assert.ok(/const\s+taskHistoryOpen\s*=\s*ref\(true\)/.test(pageSource), '发布中心默认展示任务列表：taskHistoryOpen 初始必须为 true')
-  assert.ok(pageSource.includes('countdownTimer'), '必须保存计时器句柄，便于清理')
+  assert.ok(pageSource.includes('clearCountdownTimer'), '必须保存计时器清理函数，便于卸载清理')
 
   // 明确的中文倒计时提示
   assert.ok(pageSource.includes('秒后返回发布中心任务列表'), '必须展示“N 秒后返回发布中心任务列表”中文提示')
 
   // 倒计时结束后展开任务历史，且 details 通过 :open 绑定
-  assert.ok(pageSource.includes('taskHistoryOpen.value = true'), '倒计时结束必须展开“发布任务历史”')
+  assert.ok(pageSource.includes('taskHistoryOpen'), '倒计时状态必须包含发布任务历史展开控制')
   assert.ok(pageSource.includes(':open="taskHistoryOpen"'), 'details 必须通过 :open 绑定 taskHistoryOpen')
 
   // 仅从“非 published”进入 published 时启动一次，避免重复创建 interval
@@ -133,14 +134,64 @@ test('发布中心默认展开任务列表，且默认仍走正常选品流程�
   assert.ok(pageSource.includes(':open="taskHistoryOpen"'), 'details 必须通过 :open 绑定 taskHistoryOpen')
 })
 
+test('成功后 5 秒关闭整个外层核对弹窗，再次发布可重新打开；计时结束进入历史列表', async () => {
+  assert.ok(pageSource.includes('startPublishReturnCountdown('), '页面必须使用可测试的成功倒计时模块')
+  assert.ok(
+    /function onOpenPublishModal\(\): void \{[\s\S]*?showTaskListOnly\.value = false/.test(pageSource),
+    '重新打开核对弹窗时必须退出仅历史视图',
+  )
+  const watchBlock = pageSource.match(/watch\(directPhase,[\s\S]*?\n\}\)/)
+  assert.ok(watchBlock?.[0].includes("emit('clearDraft')"), '只在真实 published 状态清理跨页草稿')
+  assert.ok(watchBlock?.[0].includes('publishDraftStore.clearDraft()'), '只在真实 published 状态清理草稿 store')
+
+  const originalSetInterval = globalThis.setInterval
+  const originalClearInterval = globalThis.clearInterval
+  let tick: (() => void) | undefined
+  let timerCount = 0
+  globalThis.setInterval = ((callback: TimerHandler) => {
+    timerCount += 1
+    tick = callback as () => void
+    return timerCount
+  }) as unknown as typeof setInterval
+  globalThis.clearInterval = (() => { timerCount -= 1 }) as typeof clearInterval
+  try {
+    const state = { countdownSeconds: 0, isPublishModalOpen: true, modalOpen: true, showTaskListOnly: false, taskHistoryOpen: false }
+    let completions = 0
+    const clear = startPublishReturnCountdown(state, { onComplete: () => { completions += 1 } })
+    assert.equal(state.countdownSeconds, 5)
+    for (let second = 0; second < 4; second += 1) tick?.()
+    assert.equal(state.isPublishModalOpen, true)
+    assert.equal(state.countdownSeconds, 1)
+    tick?.()
+    assert.equal(state.isPublishModalOpen, false)
+    assert.equal(state.modalOpen, false)
+    assert.equal(state.showTaskListOnly, true)
+    assert.equal(state.taskHistoryOpen, true)
+    assert.equal(state.countdownSeconds, 0)
+    assert.equal(completions, 1)
+    clear()
+
+    const reopened = { countdownSeconds: 0, isPublishModalOpen: true, modalOpen: true, showTaskListOnly: false, taskHistoryOpen: true }
+    let clearActive = startPublishReturnCountdown(reopened)
+    assert.equal(timerCount, 1, '新一轮成功只保留一个新计时器')
+    clearActive = startPublishReturnCountdown(reopened)
+    assert.equal(timerCount, 1, '重复进入成功计时先清除旧 timer')
+    clearActive()
+    assert.equal(timerCount, 0, '切出/卸载调用清理函数后不残留 timer')
+    clear()
+  } finally {
+    globalThis.setInterval = originalSetInterval
+    globalThis.clearInterval = originalClearInterval
+  }
+})
+
+
+
 test('倒计时结束切到“仅任务列表”视图，隐藏选品/结果/弹窗且不重复触发发布', () => {
   // 倒计时归零分支设置 showTaskListOnly = true
-  const countdownTail = pageSource.match(/countdownSeconds\.value = 0[\s\S]{0,240}?clearCountdownTimer\(\)/)
+  const countdownTail = pageSource.match(/startPublishReturnCountdown\([\s\S]{0,800}?onComplete:[\s\S]{0,140}?clearCountdownTimer = \(\) => \{\}/)
   assert.ok(countdownTail, '未找到倒计时归零处理代码块')
-  assert.ok(
-    countdownTail![0].includes('showTaskListOnly.value = true'),
-    '倒计时结束必须切到“仅任务列表”视图',
-  )
+  assert.ok(countdownTail, '倒计时完成后必须清理计时器')
   assert.ok(
     !countdownTail![0].includes('directController.'),
     '倒计时结束只做纯前端视图切换，绝不调用发布控制器触发 prepare/submit',

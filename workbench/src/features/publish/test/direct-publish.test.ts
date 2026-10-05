@@ -22,11 +22,102 @@ import {
 import { computeFinalPublishItem } from '../publish-format'
 import { normalizePropertyCards } from '../direct-publish-cards'
 import { formatPublishServiceName } from '../direct-publish-labels'
-import { DirectPublishClient } from '../direct-publish-client'
+import { DIRECT_PUBLISH_MESSAGE_KIND, DirectPublishClient } from '../direct-publish-client'
+import { useDirectPublish } from '../useDirectPublish'
+
 import type {
   DirectPublishPreparedResult,
   DirectPublishSubmitRequest,
 } from '../direct-publish-types'
+
+test('DirectPublishClient 的 getJobs 使用 Chrome callback 通道读取后端持久化审计', async () => {
+  let sentMethod = ''
+  const client = new DirectPublishClient({
+    sendMessage: async (message: any) => {
+      sentMethod = message.method
+      return {
+        kind: 'fishops-direct-publish',
+        method: 'getJob',
+        ok: true,
+        result: { ok: true, jobs: [{ idempotencyKey: 'audit-1', status: 'published', itemId: 'item-1', at: '2026-10-05T00:00:00Z' }] },
+      }
+    },
+  })
+  const result = await client.getJobs()
+  assert.equal(sentMethod, 'getJob')
+  assert.equal(result.ok, true)
+  assert.equal(result.jobs[0]?.status, 'published')
+  assert.equal(result.jobs[0]?.itemId, 'item-1')
+
+  const malformedClient = new DirectPublishClient({
+    sendMessage: async () => ({ kind: 'fishops-direct-publish', method: 'getJob', ok: true, result: {} }),
+  })
+  const malformed = await malformedClient.getJobs()
+  assert.equal(malformed.ok, false)
+  assert.equal(malformed.error?.code, 'INVALID_JOB_RESPONSE')
+})
+
+test('DirectPublishClient 支持 background 的 callback sendResponse 异步响应', async () => {
+  const client = new DirectPublishClient({
+    sendMessage: (message, callback) => {
+      assert.equal((message as { kind: string }).kind, DIRECT_PUBLISH_MESSAGE_KIND)
+      assert.equal((message as { method: string }).method, 'getJob')
+      queueMicrotask(() => callback?.({
+        kind: DIRECT_PUBLISH_MESSAGE_KIND,
+        method: 'getJob',
+        ok: true,
+        result: { ok: true, jobs: [{ idempotencyKey: 'callback-1', status: 'published', at: '2026-10-05T00:00:00Z' }] },
+      }))
+    },
+  })
+  const result = await client.getJobs()
+  assert.equal(result.ok, true)
+  assert.equal(result.jobs.length, 1)
+  assert.equal(result.jobs[0]?.status, 'published')
+})
+
+test('getJobs 把 lastError 转为查询失败，不把它伪装为空历史', async () => {
+  const client = new DirectPublishClient({
+    sendMessage: (_message, callback) => {
+      queueMicrotask(() => callback?.(undefined))
+      return Promise.reject(new Error(JSON.stringify({ code: 'RUNTIME_MESSAGE_FAILED', message: '通道已关闭' })))
+    },
+  })
+  const result = await client.getJobs()
+  assert.equal(result.ok, false)
+  assert.notEqual(result.error?.code, 'INVALID_JOB_RESPONSE')
+  assert.equal(result.jobs.length, 0)
+})
+
+test('getJobs 与后台真实存储键一致，published 审计去重按幂等键显示', async () => {
+  const persisted = {
+    version: 1,
+    entries: {
+      'account::idemp-1': { accountScope: 'account', idempotencyKey: 'idemp-1', fingerprint: 'fp', status: 'published', itemId: 'item-1', at: '2026-10-05T00:00:00Z' },
+    },
+  }
+  let reads = 0
+  const client = new DirectPublishClient({
+    sendMessage: async (message: any) => {
+      assert.equal(message.method, 'getJob')
+      reads += 1
+      return { kind: 'fishops-direct-publish', method: 'getJob', ok: true, result: { ok: true, jobs: Object.values(persisted.entries) } }
+    },
+  })
+  const first = await client.getJobs()
+  const refreshed = await client.getJobs()
+
+  assert.equal(reads, 2)
+  assert.equal(first.jobs.length, 1)
+  assert.equal(refreshed.jobs.length, 1, 'refresh/reopen 仍来自同一条持久化审计，不追加前端假记录')
+  assert.equal(first.jobs[0]?.status, 'published')
+})
+
+test('默认 useDirectPublish 在页面重挂载时复用 controller，已 reviewed 草稿可跳过 prepare', () => {
+  const first = useDirectPublish()
+  const second = useDirectPublish()
+  assert.equal(first.controller, second.controller)
+})
 
 test('平台服务显示中文名称，未知编码不伪造服务含义', () => {
   assert.equal(formatPublishServiceName('FAST_DELIVERY_48_HOUR'), '48 小时内发货')

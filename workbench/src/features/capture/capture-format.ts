@@ -7,21 +7,21 @@
 import type { CapturePayload, CaptureStats, Task, TaskStatus } from '../contracts'
 import { describeTaskProblem, type ErrorView } from '../shared/error-format'
 
-/** 表单原始值：数字输入统一保存为字符串，避免 `''` 与 `0` 混淆。 */
+/** 表单原始值：数字输入可能是字符串或 number；空字符串仍表示可选值未填写。 */
 export interface CaptureFormValues {
   keyword?: string
   keywords?: string[]
   keywordInput?: string
-  startPage: string
-  pages: string
-  rowsPerPage: string
-  minWantCnt: string
-  minPrice: string
-  maxPrice: string
-  baseIntervalSec?: string
-  randomIntervalSec?: string
-  baseIntervalMs?: string
-  randomIntervalMs?: string
+  startPage: string | number
+  pages: string | number
+  rowsPerPage: string | number
+  minWantCnt: string | number
+  minPrice: string | number
+  maxPrice: string | number
+  baseIntervalSec?: string | number
+  randomIntervalSec?: string | number
+  baseIntervalMs?: string | number
+  randomIntervalMs?: string | number
   onlyFreeShip: boolean
   fetchDetail: boolean
 }
@@ -104,6 +104,56 @@ export function parseKeywordTags(
   }
 }
 
+/** 选词/追加关键词标签纯函数返回模型 */
+export interface KeywordTagAppendResult {
+  /** 更新后的标签列表 */
+  tags: string[]
+  /** 校验错误提示（如超出 20 词上限或单词超长） */
+  error?: string
+  /** 本次是否真正追加了新标签（重复、空词或被上限拦截时为 false） */
+  added: boolean
+}
+
+/**
+ * 判断指定关键词是否已存在于已选标签列表中（忽略首尾空白，不区分中英文全半角空格）。
+ */
+export function isKeywordSelected(word: string, currentTags: readonly string[] = []): boolean {
+  const trimmed = word.trim()
+  return currentTags.some((tag) => tag.trim() === trimmed)
+}
+
+/**
+ * 生产 Helper：点选建议词或确认输入时的标签追加纯函数。
+ * - 纯函数逻辑，无浏览器 DOM 或网络副作用，供 CollectPage 与单元测试共享调用；
+ * - 严格去重：若当前 tags 中已包含该词，判定为已选，不重复添加且 added 为 false；
+ * - 上限与边界校验：空词不添加；单个词超出 60 字符或标签数超过 20 词时拦截并返回 error，added 为 false；
+ * - 添加成功返回包含新增词的全新 tags 列表，added 为 true。
+ */
+export function appendKeywordTag(
+  word: string,
+  currentTags: readonly string[] = [],
+): KeywordTagAppendResult {
+  const trimmed = word.trim()
+  if (!trimmed) {
+    return { tags: [...currentTags], added: false }
+  }
+
+  // 1. 已选去重校验
+  if (isKeywordSelected(trimmed, currentTags)) {
+    return { tags: [...currentTags], added: false }
+  }
+
+  // 2. 统一委托给 parseKeywordTags 校验单词长度与 20 词上限
+  const parsed = parseKeywordTags([trimmed], currentTags)
+  const isAdded = parsed.tags.includes(trimmed)
+
+  return {
+    tags: parsed.tags,
+    error: parsed.error,
+    added: isAdded,
+  }
+}
+
 export type CaptureFormField = keyof CaptureFormValues
 export type CaptureFormErrors = Partial<Record<CaptureFormField, string>>
 
@@ -111,16 +161,16 @@ export type CaptureBuildResult =
   | { ok: true; payload: CapturePayload }
   | { ok: false; errors: CaptureFormErrors }
 
-function parseInteger(raw: string, min: number, max: number, label: string): { value?: number; error?: string } {
-  const text = raw.trim()
+function parseInteger(raw: string | number, min: number, max: number, label: string): { value?: number; error?: string } {
+  const text = String(raw).trim()
   if (!/^\d+$/.test(text)) return { error: `${label}需要是 ${min} 到 ${max} 之间的整数` }
   const value = Number(text)
   if (value < min || value > max) return { error: `${label}需要在 ${min} 到 ${max} 之间` }
   return { value }
 }
 
-function parseOptionalNumber(raw: string, label: string, integer: boolean): { value?: number; error?: string } {
-  const text = raw.trim()
+function parseOptionalNumber(raw: string | number, label: string, integer: boolean): { value?: number; error?: string } {
+  const text = String(raw).trim()
   if (text === '') return {}
   const pattern = integer ? /^\d+$/ : /^\d+(\.\d{1,2})?$/
   if (!pattern.test(text)) return { error: `${label}需要是不小于 0 的${integer ? '整数' : '数字（最多两位小数）'}` }
@@ -130,14 +180,14 @@ function parseOptionalNumber(raw: string, label: string, integer: boolean): { va
 }
 
 function parseIntervalSeconds(
-  rawSec: string | undefined,
-  rawMs: string | undefined,
+  rawSec: string | number | undefined,
+  rawMs: string | number | undefined,
   label: string,
   defaultSec: number,
 ): { valueMs?: number; error?: string } {
   // 如果显式传了 ms，优先按毫秒解析（便于底层与单测直接指定毫秒）
-  if (rawMs !== undefined && rawMs.trim() !== '') {
-    const text = rawMs.trim()
+  if (rawMs !== undefined && String(rawMs).trim() !== '') {
+    const text = String(rawMs).trim()
     if (!/^\d+(\.\d+)?$/.test(text)) {
       return { error: `${label}需要是不小于 0 的数字` }
     }
@@ -152,8 +202,8 @@ function parseIntervalSeconds(
   }
 
   // 其次按秒解析（UI 表单主要口径）
-  if (rawSec !== undefined && rawSec.trim() !== '') {
-    const text = rawSec.trim()
+  if (rawSec !== undefined && String(rawSec).trim() !== '') {
+    const text = String(rawSec).trim()
     if (!/^\d+(\.\d+)?$/.test(text)) {
       return { error: `${label}需要是不小于 0 的秒数` }
     }
