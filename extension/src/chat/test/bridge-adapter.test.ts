@@ -4,8 +4,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { ChatBridgeAdapter, ChatBridgeCommands, ChatBridgeEvents } from '../bridge-adapter'
+import { ChatHistoryClient, type ChatTransport } from '../history'
 import { ChatStore } from '../store'
-import type { Conversation } from '../../../../shared/types/chat'
+import type { ChatMessage, Conversation } from '../../../../shared/types/chat'
+import { INITIAL_CURSOR, type LwpRequest, type LwpResponse } from '../../../../shared/chat/index'
 
 import { ChatSync } from '../sync'
 
@@ -182,4 +184,190 @@ test('reportSocketStatus 排队状态事件', () => {
   assert.equal(events.length, 1)
   assert.equal(events[0].type, ChatBridgeEvents.CHAT_SOCKET_STATUS)
   assert.deepEqual(events[0].payload, { status: 'open' })
+})
+
+// ---------------- CHAT_GET_MESSAGES 分页（窗口内最近 N + before 游标） ----------------
+
+/** 造一批可预测的历史消息；groupSize>1 时若干条共享同一 createAt。 */
+function seedHistory(store: ChatStore, sessionId: string, count: number, groupSize = 1): void {
+  const messages: ChatMessage[] = Array.from({ length: count }, (_, index) => ({
+    id: '',
+    cid: `${sessionId}@goofish`,
+    sessionId,
+    messageId: `m${String(index + 1).padStart(3, '0')}`,
+    senderId: '999',
+    senderName: '买家',
+    receiverId: '111',
+    direction: 'in',
+    kind: 'text',
+    contentType: 1,
+    content: `消息${index + 1}`,
+    createAt: 1000 + Math.floor(index / groupSize),
+    source: 'history',
+  }))
+  store.upsertMessages(messages)
+}
+
+test('CHAT_GET_MESSAGES：asc + limit 保持旧语义（从最早端取 N 条），兼容旧调用方', async () => {
+  const adapter = makeAdapter()
+  const store = (adapter as unknown as { store: ChatStore }).store
+  seedHistory(store, '123', 25)
+
+  const res = await adapter.handleCommand({
+    kind: 'command',
+    requestId: 'page-asc',
+    type: ChatBridgeCommands.CHAT_GET_MESSAGES,
+    payload: { sessionId: '123', order: 'asc', limit: 10 },
+  })
+  assert.equal(res.ok, true)
+  const result = res.result as { messages: ChatMessage[]; hasMore?: boolean }
+  // desc/limit 才是「最近 N 条」；asc/limit 属旧契约，仍取最早 N 条（reply-runtime 依赖）。
+  assert.deepEqual(
+    result.messages.map((m) => m.messageId),
+    Array.from({ length: 10 }, (_, i) => `m${String(i + 1).padStart(3, '0')}`),
+  )
+  assert.equal(result.hasMore, undefined, 'asc + limit 保持旧形状，不新增 hasMore')
+})
+
+test('CHAT_GET_MESSAGES：desc + limit 取最近 N 条并返回 hasMore', async () => {
+  const adapter = makeAdapter()
+  const store = (adapter as unknown as { store: ChatStore }).store
+  seedHistory(store, '123', 25)
+
+  const res = await adapter.handleCommand({
+    kind: 'command',
+    requestId: 'page-desc',
+    type: ChatBridgeCommands.CHAT_GET_MESSAGES,
+    payload: { sessionId: '123', order: 'desc', limit: 10 },
+  })
+  assert.equal(res.ok, true)
+  const result = res.result as { messages: ChatMessage[]; hasMore?: boolean }
+  assert.deepEqual(
+    result.messages.map((m) => m.messageId),
+    Array.from({ length: 10 }, (_, i) => `m${String(25 - i).padStart(3, '0')}`),
+  )
+  assert.equal(result.hasMore, true)
+})
+
+test('CHAT_GET_MESSAGES：before 游标向前翻页不重复；非法游标返回 INVALID_PAYLOAD', async () => {
+  const adapter = makeAdapter()
+  const store = (adapter as unknown as { store: ChatStore }).store
+  seedHistory(store, '123', 25)
+
+  const first = await adapter.handleCommand({
+    kind: 'command',
+    requestId: 'page-a',
+    type: ChatBridgeCommands.CHAT_GET_MESSAGES,
+    payload: { sessionId: '123', order: 'desc', limit: 10 },
+  })
+  const firstMessages = (first.result as { messages: ChatMessage[] }).messages
+  const oldest = firstMessages[firstMessages.length - 1]
+
+  const second = await adapter.handleCommand({
+    kind: 'command',
+    requestId: 'page-b',
+    type: ChatBridgeCommands.CHAT_GET_MESSAGES,
+    payload: {
+      sessionId: '123',
+      order: 'asc',
+      limit: 10,
+      before: { createAt: oldest.createAt, messageId: oldest.messageId, id: oldest.id },
+    },
+  })
+  assert.equal(second.ok, true)
+  const secondResult = second.result as { messages: ChatMessage[]; hasMore?: boolean }
+  assert.deepEqual(
+    secondResult.messages.map((m) => m.messageId),
+    Array.from({ length: 10 }, (_, i) => `m${String(i + 6).padStart(3, '0')}`),
+  )
+  // 与第一页无交集（不重复）。
+  const overlap = secondResult.messages.filter((m) => firstMessages.some((f) => f.id === m.id))
+  assert.deepEqual(overlap, [])
+  assert.equal(secondResult.hasMore, true)
+
+  for (const bad of [{}, { createAt: 1, messageId: 'm1' }, { createAt: 1, messageId: 'm1', id: '' }]) {
+    const res = await adapter.handleCommand({
+      kind: 'command',
+      requestId: 'page-bad',
+      type: ChatBridgeCommands.CHAT_GET_MESSAGES,
+      payload: { sessionId: '123', limit: 10, before: bad },
+    })
+    assert.equal(res.ok, false)
+    assert.equal(res.error?.code, 'INVALID_PAYLOAD')
+  }
+})
+
+test('CHAT_GET_MESSAGES：未带 limit 的旧调用方仍拿到 { messages } 原形状', async () => {
+  const adapter = makeAdapter()
+  const store = (adapter as unknown as { store: ChatStore }).store
+  seedHistory(store, '123', 3)
+  const res = await adapter.handleCommand({
+    kind: 'command',
+    requestId: 'legacy',
+    type: ChatBridgeCommands.CHAT_GET_MESSAGES,
+    payload: { sessionId: '123', order: 'asc' },
+  })
+  assert.equal(res.ok, true)
+  const result = res.result as { messages: ChatMessage[]; hasMore?: boolean }
+  assert.equal(result.messages.length, 3)
+  assert.equal(result.hasMore, undefined, '无 limit 时不返回 hasMore，保持向后兼容')
+})
+
+// ---------------- CHAT_SYNC_HISTORY 游标透传 ----------------
+
+function makeHistoryAdapter(responder: (request: LwpRequest) => LwpResponse): ChatBridgeAdapter {
+  const store = new ChatStore()
+  const transport: ChatTransport = { send: async (request) => responder(request) }
+  const sync = new ChatSync({ store, history: new ChatHistoryClient({ transport, myUserId: '111' }), sleep: async () => {} })
+  return new ChatBridgeAdapter({ sync, store, now: () => 1000, genEventId: () => 'e1' })
+}
+
+function historyModel(messageId: string, createAt: number): unknown {
+  return {
+    message: {
+      messageId,
+      cid: '123@goofish',
+      createAt,
+      content: { custom: { contentType: 1, data: b64(JSON.stringify({ contentType: 1, text: { text: messageId } })) } },
+      extension: { senderUserId: '999', reminderTitle: '买家' },
+    },
+  }
+}
+
+test('CHAT_SYNC_HISTORY：透传 cursor 并返回 nextCursor/hasMore', async () => {
+  const anchors: unknown[] = []
+  const adapter = makeHistoryAdapter((request) => {
+    anchors.push(request.body[2])
+    if (request.body[2] === INITIAL_CURSOR) {
+      return { code: 200, body: { userMessageModels: [historyModel('h1', 2000)], nextCursor: 1500 } }
+    }
+    return { code: 200, body: { userMessageModels: [historyModel('h2', 1000)], nextCursor: 0 } }
+  })
+
+  const first = await adapter.handleCommand({
+    kind: 'command',
+    requestId: 'sync-1',
+    type: ChatBridgeCommands.CHAT_SYNC_HISTORY,
+    payload: { sessionId: '123', pages: 1, count: 1 },
+  })
+  assert.equal(first.ok, true)
+  const r1 = first.result as { ok: boolean; added: number; hasMore?: boolean; nextCursor?: number }
+  assert.equal(r1.ok, true)
+  assert.equal(r1.added, 1)
+  assert.equal(r1.hasMore, true)
+  assert.equal(r1.nextCursor, 1500)
+  assert.deepEqual(anchors, [INITIAL_CURSOR], '不传 cursor 时从最新一页开始（既有行为）')
+
+  const second = await adapter.handleCommand({
+    kind: 'command',
+    requestId: 'sync-2',
+    type: ChatBridgeCommands.CHAT_SYNC_HISTORY,
+    payload: { sessionId: '123', pages: 1, count: 1, cursor: 1500 },
+  })
+  assert.equal(second.ok, true)
+  const r2 = second.result as { ok: boolean; hasMore?: boolean; nextCursor?: number }
+  assert.equal(r2.ok, true)
+  assert.equal(r2.hasMore, false)
+  assert.equal(r2.nextCursor, undefined)
+  assert.deepEqual(anchors, [INITIAL_CURSOR, 1500], '第二跳必须带上上一页返回的游标')
 })

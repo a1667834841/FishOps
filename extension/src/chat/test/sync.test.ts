@@ -107,6 +107,130 @@ test('syncHistory：未配置 history 时返回结构化错误', async () => {
   assert.equal(result.ok, false)
 })
 
+test('syncHistory：返回 nextCursor/hasMore，调用方可用游标继续向更早翻页', async () => {
+  const anchors: unknown[] = []
+  const transport = new FakeTransport((request) => {
+    anchors.push(request.body[2])
+    if (request.body[2] === INITIAL_CURSOR) {
+      return { code: 200, body: { userMessageModels: [msgModel('m1', 1000, 'a')], nextCursor: 900 } }
+    }
+    return { code: 200, body: { userMessageModels: [msgModel('m2', 800, 'b')], nextCursor: 0 } }
+  })
+  const store = new ChatStore()
+  const sync = new ChatSync({
+    store,
+    history: new ChatHistoryClient({ transport, myUserId: '111' }),
+    sleep: async () => {},
+  })
+
+  const first = await sync.syncHistory('123', { pages: 1, count: 1 })
+  assert.equal(first.ok, true)
+  assert.equal(first.hasMore, true)
+  assert.equal(first.nextCursor, 900)
+  assert.deepEqual(anchors, [INITIAL_CURSOR])
+
+  const second = await sync.syncHistory('123', { pages: 1, count: 1, cursor: first.nextCursor })
+  assert.equal(second.ok, true)
+  assert.equal(second.hasMore, false, '平台已到最早一页')
+  assert.equal(second.nextCursor, undefined, '无更多时不得给出游标')
+  assert.deepEqual(anchors, [INITIAL_CURSOR, 900], '第二跳必须带上第一页返回的游标')
+  assert.equal(store.messageCount, 2)
+})
+
+test('syncHistory：多页成功时返回最后一页的 nextCursor', async () => {
+  let call = 0
+  const transport = new FakeTransport(() => {
+    call += 1
+    return call === 1
+      ? { code: 200, body: { userMessageModels: [msgModel('m1', 2000, 'a')], nextCursor: 1500 } }
+      : { code: 200, body: { userMessageModels: [msgModel('m2', 1000, 'b')], nextCursor: 700 } }
+  })
+  const sync = new ChatSync({
+    store: new ChatStore(),
+    history: new ChatHistoryClient({ transport, myUserId: '111' }),
+    sleep: async () => {},
+  })
+
+  const result = await sync.syncHistory('123', { pages: 2, count: 1 })
+  assert.equal(result.ok, true)
+  assert.equal(call, 2, '应按 pages 拉满两页')
+  assert.equal(result.hasMore, true)
+  assert.equal(result.nextCursor, 700, '应给出最后一页的游标')
+})
+
+test('syncHistory：游标无进展时返回结构化错误，不宣称耗尽也不死循环', async () => {
+  let call = 0
+  // 服务端始终返回同一个 nextCursor，模拟「重复页 / 游标卡死」。
+  const transport = new FakeTransport(() => {
+    call += 1
+    return { code: 200, body: { userMessageModels: [msgModel('m1', 1000, 'a')], nextCursor: 500 } }
+  })
+  const sync = new ChatSync({
+    store: new ChatStore(),
+    history: new ChatHistoryClient({ transport, myUserId: '111' }),
+    sleep: async () => {},
+  })
+
+  const result = await sync.syncHistory('123', { pages: 10, count: 1 })
+  assert.equal(result.ok, false, '游标无进展必须按失败处理，不得把重复页当终点')
+  assert.ok(result.error, '必须给出结构化错误')
+  assert.equal(result.hasMore, undefined, '失败结果不得宣称仍有更早历史')
+  assert.equal(result.nextCursor, undefined, '失败结果不得给出游标')
+  assert.equal(call, 2, '第一页正常推进，第二页游标无进展即停止')
+})
+
+test('syncHistory：游标反向（更大）时同样按失败处理，不宣称耗尽', async () => {
+  let call = 0
+  const transport = new FakeTransport(() => {
+    call += 1
+    // 第一跳返回 100；第二跳请求 cursor=100 时居然返回更大的 999（反向）。
+    return { code: 200, body: { userMessageModels: [msgModel('m1', 1000, 'a')], nextCursor: call === 1 ? 100 : 999 } }
+  })
+  const sync = new ChatSync({
+    store: new ChatStore(),
+    history: new ChatHistoryClient({ transport, myUserId: '111' }),
+    sleep: async () => {},
+  })
+
+  const result = await sync.syncHistory('123', { pages: 5, count: 1 })
+  assert.equal(result.ok, false, '反向游标必须按失败处理')
+  assert.ok(result.error, '必须给出结构化错误')
+  assert.equal(result.hasMore, undefined)
+  assert.equal(call, 2)
+})
+
+test('syncHistory：初次游标不推进（返回 >= 初始游标）按失败处理', async () => {
+  const transport = new FakeTransport(() => ({
+    code: 200,
+    body: { userMessageModels: [msgModel('m1', 1000, 'a')], nextCursor: INITIAL_CURSOR },
+  }))
+  const sync = new ChatSync({
+    store: new ChatStore(),
+    history: new ChatHistoryClient({ transport, myUserId: '111' }),
+    sleep: async () => {},
+  })
+
+  const result = await sync.syncHistory('123', { pages: 3, count: 1 })
+  assert.equal(result.ok, false, '未提供 cursor 时以 INITIAL_CURSOR 为上界，等于上界即无进展')
+  assert.ok(result.error)
+})
+
+test('syncHistory：失败结果不带游标，调用方不得据此推进分页', async () => {
+  const transport = new FakeTransport(() => {
+    throw new Error('LWP down')
+  })
+  const sync = new ChatSync({
+    store: new ChatStore(),
+    history: new ChatHistoryClient({ transport, myUserId: '111' }),
+    sleep: async () => {},
+  })
+
+  const result = await sync.syncHistory('123', { pages: 1, count: 1, cursor: 100 })
+  assert.equal(result.ok, false)
+  assert.equal(result.nextCursor, undefined)
+  assert.equal(result.hasMore, undefined)
+})
+
 test('syncConversations：分页写入会话', async () => {
   const transport = new FakeTransport(() => ({
     code: 200,

@@ -19,7 +19,7 @@
  * =================================================================
  */
 import { CommandTypes, EventTypes } from '@fishops/shared'
-import type { ChatEventKind, ChatMessage, Conversation } from '../../../shared/types/chat'
+import type { ChatEventKind, ChatMessage, Conversation, MessageCursor } from '../../../shared/types/chat'
 import type { ChatSocketStatus } from './websocket'
 import { correctMessageDirection } from './parser'
 import type { ChatSync, SyncConversationsOptions, SyncResult } from './sync'
@@ -113,6 +113,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+/**
+ * 解析向前分页游标。
+ *
+ * 返回 `undefined` 表示未提供（保持旧语义），返回 `null` 表示提供了但非法
+ * （调用方应拒绝），否则返回归一后的游标。
+ */
+function parseMessageCursor(value: unknown): MessageCursor | null | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) return null
+  const { createAt, messageId, id } = value
+  if (typeof createAt !== 'number' || !Number.isFinite(createAt)) return null
+  if (typeof messageId !== 'string') return null
+  if (typeof id !== 'string' || id.length === 0) return null
+  return { createAt, messageId, id }
+}
+
 function defaultEventId(): string {
   const cryptoObj = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto
   if (cryptoObj && typeof cryptoObj.randomUUID === 'function') return cryptoObj.randomUUID()
@@ -174,10 +190,29 @@ export class ChatBridgeAdapter {
         }
         const order = payload['order'] === 'desc' ? 'desc' : 'asc'
         const limit = typeof payload['limit'] === 'number' ? payload['limit'] : undefined
-        const messages: ChatMessage[] = this.store
-          .getMessages(payload['sessionId'] as string, { order, limit })
-          .map((message) => correctMessageDirection(message, this.myUserId) ?? message)
-        return this.ok(requestId, type, { messages })
+        const before = parseMessageCursor(payload['before'])
+        if (before === null) {
+          return this.fail(requestId, type, 'INVALID_PAYLOAD', 'CHAT_GET_MESSAGES 的 before 游标不合法')
+        }
+        // 兼容旧契约：asc 且无游标时仍走 getMessages（从最早端取 limit 条），
+        // 避免旧调用方（reply-runtime 等）因本功能改成「最近 N 条」而拿错窗口。
+        if (order === 'asc' && before === undefined) {
+          const messages: ChatMessage[] = this.store
+            .getMessages(payload['sessionId'] as string, { order, ...(limit === undefined ? {} : { limit }) })
+            .map((message) => correctMessageDirection(message, this.myUserId) ?? message)
+          return this.ok(requestId, type, { messages })
+        }
+        // 分页查询：desc 首页与带 before 的向前翻页统一走 getMessagePage（窗口内最近 N 条）。
+        const page = this.store.getMessagePage(payload['sessionId'] as string, {
+          order,
+          limit,
+          ...(before === undefined ? {} : { before }),
+        })
+        const messages: ChatMessage[] = page.messages.map(
+          (message) => correctMessageDirection(message, this.myUserId) ?? message,
+        )
+        // 未带 limit 的旧调用方仍拿到原来的 `{ messages }` 形状（额外字段仅在有 limit 时出现）。
+        return this.ok(requestId, type, limit === undefined ? { messages } : { messages, hasMore: page.hasMore })
       }
       case ChatBridgeCommands.CHAT_SYNC_HISTORY: {
         const payload = command.payload
@@ -187,6 +222,7 @@ export class ChatBridgeAdapter {
         const result = await this.sync.syncHistory(payload['sessionId'] as string, {
           pages: typeof payload['pages'] === 'number' ? payload['pages'] : undefined,
           count: typeof payload['count'] === 'number' ? payload['count'] : undefined,
+          cursor: typeof payload['cursor'] === 'number' ? payload['cursor'] : undefined,
         })
         this.pushSyncCompleted('history', result)
         return this.ok(requestId, type, result)

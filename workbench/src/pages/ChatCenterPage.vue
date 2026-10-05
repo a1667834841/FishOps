@@ -65,6 +65,18 @@ const threadMessages = computed(() => {
 
 const itemContext = computed(() => deriveItemContext(selectedConversation.value, threadMessages.value))
 const peer = computed(() => derivePeer(selectedConversation.value, threadMessages.value))
+/** 消息窗口尾部 id：变化表示追加了新消息（实时消息 / 发送回显 / 刷新替换）。 */
+const tailId = computed(() => {
+  const items = threadMessages.value
+  const last = items.length > 0 ? items[items.length - 1] : undefined
+  return last ? last.id : ''
+})
+/** 消息窗口头部 id：变化表示前插了更早消息。 */
+const headId = computed(() => {
+  const items = threadMessages.value
+  const first = items.length > 0 ? items[0] : undefined
+  return first ? first.id : ''
+})
 /** 当前会话头像：会话字段优先，回退到对方消息头像；两者都缺失时为 null，走字母 fallback。 */
 const peerAvatar = computed(() => peerAvatarUrl(selectedConversation.value, threadMessages.value))
 
@@ -165,22 +177,190 @@ function unreadLabel(count: number): string {
 }
 
 // 切换会话滚到底部；同会话内新消息到达时，仅当用户本来就在底部附近才跟随，避免打断翻阅历史。
+// 距离顶部多少像素内视为「接近顶部」，会触发自动加载更早的一页。
+const TOP_THRESHOLD = 48
+
 const threadRef = ref<HTMLElement | null>(null)
 let stickToBottom = true
+
+// 滚动锚点：记录当前第一条可见消息及其视口位置。前插（或历史中段补洞）后用它将同一
+// 条消息钉回原位置，避免可见内容跳动；用户滚到底部时则不做补偿，直接跟随最新消息。
+interface ScrollAnchor {
+  id: string
+  viewportTop: number
+}
+
+let lastAnchor: ScrollAnchor | null = null
+
+// 用户滚动意图：只有 wheel / touch / 键盘 / 指针（含滚动条拖动）手势引起的滚动才允许自动翻页。
+// 程序化 scrollTop（吸底 / 锚点补偿）不置位，避免「加载 → 渲染滚动 → 再次加载」的循环。
+// 一次手势序列最多消费一次：惯性滚动会连续产生 wheel / scroll 事件，若不限制，
+// 同一次手势会在前插内容与锚点补偿之间反复抵达顶部，把历史连续拉完。
+const SCROLL_INTENT_TTL = 1200
+const SCROLL_GESTURE_GAP = 200
+let scrollIntentPending = false
+let scrollIntentUntil = 0
+let scrollIntentConsumed = false
+let lastGestureAt = 0
+let touchStartY: number | null = null
+
+/** 记录用户手势意图；同一手势序列内已消费过则不再置位。 */
+function markScrollIntent(): void {
+  const now = Date.now()
+  if (now - lastGestureAt > SCROLL_GESTURE_GAP) scrollIntentConsumed = false
+  lastGestureAt = now
+  if (scrollIntentConsumed) return
+  scrollIntentPending = true
+  scrollIntentUntil = now + SCROLL_INTENT_TTL
+}
+
+function hasScrollIntent(): boolean {
+  return scrollIntentPending && Date.now() < scrollIntentUntil
+}
+
+/** 消费一次意图；返回 false 表示当前没有可用的用户意图，不得自动翻页。 */
+function consumeScrollIntent(): boolean {
+  if (!hasScrollIntent()) {
+    clearScrollIntent()
+    return false
+  }
+  scrollIntentPending = false
+  scrollIntentUntil = 0
+  scrollIntentConsumed = true
+  return true
+}
+
+// 只清待消费意图，保留手势序列记忆（consumed / lastGestureAt），
+// 否则紧随程序化滚动的惯性事件会被误判为新手势。
+function clearScrollIntent(): void {
+  scrollIntentPending = false
+  scrollIntentUntil = 0
+}
+
+/** 记录第一条至少部分可见的消息，作为后续渲染后的位置基准。 */
+function captureAnchor(el: HTMLElement): void {
+  const containerTop = el.getBoundingClientRect().top
+  for (const child of Array.from(el.children) as HTMLElement[]) {
+    const id = child.dataset['mid']
+    if (!id) continue
+    if (child.getBoundingClientRect().bottom > containerTop + 1) {
+      lastAnchor = { id, viewportTop: child.getBoundingClientRect().top }
+      return
+    }
+  }
+  lastAnchor = null
+}
 
 function onThreadScroll(): void {
   const el = threadRef.value
   if (!el) return
   stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  captureAnchor(el)
+  // 只有用户手势引起的滚动才在抵达顶部时自动翻页：程序化 layout 滚动（吸底 / 锚点补偿）
+  // 不带意图标记，因此首屏渲染不会把历史自动拉到底，也不会造成加载循环。
+  // 覆盖滚动条拖动与「一次大幅 wheel 跨过阈值后停在顶部」两种无 wheel/touch 事件的场景。
+  if (hasScrollIntent() && el.scrollTop <= TOP_THRESHOLD && consumeScrollIntent()) {
+    requestOlder()
+  }
+}
+
+/** 真实滚轮向上：记录意图；已在顶部时直接请求，保证一次大幅滚动跨过阈值仍能触发。 */
+function onWheelScroll(event: WheelEvent): void {
+  const el = threadRef.value
+  if (!el || !(event.deltaY < 0)) return
+  markScrollIntent()
+  // 内容不满一屏时没有可滚动距离、不产生 scroll 事件，这里在顶部直接触发。
+  if (el.scrollTop <= TOP_THRESHOLD && consumeScrollIntent()) requestOlder()
+}
+
+/** 真实键盘向上（ArrowUp / PageUp）：同样只由用户手势触发分页。 */
+function onThreadKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ArrowUp' && event.key !== 'PageUp') return
+  const el = threadRef.value
+  if (!el) return
+  markScrollIntent()
+  if (el.scrollTop <= TOP_THRESHOLD && consumeScrollIntent()) requestOlder()
+}
+
+/** 触摸开始：记录起点，用于确认后续确实发生了垂直拖动。 */
+function onThreadTouchStart(event: TouchEvent): void {
+  const touch = event.touches[0]
+  touchStartY = touch ? touch.clientY : null
+  markScrollIntent()
+}
+
+/** 触摸滚动：发生垂直拖动时记录意图；已在顶部时直接触发，保证短首屏仍能翻页。 */
+function onThreadTouchMove(event: TouchEvent): void {
+  const el = threadRef.value
+  const touch = event.touches[0]
+  if (!el || !touch || touchStartY === null || touch.clientY === touchStartY) return
+  markScrollIntent()
+  if (el.scrollTop <= TOP_THRESHOLD && consumeScrollIntent()) requestOlder()
+}
+
+/** 指针按下（包含滚动条拖动）：记录意图，交给随后的 scroll 事件在顶部消费。 */
+function onThreadPointerDown(): void {
+  markScrollIntent()
+}
+
+/**
+ * 请求加载更早的一页；加载中或已耗尽时短路。
+ *
+ * 失败后不允许由滚动事件自动重试：分页 banner 的“加载中”与“失败”两态高度不同，
+ * 切换时会反复改变滚动容器高度并触发 scroll 事件，自动重试会造成无限请求。
+ * 因此失败后只能点击 banner 上的「重试」手动恢复。
+ */
+function requestOlder(options: { manual?: boolean } = {}): void {
+  const el = threadRef.value
+  const messages = state.value.messages
+  if (!el || messages.olderPhase === 'loading' || !messages.hasMore) return
+  if (messages.olderPhase === 'error' && !options.manual) return
+  captureAnchor(el)
+  void controller.loadOlder()
 }
 
 watch(
-  () => [state.value.messages.sessionId, threadMessages.value.length] as const,
-  async ([sessionId], [previousSessionId]) => {
-    if (sessionId !== previousSessionId) stickToBottom = true
+  () => [state.value.messages.sessionId, tailId.value, headId.value] as const,
+  async (
+    [sessionId, nextTailId, nextHeadId],
+    [previousSessionId, previousTailId, previousHeadId],
+  ) => {
+    const switched = sessionId !== previousSessionId
+    if (switched) {
+      stickToBottom = true
+      lastAnchor = null
+      // 切换会话时重置手势意图状态，避免把上一个会话的滚动当成当前会话的翻页信号。
+      touchStartY = null
+      scrollIntentConsumed = false
+      lastGestureAt = 0
+      clearScrollIntent()
+    }
+    // 尾部变化 = 追加新消息（实时消息 / 自身发送回显）。并发追加时始终优先滚底，
+    // 避免两个事件在同一 tick 合并后 lose 掉跟随最新消息的机会。
+    const appended = !switched && nextTailId !== previousTailId
+    // 头部变化 = 前插更早消息：只有用户不在底部时才按锚点补偿，保持可见内容不动。
+    const prepended = !switched && !appended && nextHeadId !== previousHeadId
     await nextTick()
     const el = threadRef.value
-    if (el && stickToBottom) el.scrollTop = el.scrollHeight
+    if (!el) return
+    if (appended || stickToBottom) {
+      // 程序化吸底前清除意图，避免随后触发的 scroll 事件误当成用户手势。
+      clearScrollIntent()
+      el.scrollTop = el.scrollHeight
+      return
+    }
+    // 用户不在底部时，用锚点补偿前插造成的位移，保持可见内容不动。
+    if (prepended && lastAnchor) {
+      const target = (Array.from(el.children) as HTMLElement[]).find(
+        (child) => child.dataset['mid'] === lastAnchor?.id,
+      )
+      if (target) {
+        clearScrollIntent()
+        el.scrollTop += target.getBoundingClientRect().top - lastAnchor.viewportTop
+        return
+      }
+      lastAnchor = null
+    }
   },
 )
 </script>
@@ -413,10 +593,39 @@ watch(
             <p v-if="state.messages.error" class="col-note col-note--error" role="alert">
               最近一次刷新失败（已保留旧数据）：{{ state.messages.error }}
             </p>
-            <ol id="message-stream" ref="threadRef" class="msgs" aria-label="消息记录" tabindex="0" @scroll.passive="onThreadScroll">
+            <div class="thread__banner">
+              <p v-if="state.messages.olderPhase === 'loading'" class="thread__banner-text" role="status">
+                正在加载更早的消息…
+              </p>
+              <p
+                v-else-if="state.messages.olderPhase === 'error'"
+                class="thread__banner-text thread__banner-text--error"
+                role="alert"
+              >
+                加载更早的消息失败：{{ state.messages.olderError }}
+                <button type="button" class="btn btn--sm" @click="requestOlder({ manual: true })">重试</button>
+              </p>
+              <p v-else-if="!state.messages.hasMore" class="thread__banner-text" role="status">
+                没有更多了
+              </p>
+            </div>
+            <ol
+              id="message-stream"
+              ref="threadRef"
+              class="msgs"
+              aria-label="消息记录"
+              tabindex="0"
+              @scroll.passive="onThreadScroll"
+              @wheel.passive="onWheelScroll"
+              @keydown="onThreadKeydown"
+              @touchstart.passive="onThreadTouchStart"
+              @touchmove.passive="onThreadTouchMove"
+              @pointerdown="onThreadPointerDown"
+            >
               <li
                 v-for="message in threadMessages"
                 :key="message.id"
+                :data-mid="message.id"
                 class="msg"
                 :class="message.direction === 'out' ? 'msg--out' : 'msg--in'"
               >
@@ -765,6 +974,23 @@ watch(
 }
 
 .thread__text--error {
+  color: var(--error, #DC2626);
+}
+
+.thread__banner:empty {
+  display: none;
+}
+
+.thread__banner-text {
+  margin: 0;
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--text-muted, #8C867E);
+  border-bottom: 1px solid var(--border-subtle, #EDE9E1);
+  background: var(--bg-surface, #FFFFFF);
+}
+
+.thread__banner-text--error {
   color: var(--error, #DC2626);
 }
 

@@ -8,6 +8,7 @@
  * 边界：只读、只写本地 store；不发送、不自动回复、不调用 AI。
  */
 import type { ChatEventKind, ChatMessage, Conversation, SyncError } from '../../../shared/types/chat'
+import { INITIAL_CURSOR } from '../../../shared/chat/index'
 import { ChatHistoryClient, ChatHistoryError } from './history'
 import { parseWebSocketMessage, correctMessageDirection, normalizeUserId, type ParseContext } from './parser'
 import type { PeerProfileResolver } from './peer-profiles'
@@ -40,6 +41,13 @@ export interface SyncResult {
   error?: SyncError
   /** 解析提示（缺字段、未知结构等）。 */
   notes?: string[]
+  /**
+   * 历史同步专用：下一次继续向更早翻页时使用的服务端游标。
+   * 仅当 `hasMore` 为 `true` 时给出；失败或无更多时为 undefined。
+   */
+  nextCursor?: number
+  /** 历史同步专用：服务端是否还存在更早的历史。 */
+  hasMore?: boolean
 }
 
 /** 历史同步选项。 */
@@ -48,6 +56,8 @@ export interface SyncHistoryOptions {
   pages?: number
   /** 每页条数。 */
   count?: number
+  /** 起始服务端游标；不传时从最新一页开始（保持既有行为）。 */
+  cursor?: number
 }
 
 /** 会话同步选项。 */
@@ -193,7 +203,9 @@ export class ChatSync {
     const pages = options.pages ?? 1
     let added = 0
     let updated = 0
-    let cursor: number | undefined
+    let cursor: number | undefined = options.cursor
+    let hasMore = false
+    let nextCursor: number | undefined
     try {
       for (let page = 0; page < pages; page++) {
         const result = await this.history.listMessageHistory(sessionId, { cursor, count: options.count })
@@ -201,14 +213,20 @@ export class ChatSync {
         const count = this.store.upsertMessages(result.messages.map(normalizeMessage), { authoritativeHistory: true })
         added += count.added
         updated += count.updated
-        if (!result.hasMore || result.nextCursor <= 0) break
-        cursor = result.nextCursor
+        // 游标必须严格向更早推进：同值 / 反向 / 非法游标一律按失败处理，绝不当成终点，也不宣称耗尽。
+        const progress = readHistoryProgress(result, cursor)
+        if (!progress.ok) return { ok: false, added, updated, error: progress.error }
+        hasMore = progress.hasMore
+        nextCursor = progress.nextCursor
+        if (!hasMore) break
+        cursor = progress.nextCursor
         await this.sleep(300)
       }
       await this.store.flush()
-      return { ok: true, added, updated }
+      return { ok: true, added, updated, hasMore, ...(nextCursor !== undefined ? { nextCursor } : {}) }
     } catch (error) {
       // transport reject / LWP 业务失败 / 持久化失败：归一为结构化错误，绝不逃逸。
+      // 失败时不带游标：调用方不得据此推进分页位置。
       return { ok: false, added, updated, error: toSyncError(error) }
     }
   }
@@ -306,4 +324,27 @@ export class ChatSync {
       return ['对方资料解析失败（不影响会话同步）']
     }
   }
+}
+
+/**
+ * 归约平台历史分页进度（严格前进校验）。
+ *
+ * 平台游标是递减的正整数（0 / 缺省表示结束）。只有严格向更早方向前进才算有效：
+ * - hasMore 为真但游标缺失、非安全正整数、或未前进（同值 / 反向 / 等于初始上界）
+ *   → 结构化失败，绝不把重复页当终点，也不宣称已到最早一页；
+ * - hasMore 为假 → 正常结束（不给出游标）。
+ *
+ * 初次请求未带 cursor 时以 {@link INITIAL_CURSOR} 为上界，保证「无进展」同样被拦住。
+ */
+function readHistoryProgress(
+  result: { hasMore: boolean; nextCursor: number },
+  cursor: number | undefined,
+): { ok: true; hasMore: boolean; nextCursor: number | undefined } | { ok: false; error: SyncError } {
+  if (!result.hasMore) return { ok: true, hasMore: false, nextCursor: undefined }
+  const next = result.nextCursor
+  const upperBound = cursor ?? INITIAL_CURSOR
+  if (typeof next !== 'number' || !Number.isSafeInteger(next) || next <= 0 || next >= upperBound) {
+    return { ok: false, error: { code: 'CURSOR_STALLED', message: '平台历史分页游标未严格前进，已停止并标记失败' } }
+  }
+  return { ok: true, hasMore: true, nextCursor: next }
 }
