@@ -1,5 +1,6 @@
 import { createDailyCaptureFeishuSync } from './capture-feishu-sync'
 import { captureDate } from '../../../shared/data-source/feishu-daily-tables'
+import { mapCatalogProductToProduct } from '../../../shared/data-source/catalog-product-mapping'
 /**
  * MV3 background service worker 入口。
  *
@@ -689,6 +690,15 @@ async function createPublishRuntimeInstance(): Promise<PublishRuntime> {
     tasks,
     tabs: tabs as any,
     scripting: scripting as any,
+    // 当前账号自有商品只读回退来源：发布候选与创建共用商品目录（官方在售）契约。
+    // 本地商品库命中时仍优先使用本地记录，只在未命中时按 itemId 复验目录，绝不写入本地商品库。
+    ownedProducts: {
+      resolve: async (itemId: string) => {
+        const catalog = await getProductCatalogRuntime()
+        const product = await catalog.resolveMyPublishedItem(itemId)
+        return product ? mapCatalogProductToProduct(product) : null
+      },
+    },
     // 飞书素材发布闭环：读取已配置商品表（真实 getRecord → 映射 Product）；密钥仅用于请求层。
     feishuConfigStore: getFeishuConfigStore(),
     // 官方「我的商品库」只读读取器：提交结果以官方在售商品数 +1 / 新 itemId 为唯一成功证据。

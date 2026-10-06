@@ -147,7 +147,7 @@ function detectFreeShip(
 }
 
 /** 本地化时间字符串（与旧实现的 `toLocaleString('zh-CN')` 一致）。 */
-function formatTime(ms: number): string {
+export function formatProductTime(ms: number): string {
   return new Date(ms).toLocaleString('zh-CN')
 }
 
@@ -199,9 +199,9 @@ export function normalizeProductFromSearchItem(item: unknown, capturedAt: number
     originalPrice,
     originalPriceNumber: parsePriceNumber(originalPrice),
     wantCnt,
-    publishTime: publishTimeMs ? formatTime(publishTimeMs) : '',
+    publishTime: publishTimeMs ? formatProductTime(publishTimeMs) : '',
     publishTimeMs,
-    captureTime: formatTime(capturedAt),
+    captureTime: formatProductTime(capturedAt),
     captureTimeMs: capturedAt,
     sellerNick,
     sellerCity,

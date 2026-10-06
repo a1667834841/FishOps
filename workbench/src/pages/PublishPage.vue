@@ -529,43 +529,74 @@ function onFocusTask(task: PublishTask): void {
             </Callout>
           </div>
 
-          <div v-else class="select-form-row">
-            <div class="form-group flex-1">
-              <label for="product-select" class="form-label">
-                显式选择自营商品：<span class="count-tip">(共 {{ products.length }} 件候选)</span>
-              </label>
-              <select
-                id="product-select"
-                class="input-select"
-                :value="selectedProduct?.itemId || ''"
-                :disabled="isPublishing"
-                @change="onSelectProductChange"
-              >
-                <option value="">-- 请选择待发布商品 --</option>
-                <option v-for="p in products" :key="p.itemId" :value="p.itemId">
-                  {{ p.title }} ({{ formatRMB(p.price) }}) - [{{ p.itemId }}]
-                </option>
-              </select>
+          <template v-else>
+            <div
+              v-if="productsState.error"
+              class="error-state"
+              data-testid="publish-candidates-partial-warning"
+            >
+              <Callout tone="warn" :view="productsState.error">
+                <template #actions>
+                  <button type="button" class="btn btn--sm" @click="controller.loadProducts()">
+                    重新读取候选
+                  </button>
+                </template>
+              </Callout>
             </div>
+            <p
+              v-for="warning in productsState.warnings"
+              :key="warning"
+              class="count-tip"
+              data-testid="publish-candidates-warning"
+            >
+              {{ warning }}
+            </p>
+            <p
+              v-if="products.length === 0 && !productsState.error"
+              class="count-tip"
+              data-testid="publish-candidates-empty"
+            >
+              当前账号暂无可用自营商品候选；请点「刷新自营商品」重新读取，或前往商品库确认官方在售商品。
+            </p>
 
-            <div class="action-btn-group">
-              <button
-                type="button"
-                class="btn"
-                :disabled="isPublishing"
-                @click="onRandomPick"
-              >
-                🎲 随机选择 1 条商品
-              </button>
-              <button
-                type="button"
-                class="btn btn--primary"
-                @click="emit('navigate', 'products')"
-              >
-                前往商品库选品
-              </button>
+            <div class="select-form-row">
+              <div class="form-group flex-1">
+                <label for="product-select" class="form-label">
+                  显式选择自营商品：<span class="count-tip">(共 {{ products.length }} 件候选)</span>
+                </label>
+                <select
+                  id="product-select"
+                  class="input-select"
+                  :value="selectedProduct?.itemId || ''"
+                  :disabled="isPublishing"
+                  @change="onSelectProductChange"
+                >
+                  <option value="">-- 请选择待发布商品 --</option>
+                  <option v-for="p in products" :key="p.itemId" :value="p.itemId">
+                    {{ p.title }} ({{ formatRMB(p.price) }}) - [{{ p.itemId }}]
+                  </option>
+                </select>
+              </div>
+
+              <div class="action-btn-group">
+                <button
+                  type="button"
+                  class="btn"
+                  :disabled="isPublishing"
+                  @click="onRandomPick"
+                >
+                  🎲 随机选择 1 条商品
+                </button>
+                <button
+                  type="button"
+                  class="btn btn--primary"
+                  @click="emit('navigate', 'products')"
+                >
+                  前往商品库选品
+                </button>
+              </div>
             </div>
-          </div>
+          </template>
 
           <div v-if="!selectedProduct" class="select-guide-tip">
             <span>💡 提示：系统不会自动暗中选择商品，请从上方下拉列表挑选，或前往「商品库」直接点击商品行的「发布」按钮快速载入。</span>

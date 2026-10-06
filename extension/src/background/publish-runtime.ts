@@ -80,6 +80,7 @@ import type { FeishuConfigStore } from '../data-source/feishu-config-store'
 import {
   PublishController,
   type ImageDownloader,
+  type OwnedProductFallback,
   type PreparedImageFile,
 } from '../publish/controller'
 import {
@@ -116,6 +117,11 @@ export interface PublishEventEnvelope {
 export interface PublishRuntimeDeps {
   /** 商品仓储（P4 ProductRepository） */
   repository: ProductRepository
+  /**
+   * 当前账号自有商品的只读回退来源（本地商品库未命中时使用）。
+   * 未接线时发布创建只认本地商品库，保持原行为；接线后候选与创建共用官方在售目录契约。
+   */
+  ownedProducts?: OwnedProductFallback
   /** 任务管理器；缺省自动使用默认持久化 Store */
   tasks?: TaskManager
   /** Chrome Tabs API 抽象 */
@@ -296,6 +302,7 @@ export function createPublishRuntime(deps: PublishRuntimeDeps): PublishRuntime {
     deps.controller ??
     new PublishController({
       repository: deps.repository,
+      ...(deps.ownedProducts ? { ownedProducts: deps.ownedProducts } : {}),
       imageDownloader: deps.imageDownloader,
       now,
     })

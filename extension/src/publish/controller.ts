@@ -2,7 +2,9 @@
  * PublishController - 商品发布业务控制器（P8）。
  *
  * 职责：
- * 1. 严格从 ProductRepository 读取指定 itemId 的真实商品，严禁偷偷随机选择；
+ * 1. 严格读取指定 itemId 的真实商品，严禁偷偷随机选择：
+ *    先查本地 ProductRepository（已采集的当前账号商品），未命中时经注入的
+ *    {@link OwnedProductFallback} 从受支持的真实数据源（当前账号官方在售目录）只读解析；
  *    并强制商品来源为当前账号已确认发布商品（my_published），竞品 / 存量未确认一律结构化拒绝；
  * 2. 应用价格规则（系数倍率、固定价、加价、划线原价）与文案规则；
  * 3. 严格校验图片只允许 HTTPS 协议、数量限制、大小限制；
@@ -19,6 +21,7 @@ import {
   type PublishRule,
 } from '@fishops/shared'
 import type { ProductRepository } from '../../../shared/capture/product-repository'
+import type { Product } from '../../../shared/types/product'
 
 /**
  * 已下载并准备就绪的图片数据
@@ -101,11 +104,30 @@ export class DefaultImageDownloader implements ImageDownloader {
 }
 
 /**
+ * 当前账号自有商品的只读回退来源（本地商品库未命中时使用）。
+ *
+ * 实现必须从受支持的真实数据源（当前账号官方在售目录）读取并确认归属；
+ * 未命中返回 `null`，读取失败抛错。**绝不写入本地商品库**，也不得返回其他账号商品。
+ */
+export interface OwnedProductFallback {
+  /**
+   * 按 itemId 精确解析当前账号自有商品。
+   * @returns 命中返回真实商品；未命中返回 null；读取失败抛错
+   */
+  resolve(itemId: string): Promise<Product | null>
+}
+
+/**
  * PublishController 依赖注入配置
  */
 export interface PublishControllerDeps {
   /** 商品仓储（P4 ProductRepository） */
   repository: ProductRepository
+  /**
+   * 当前账号自有商品只读回退来源；未接线时只使用本地商品库（保持原行为）。
+   * 用途：候选来自商品目录（未采集入库）时，发布创建仍能读取同一来源的真实商品。
+   */
+  ownedProducts?: OwnedProductFallback
   /** 图片下载器抽象实现（默认 DefaultImageDownloader） */
   imageDownloader?: ImageDownloader
   /** 默认全局发布规则（缺省使用 DEFAULT_PUBLISH_RULE） */
@@ -119,17 +141,51 @@ export interface PublishControllerDeps {
  */
 export class PublishController {
   private readonly repository: ProductRepository
+  private readonly ownedProducts: OwnedProductFallback | null
   private readonly imageDownloader: ImageDownloader
   private readonly defaultRule: PublishRule
 
   constructor(deps: PublishControllerDeps) {
     this.repository = deps.repository
+    this.ownedProducts = deps.ownedProducts ?? null
     this.imageDownloader = deps.imageDownloader ?? new DefaultImageDownloader()
     this.defaultRule = deps.defaultRule ?? DEFAULT_PUBLISH_RULE
   }
 
   /**
-   * 严格从 ProductRepository 查询真实商品，应用规则组装出 PublishItem
+   * 解析待发布商品：先查本地商品库（既有采集/本地发布路径），未命中时回退到当前账号官方在售目录只读解析
+   * （未接线回退来源时保持原行为，直接视为未找到）。
+   *
+   * @param trimmedId 已裁剪的真实 itemId
+   * @returns 解析出的商品；未找到返回 null
+   */
+  private async resolveOwnedProduct(trimmedId: string): Promise<Product | null> {
+    // 查询必须显式带 source: 'all'：目的是先找到该 itemId 的真实商品，
+    // 再严格校验来源，以便对竞品 / legacy / 未确认结构化拒绝，而非笼统的“找不到”。
+    const page = await this.repository.list({ keyword: trimmedId, limit: 50, source: 'all' })
+    const found = page.products.find((p) => p.itemId === trimmedId)
+    if (found) return found
+    if (!this.ownedProducts) return null
+
+    let resolved: Product | null
+    try {
+      resolved = await this.ownedProducts.resolve(trimmedId)
+    } catch (error) {
+      // 目录读取失败绝不降级为“商品不存在”：两者对用户的后续动作不同（刷新重试 / 换商品）。
+      const reason = error instanceof PublishError ? error.message : String(error)
+      throw new PublishError(
+        'PRODUCT_SOURCE_UNAVAILABLE',
+        `读取当前账号在售商品目录失败，无法确认商品 "${trimmedId}" 归属，已拒绝创建：${reason}`,
+        { retryable: true },
+      )
+    }
+    // 回退来源必须给出真实且与请求 itemId 一致的记录，不允许错位映射。
+    if (!resolved || resolved.itemId !== trimmedId) return null
+    return resolved
+  }
+
+  /**
+   * 解析真实商品并按（合并规则 + override）组装出 PublishItem。
    *
    * @param itemId 目标商品 ID（必须显式传入，严禁私自随机选择）
    * @param ruleOverride 自定义发布规则覆盖
@@ -150,14 +206,11 @@ export class PublishController {
     }
 
     const trimmedId = itemId.trim()
-    // 查询必须显式带 source: 'all'：目的是先找到该 itemId 的真实商品，
-    // 再严格校验来源，以便对竞品 / legacy / 未确认结构化拒绝，而非笼统的“找不到”。
-    const page = await this.repository.list({ keyword: trimmedId, limit: 50, source: 'all' })
-    const product = page.products.find((p) => p.itemId === trimmedId)
+    const product = await this.resolveOwnedProduct(trimmedId)
     if (!product) {
       throw new PublishError(
         'PRODUCT_NOT_FOUND',
-        `商品库中未找到商品 ID: "${trimmedId}"，请先在商品库采集或导入该商品`,
+        `本地商品库与当前账号在售目录中均未找到商品 ID: "${trimmedId}"；若商品刚下架或候选过期，请刷新发布候选后重试`,
         { retryable: false },
       )
     }

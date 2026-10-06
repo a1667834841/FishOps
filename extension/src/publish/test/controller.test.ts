@@ -3,6 +3,7 @@
  *
  * 测试目标：
  * 1. 严格从 ProductRepository 按指定 itemId 获取商品，商品不存在时返回结构化 PRODUCT_NOT_FOUND；
+ *    Issue19 起：本地库未命中时经 OwnedProductFallback 从当前账号在售商品目录只读解析（同一来源契约）；
  * 2. 严禁私自偷偷随机选择商品；
  * 3. 准备图片接口全部可注入 mock，脱机运行，完全不发起真实网络请求；
  * 4. PublishController.submit 不提供自动提交（显式拒绝）；DOMPublishFormFiller.submit 返回结构化提交结果；
@@ -18,6 +19,7 @@ import {
   DefaultImageDownloader,
   PublishController,
   type ImageDownloader,
+  type OwnedProductFallback,
   type PreparedImageFile,
 } from '../controller'
 import {
@@ -390,4 +392,127 @@ test('DOMPublishFormFiller: 表单填充成功概览与 submit() 结构化返回
   // 本 mock 未模拟真实点击（无 args 分支返回状态对象）→ clicked:false
   const submitRes = await filler.submit(123)
   assert.equal(submitRes.clicked, false)
+})
+
+// ---- Issue19：发布候选与创建同源（商品目录 my_published → 发布创建） ----
+
+/** 回退来源测试替身：记录解析调用，便于验证「本地命中时绝不调用目录」。 */
+class MockOwnedProductFallback implements OwnedProductFallback {
+  public readonly resolvedIds: string[] = []
+  public errorToThrow: unknown = null
+  private readonly product: Product | null
+
+  constructor(product: Product | null) {
+    this.product = product
+  }
+
+  async resolve(itemId: string): Promise<Product | null> {
+    this.resolvedIds.push(itemId)
+    if (this.errorToThrow) throw this.errorToThrow
+    if (!this.product) return null
+    return this.product.itemId === itemId ? this.product : null
+  }
+}
+
+test('Issue19: 本地库未命中时回退当前账号在售目录只读解析，成功组装发布项', async () => {
+  const repo = createMemoryProductRepository()
+  const catalogProduct = createSampleProduct('catalog_1')
+  const fallback = new MockOwnedProductFallback(catalogProduct)
+  const controller = new PublishController({ repository: repo, ownedProducts: fallback })
+
+  const item = await controller.preparePublishItem('catalog_1')
+
+  assert.equal(item.itemId, 'catalog_1')
+  assert.equal(item.sourceTitle, catalogProduct.title)
+  assert.equal(item.price, 8500.0)
+  assert.deepEqual(fallback.resolvedIds, ['catalog_1'])
+  // 只读：目录解析绝不写入本地商品库。
+  const page = await repo.list({ source: 'all', limit: 10 })
+  assert.equal(page.total, 0)
+})
+
+test('Issue19: 本地库命中时优先本地记录，绝不调用目录回退（保持旧采集本地发布路径）', async () => {
+  const repo = createMemoryProductRepository()
+  const local = { ...createSampleProduct('local_1'), title: '本地采集商品' }
+  await repo.upsertProducts([local], Date.now())
+  const fallback = new MockOwnedProductFallback({ ...createSampleProduct('local_1'), title: '目录商品' })
+  const controller = new PublishController({ repository: repo, ownedProducts: fallback })
+
+  const item = await controller.preparePublishItem('local_1')
+
+  assert.equal(item.sourceTitle, '本地采集商品')
+  assert.deepEqual(fallback.resolvedIds, [])
+})
+
+test('Issue19: 本地库与在售目录均未命中 → PRODUCT_NOT_FOUND（空结果不误创建）', async () => {
+  const repo = createMemoryProductRepository()
+  const fallback = new MockOwnedProductFallback(null)
+  const controller = new PublishController({ repository: repo, ownedProducts: fallback })
+
+  await assert.rejects(
+    () => controller.preparePublishItem('gone_1'),
+    (err: unknown) => {
+      assert.ok(err instanceof PublishError)
+      assert.equal((err as PublishError).code, 'PRODUCT_NOT_FOUND')
+      return true
+    },
+  )
+  assert.deepEqual(fallback.resolvedIds, ['gone_1'])
+})
+
+test('Issue19: 目录回退返回其他来源商品 → PRODUCT_SOURCE_NOT_ALLOWED，绝不误发', async () => {
+  const repo = createMemoryProductRepository()
+  const competitor = {
+    ...createSampleProduct('comp_9'),
+    source: 'captured_search' as const,
+    status: 'unconfirmed',
+  }
+  const controller = new PublishController({
+    repository: repo,
+    ownedProducts: new MockOwnedProductFallback(competitor),
+  })
+
+  await assert.rejects(
+    () => controller.preparePublishItem('comp_9'),
+    (err: unknown) => {
+      assert.ok(err instanceof PublishError)
+      assert.equal((err as PublishError).code, 'PRODUCT_SOURCE_NOT_ALLOWED')
+      return true
+    },
+  )
+})
+
+test('Issue19: 目录读取失败 → PRODUCT_SOURCE_UNAVAILABLE（区别于商品不存在，可重试）', async () => {
+  const repo = createMemoryProductRepository()
+  const fallback = new MockOwnedProductFallback(null)
+  fallback.errorToThrow = new Error('未登录或登录状态已失效')
+  const controller = new PublishController({ repository: repo, ownedProducts: fallback })
+
+  await assert.rejects(
+    () => controller.preparePublishItem('catalog_2'),
+    (err: unknown) => {
+      assert.ok(err instanceof PublishError)
+      assert.equal((err as PublishError).code, 'PRODUCT_SOURCE_UNAVAILABLE')
+      assert.equal((err as PublishError).retryable, true)
+      return true
+    },
+  )
+})
+
+test('Issue19: 目录候选缺少可用图片 → IMAGE_DOWNLOAD_FAILED，无效候选不误创建', async () => {
+  const repo = createMemoryProductRepository()
+  const noImage = { ...createSampleProduct('no_img_1'), coverUrl: '', images: [] }
+  const controller = new PublishController({
+    repository: repo,
+    ownedProducts: new MockOwnedProductFallback(noImage),
+  })
+
+  await assert.rejects(
+    () => controller.preparePublishItem('no_img_1'),
+    (err: unknown) => {
+      assert.ok(err instanceof PublishError)
+      assert.equal((err as PublishError).code, 'IMAGE_DOWNLOAD_FAILED')
+      return true
+    },
+  )
 })
