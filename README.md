@@ -2,40 +2,6 @@
 
 面向闲鱼（goofish）卖家的运营工作台：以 MV3 浏览器扩展承载运行时，用 Vue 3 工作台把数据采集、聊天回复建议、商品库、发布与数据分析串成一条流程。
 
-## 安装与使用
-
-支持 Chrome 和 Microsoft Edge，通过开发者模式加载插件。
-
-1. 打开 [Releases](https://github.com/a1667834841/FishOps/releases)，选择需要的版本，在 **Assets** 中下载 `fishops-extension.zip`。
-2. 将 ZIP 解压到一个固定目录。确认该目录内直接包含 `manifest.json`、`background.js` 和 `workbench.html`。安装时选择这个目录，保留解压后的文件。
-3. 打开扩展管理页面：Chrome 输入 `chrome://extensions`，Edge 输入 `edge://extensions`。
-4. 启用 **开发者模式**，点击 **加载已解压的扩展程序**（Edge 中为 **加载解压缩的扩展**），选择上一步包含 `manifest.json` 的目录。
-5. 在同一浏览器中打开 [闲鱼网页版](https://www.goofish.com/) 并登录。如果安装前已打开闲鱼页面，请刷新页面。
-6. 点击浏览器工具栏中的扩展按钮，找到 **FishOps Workbench**，点击插件图标打开工作台。可将插件固定到工具栏，方便下次打开。
-
-如需使用 AI 或飞书相关功能，打开工作台的 **设置**，填写对应配置。
-
-### 注意事项
-
-- **启动插件前，必须确保同一浏览器中的闲鱼网页版已登录。** 登录失效时，请先重新登录，再启动插件。
-- **插件会自动打开闲鱼网页，以获取对应的 WebSocket（WS）连接，这是插件运行的必要步骤。** 请允许该页面打开，并保持页面处于登录状态，以便插件获取连接。
-
-### 更新插件
-
-下载新版本 ZIP，并将其解压后的文件替换到原安装目录。在扩展管理页面点击 FishOps Workbench 的 **重新加载** 按钮，然后刷新闲鱼页面并重新打开工作台。
-
-### 暂无 Release 时
-
-打开 [Actions](https://github.com/a1667834841/FishOps/actions)，选择「构建插件」的一次成功运行，在 **Artifacts** 中下载 `fishops-extension`。先解压下载的 Artifact，再解压其中的 `fishops-extension.zip`，然后按上述步骤加载。下载 Artifact 需要登录 GitHub。
-
-构建与发布流程见 [CI 说明](docs/ci.md)。
-
-### Agent 开发与 worktree 测试
-
-首次使用时，先在 ego lite 的扩展管理页手动加载固定目录 `~/.fishops/agent-extension`。之后在任意 worktree 执行 `npm run agent:setup`，会重新构建并同步固定目录，重载已加载的插件，再导入本地配置；日常更新不卸载插件，也不需要再次选择目录。未加载固定目录时，命令会提示首次手动加载路径。配置文件不会进入构建产物。完整流程、配置填写及测试限制见 [Agent 测试环境说明](docs/agent-testing.md)。
-
-需要单独卸载本地安装的 FishOps 测试插件时，运行 `npm run agent:uninstall`；本地配置文件和构建目录会保留。
-
 ## 背景介绍
 
 二手电商运营常要在多个页面之间反复手工操作：搜同类商品、逐条记录价格与想要人数、盯聊天回复、整理商品、再逐个上架。这些动作重复、耗时，且数据散落在各处，难以沉淀和对比。
@@ -81,6 +47,36 @@ FishOps Workbench 把这些环节收进一个工作台：
 
 - **数据分析**：选择本地或飞书数据源与提示词规则，生成结构化分析结果。
 - **设置**：配置外观、AI 模型、飞书与回复策略等。
+
+## 安装与使用
+
+支持 Chrome 和 Microsoft Edge，通过开发者模式加载插件。
+
+1. 打开 [Releases](https://github.com/a1667834841/FishOps/releases)，选择需要的版本，在 **Assets** 中下载 `fishops-extension.zip`。
+2. 将 ZIP 解压到一个固定目录。确认该目录内直接包含 `manifest.json`、`background.js` 和 `workbench.html`。安装时选择这个目录，保留解压后的文件。
+3. 打开扩展管理页面：Chrome 输入 `chrome://extensions`，Edge 输入 `edge://extensions`。
+4. 启用 **开发者模式**，点击 **加载已解压的扩展程序**（Edge 中为 **加载解压缩的扩展**），选择上一步包含 `manifest.json` 的目录。
+5. 在同一浏览器中打开 [闲鱼网页版](https://www.goofish.com/) 并登录。如果安装前已打开闲鱼页面，请刷新页面。
+6. 点击浏览器工具栏中的扩展按钮，找到 **FishOps Workbench**，点击插件图标打开工作台。可将插件固定到工具栏，方便下次打开。
+
+如需使用 AI 或飞书相关功能，打开工作台的 **设置**，填写对应配置。
+
+### 注意事项
+
+- **启动插件前，必须确保同一浏览器中的闲鱼网页版已登录。** 登录失效时，请先重新登录，再启动插件。
+- **插件会自动打开闲鱼网页，以获取对应的 WebSocket（WS）连接，这是插件运行的必要步骤。** 请允许该页面打开，并保持页面处于登录状态，以便插件获取连接。
+
+### 更新插件
+
+下载新版本 ZIP，并将其解压后的文件替换到原安装目录。在扩展管理页面点击 FishOps Workbench 的 **重新加载** 按钮，然后刷新闲鱼页面并重新打开工作台。
+
+### 暂无 Release 时
+
+打开 [Actions](https://github.com/a1667834841/FishOps/actions)，选择「构建插件」的一次成功运行，在 **Artifacts** 中下载 `fishops-extension`。先解压下载的 Artifact，再解压其中的 `fishops-extension.zip`，然后按上述步骤加载。下载 Artifact 需要登录 GitHub。
+
+构建与发布流程见 [CI 说明](docs/ci.md)。
+
+
 
 ## 免责说明
 
