@@ -16,6 +16,7 @@ import {
 import Callout from '../components/Callout.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PanelCard from '../components/PanelCard.vue'
+import ProductImagePreview from '../components/ProductImagePreview.vue'
 import { useBridgeController } from '../composables/useBridgeController'
 import type { PageId } from '../data/navigation'
 import type { PublishDraft } from '../features/publish/publish-draft-store'
@@ -596,18 +597,23 @@ function formatProductTitle(title?: string): string {
                     />
                   </td>
                   <td>
-                    <div class="product-thumb">
-                      <img
-                        v-if="product.coverUrl && !failedCovers.has(getCoverKey(product))"
-                        :src="product.coverUrl"
-                        :alt="product.title || '商品图片'"
-                        loading="lazy"
-                        @error="hideFailedCover(product)"
-                      />
-                      <span v-else class="product-thumb-empty" aria-hidden="true">
-                        <PhImage :size="22" />
-                      </span>
-                    </div>
+                    <ProductImagePreview
+                      :src="failedCovers.has(getCoverKey(product)) ? undefined : product.coverUrl"
+                      :alt="product.title || '商品图片'"
+                    >
+                      <div class="product-thumb">
+                        <img
+                          v-if="product.coverUrl && !failedCovers.has(getCoverKey(product))"
+                          :src="product.coverUrl"
+                          :alt="product.title || '商品图片'"
+                          loading="lazy"
+                          @error="hideFailedCover(product)"
+                        />
+                        <span v-else class="product-thumb-empty" aria-hidden="true">
+                          <PhImage :size="22" />
+                        </span>
+                      </div>
+                    </ProductImagePreview>
                   </td>
                   <td>
                     <div class="product-info-wrap">
@@ -625,8 +631,8 @@ function formatProductTitle(title?: string): string {
                     <span class="product-price">{{ displayPrice(product) }}</span>
                   </td>
                   <td>
-                    <span v-if="typeof product.wantCnt === 'number' && product.wantCnt > 0">
-                      <strong>{{ product.wantCnt }}</strong> 人想要
+                    <span v-if="typeof product.wantCnt === 'number' && Number.isFinite(product.wantCnt)">
+                      <strong>{{ product.wantCnt }}</strong>
                     </span>
                     <span v-else class="text-muted">—</span>
                   </td>

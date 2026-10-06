@@ -212,6 +212,21 @@ test('mapCatalogProductToTableItem: my_published 来源映射为 my_published, �
   assert.equal(tableItem.price, '¥299')
 })
 
+test('mapCatalogProductToTableItem: 两个来源均保留缺失想要数，不误显示为零', () => {
+  for (const source of ['feishu', 'my_published'] as const) {
+    const item = {
+      source, itemId: 'missing-want', title: '', price: '', priceNumber: 0,
+      originalPrice: '', originalPriceNumber: 0, coverUrl: '', detailUrl: '',
+      desc: '', images: [], wantCnt: 0,
+    }
+    // 模拟旧记录/运行时响应缺字段，不依赖静态契约保证字段存在。
+    Reflect.deleteProperty(item, 'wantCnt')
+    assert.equal(mapCatalogProductToTableItem(item).wantCnt, undefined)
+    assert.equal(mapCatalogProductToTableItem({ ...item, wantCnt: 0 }).wantCnt, 0)
+    assert.equal(mapCatalogProductToTableItem({ ...item, wantCnt: 26 }).wantCnt, 26)
+  }
+})
+
 test('mapCatalogProductToTableItem: 缺项安全补齐，价格和描述回退', () => {
   const minimalItem = {
     source: 'my_published' as const,
