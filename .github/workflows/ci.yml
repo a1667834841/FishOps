@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: 构建并上传插件压缩包
+    name: ci
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
