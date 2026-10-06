@@ -29,6 +29,7 @@ import {
   buildProductsCsv,
   csvFileName,
   displayCaptureTime,
+  displayPublishTime,
   displayPrice,
   pageInfo,
   productLink,
@@ -63,6 +64,13 @@ const { state, controller } = useBridgeController<ProductsState, ProductsControl
 const available = computed(() => state.value.availability === 'ready')
 const currentTab = computed(() => state.value.tab)
 const isFeishuTab = computed(() => state.value.tab === 'feishu')
+const timeLabel = computed(() => isFeishuTab.value ? '采集时间' : '发布时间')
+const orderOptions = computed(() => PRODUCT_ORDER_OPTIONS.map(option => ({
+  ...option, label: isFeishuTab.value ? option.label : option.label.replace('采集时间', '发布时间'),
+})))
+function displayTime(product: ProductTableItem): string {
+  return isFeishuTab.value ? displayCaptureTime(product) : displayPublishTime(product)
+}
 const result = computed(() => state.value.result)
 const query = computed(() => state.value.query)
 const keywordInput = ref('')
@@ -366,7 +374,7 @@ function formatProductTitle(title?: string): string {
                 v-model="keywordInput"
                 type="text"
                 class="input-text"
-                placeholder="搜索标题、卖家、地区..."
+                :placeholder="isFeishuTab ? '搜索标题、卖家、地区...' : '搜索商品名称、商品 ID...'"
                 aria-label="搜索商品"
                 :disabled="!available || busy"
                 @keydown.enter.prevent="submitSearch"
@@ -397,7 +405,7 @@ function formatProductTitle(title?: string): string {
               aria-label="排序方式"
               @change="onOrder"
             >
-              <option v-for="option in PRODUCT_ORDER_OPTIONS" :key="option.value" :value="option.value">
+              <option v-for="option in orderOptions" :key="option.value" :value="option.value">
                 {{ option.label }}
               </option>
             </select>
@@ -466,7 +474,7 @@ function formatProductTitle(title?: string): string {
           <Callout tone="ok">{{ exportNote }}</Callout>
         </div>
 
-        <div v-if="result.warnings && result.warnings.length > 0" class="notice-bar">
+        <div v-if="isFeishuTab && result.warnings && result.warnings.length > 0" class="notice-bar">
           <Callout tone="warn" title="商品详情提示">
             <template #default>
               <ul class="warning-list">
@@ -566,17 +574,17 @@ function formatProductTitle(title?: string): string {
                     />
                   </th>
                   <th style="width: 66px;">图片</th>
-                  <th>商品（itemId）</th>
+                  <th>{{ isFeishuTab ? '商品（itemId）' : '商品名称' }}</th>
                   <!-- 后端无价格排序，严格展示为普通表头 -->
                   <th>价格</th>
                   <th class="sortable" title="点击按想要数排序" @click="toggleSort('wants')">
                     想要数 <span class="sort-icon">↕</span>
                   </th>
-                  <th>卖家</th>
+                  <th v-if="isFeishuTab">卖家</th>
                   <th>地区</th>
                   <th>包邮</th>
-                  <th class="sortable" title="点击按采集时间排序" @click="toggleSort('time')">
-                    采集时间 <span class="sort-icon">↕</span>
+                  <th class="sortable" :title="`点击按${timeLabel}排序`" @click="toggleSort('time')">
+                    {{ timeLabel }} <span class="sort-icon">↕</span>
                   </th>
                   <th style="width: 140px; text-align: right;">操作</th>
                 </tr>
@@ -620,7 +628,7 @@ function formatProductTitle(title?: string): string {
                       <span class="product-name" :title="product.title || '（无标题）'">
                         {{ formatProductTitle(product.title) }}
                       </span>
-                      <span class="product-sku" :title="product.itemId || product.recordId || ''">
+                      <span v-if="isFeishuTab" class="product-sku" :title="product.itemId || product.recordId || ''">
                         <template v-if="product.itemId">itemId: {{ product.itemId }}</template>
                         <template v-else-if="product.recordId">recordId: {{ product.recordId }}</template>
                         <template v-else>无商品 ID</template>
@@ -636,7 +644,7 @@ function formatProductTitle(title?: string): string {
                     </span>
                     <span v-else class="text-muted">—</span>
                   </td>
-                  <td class="cell-ellipsis" :title="product.sellerNick || missingFieldHint(product, '卖家昵称')">
+                  <td v-if="isFeishuTab" class="cell-ellipsis" :title="product.sellerNick || missingFieldHint(product, '卖家昵称')">
                     {{ product.sellerNick || '—' }}
                   </td>
                   <td class="cell-ellipsis" :title="product.sellerCity || missingFieldHint(product, '地区')">
@@ -647,8 +655,8 @@ function formatProductTitle(title?: string): string {
                     <span v-else-if="product.freeShip === '否'" class="pill">不包邮</span>
                     <span v-else class="text-muted" :title="missingFieldHint(product, '包邮信息')">—</span>
                   </td>
-                  <td class="nowrap" :title="displayCaptureTime(product) || missingFieldHint(product, '采集时间')">
-                    {{ displayCaptureTime(product) }}
+                  <td class="nowrap" :title="displayTime(product) || missingFieldHint(product, timeLabel)">
+                    {{ displayTime(product) }}
                   </td>
                   <td style="text-align: right;">
                     <div class="cell-actions-wrap">
@@ -666,6 +674,7 @@ function formatProductTitle(title?: string): string {
 
                       <button
                         type="button"
+                        v-if="isFeishuTab"
                         class="action-btn action-btn--brand"
                         title="去发布中心编辑发布"
                         @click="onPublishRow(product)"

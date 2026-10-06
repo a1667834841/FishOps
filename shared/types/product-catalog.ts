@@ -68,6 +68,8 @@ export interface CatalogProduct {
   tags?: string
   /** 采集 / 读取时间戳（毫秒）；飞书为行内采集时间，当前账号为本次读取时刻。 */
   captureTimeMs?: number
+  /** 官方详情返回的发布时间（毫秒）；缺失时不使用读取时间替代。 */
+  publishTimeMs?: number
 }
 
 /** PRODUCT_CATALOG_QUERY 请求负载。 */

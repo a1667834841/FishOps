@@ -241,6 +241,12 @@ export function normalizeDetailPatch(payload: unknown): Partial<Product> {
   const itemDO = asRecord(data['itemDO']) ?? {}
   const sellerDO = asRecord(data['sellerDO']) ?? {}
   const patch: Partial<Product> = {}
+  // 官方详情的 gmtCreate 为发布时间，不能使用采集或读取时刻代替。
+  const publishTimeMs = asFiniteNumber(itemDO['gmtCreate'])
+  if (publishTimeMs !== undefined && publishTimeMs > 0) {
+    patch.publishTimeMs = publishTimeMs
+    patch.publishTime = formatProductTime(publishTimeMs)
+  }
 
   const browseCnt = asFiniteNumber(itemDO['browseCnt'])
   if (browseCnt !== undefined) patch.browseCnt = browseCnt

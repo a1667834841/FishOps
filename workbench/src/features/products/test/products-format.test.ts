@@ -250,3 +250,12 @@ test('mapCatalogProductToTableItem: 缺项安全补齐，价格和描述回退',
   assert.equal(tableItem.publishTimeMs, 0)
   assert.equal(tableItem.captureTimeMs, 0)
 })
+
+test('自有商品展示保留真实发布时间，不用读取时间替代', () => {
+  const item = mapCatalogProductToTableItem({ source: 'my_published', itemId: '1', publishTimeMs: 1700000000000, captureTimeMs: 1800000000000 } as import('../../contracts').CatalogProduct)
+  assert.equal(item.publishTimeMs, 1700000000000)
+  assert.ok(item.publishTime)
+  const missing = mapCatalogProductToTableItem({ source: 'my_published', itemId: '2', captureTimeMs: 1800000000000 } as import('../../contracts').CatalogProduct)
+  assert.equal(missing.publishTimeMs, 0)
+  assert.equal(missing.publishTime, '')
+})

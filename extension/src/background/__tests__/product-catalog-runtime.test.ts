@@ -562,3 +562,18 @@ test('Issue19: resolveMyPublishedItem 未登录 / 平台读取失败一律抛错
     },
   )
 })
+
+test('自有商品按真实发布时间排序，详情时间保留，缺失时不使用读取时间', async () => {
+  const runtime = createProductCatalogRuntime({
+    platform: makePlatform({
+      listOnSaleItems: async () => ({ accountId: 'u1', items: [card('1'), card('2'), card('3')] }),
+      detail: async (id) => ({ data: { itemDO: { gmtCreate: id === '1' ? 1700000000000 : id === '2' ? 1710000000000 : undefined } } }),
+    }), feishu: makeFeishu().port,
+  })
+  const query = async (order: 'captureTimeDesc' | 'captureTimeAsc') => ok(await runtime.handleCommand(createCommand(CommandTypes.PRODUCT_CATALOG_QUERY, { source: 'my_published', order })))
+  const desc = await query('captureTimeDesc')
+  assert.deepEqual(desc.products.map(x => x.itemId), ['2', '1', '3'])
+  assert.equal(desc.products[0]?.publishTimeMs, 1710000000000)
+  assert.equal(desc.products[2]?.publishTimeMs, undefined)
+  assert.deepEqual((await query('captureTimeAsc')).products.map(x => x.itemId), ['3', '1', '2'])
+})
