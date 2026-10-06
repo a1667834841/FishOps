@@ -505,7 +505,9 @@ export type PublishTask = Task<
 
 /**
  * 结构化失败分类与错误码
- * - PRODUCT_NOT_FOUND: 商品不存在
+ * - PRODUCT_NOT_FOUND: 商品不存在（本地商品库与当前账号在售目录均未命中）
+ * - PRODUCT_SOURCE_UNAVAILABLE: 读取当前账号在售商品目录失败（未登录 / 登录失效 / 平台错误 / 结构异常），
+ *   无法确认商品归属，**拒绝创建**（绝不把读取失败当作“商品不存在”或空候选）
  * - PRODUCT_SOURCE_NOT_ALLOWED: 商品来源不是当前账号已确认发布商品（竞品/存量未确认），禁止进入发布流程
  * - FEISHU_SOURCE_NOT_CONFIGURED: 飞书素材发布但未配置飞书多维表格
  * - FEISHU_RECORD_NOT_FOUND: 飞书源记录不存在（可能被删除或 recordId 失效）
@@ -534,6 +536,7 @@ export type PublishTask = Task<
  */
 export type PublishErrorCode =
   | 'PRODUCT_NOT_FOUND'
+  | 'PRODUCT_SOURCE_UNAVAILABLE'
   | 'PRODUCT_SOURCE_NOT_ALLOWED'
   | 'FEISHU_SOURCE_NOT_CONFIGURED'
   | 'FEISHU_RECORD_NOT_FOUND'

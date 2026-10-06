@@ -2,7 +2,8 @@
  * PublishController 纯逻辑与生命周期单测（P8）。
  *
  * 覆盖：
- * 1. PRODUCT_LIST 读取真实商品候选，严格禁止自动偷选，加载后 selectedProduct 保持为 null；
+ * 1. PRODUCT_LIST 读取本地商品库候选 + PRODUCT_CATALOG_QUERY 读取当前账号在售目录候选（同源契约），
+ *    严格禁止自动偷选，加载后 selectedProduct 保持为 null；加载 / 空结果 / 读取失败可区分；
  * 2. 显式选择商品与传空清除选择；
  * 3. 随机选择 1 条商品并更新选中预览；空商品库随机选择优雅报错不崩溃；
  * 4. 按钮状态防护：未选商品时禁止填表，抛出友好校验错误且不调用后台命令；
@@ -15,7 +16,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CommandTypes, EventTypes } from '@fishops/shared'
-import type { Product, PublishTask } from '../../contracts'
+import type { CatalogProduct, Product, PublishTask } from '../../contracts'
 import type { BridgeApi } from '../../shared/bridge-api'
 import { PublishController } from '../publish-controller'
 import {
@@ -57,6 +58,11 @@ class MockBridgeApi implements BridgeApi {
     makeMockProduct('prod_2', '富士相机 XT4', 8000),
     makeMockProduct('prod_3', '任天堂 Switch', 1500),
   ]
+  /** 商品目录（当前账号在售）候选；默认空，测试按需注入。 */
+  public catalogProductsToReturn: CatalogProduct[] = []
+  public catalogWarningsToReturn: string[] = []
+  public catalogErrorToThrow: any = null
+  public productListErrorToThrow: any = null
   public tasksToReturn: PublishTask[] = []
   public submitOutcomeToReturn: 'submitted' | 'unknown' = 'submitted'
   public submitErrorToThrow: any = null
@@ -65,7 +71,22 @@ class MockBridgeApi implements BridgeApi {
   async call(type: any, payload: any): Promise<any> {
     this.sentCommands.push({ type, payload })
     if (type === CommandTypes.PRODUCT_LIST) {
+      if (this.productListErrorToThrow) throw this.productListErrorToThrow
       return { products: this.productsToReturn, total: this.productsToReturn.length }
+    }
+    if (type === CommandTypes.PRODUCT_CATALOG_QUERY) {
+      if (this.catalogErrorToThrow) throw this.catalogErrorToThrow
+      const page = typeof payload?.page === 'number' ? payload.page : 0
+      return {
+        source: payload?.source ?? 'my_published',
+        products: page === 0 ? this.catalogProductsToReturn : [],
+        total: this.catalogProductsToReturn.length,
+        page,
+        pageSize: payload?.pageSize ?? 20,
+        hasMore: false,
+        warnings: this.catalogWarningsToReturn,
+        fetchedAt: Date.now(),
+      }
     }
     if (type === CommandTypes.PUBLISH_LIST) {
       return { tasks: this.tasksToReturn, total: this.tasksToReturn.length }
@@ -1307,4 +1328,140 @@ test('shouldAutoCloseConfirmModal: 仅 submitted 自动关闭；failure(null) / 
   const okRes = await okController.executeConfirmedPublish()
   assert.equal(okRes?.outcome, 'submitted')
   assert.equal(shouldAutoCloseConfirmModal(okRes), true, '仅 submitted 允许自动关闭弹窗')
+})
+
+// ---- Issue19：自营发布候选与创建同源（本地商品库 + 官方在售商品目录） ----
+
+function makeCatalogCandidate(itemId: string, title: string, price: number): CatalogProduct {
+  return {
+    source: 'my_published',
+    itemId,
+    title,
+    price: `¥${price.toFixed(2)}`,
+    priceNumber: price,
+    originalPrice: '',
+    originalPriceNumber: 0,
+    wantCnt: 3,
+    coverUrl: `https://img.alicdn.com/${itemId}.jpg`,
+    detailUrl: `https://www.goofish.com/item?id=${itemId}`,
+    desc: `${title} 真实描述`,
+    images: [`https://img.alicdn.com/${itemId}.jpg`],
+    captureTimeMs: 1788286400000,
+  }
+}
+
+test('Issue19: 候选合并本地商品库与官方在售目录，目录候选进入自营候选', async () => {
+  const api = new MockBridgeApi()
+  api.productsToReturn = [makeMockProduct('local_1', '本地采集商品', 100)]
+  api.catalogProductsToReturn = [makeCatalogCandidate('catalog_9', '官方在售商品', 88)]
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+
+  const s = controller.getState()
+  assert.equal(s.products.phase, 'ready')
+  assert.equal(s.products.error, null)
+  assert.deepEqual(
+    s.products.items.map((p) => p.itemId).sort(),
+    ['catalog_9', 'local_1'],
+  )
+  const catalogCandidate = s.products.items.find((p) => p.itemId === 'catalog_9')!
+  assert.equal(catalogCandidate.title, '官方在售商品')
+  assert.equal(catalogCandidate.priceNumber, 88)
+  assert.deepEqual(catalogCandidate.images, ['https://img.alicdn.com/catalog_9.jpg'])
+  // 仍不自动偷选。
+  assert.equal(s.selectedProduct, null)
+
+  // 旧采集本地发布路径保持：本地商品库仍被读取且限定 my_published。
+  const listCmd = api.sentCommands.find((c) => c.type === CommandTypes.PRODUCT_LIST)
+  assert.deepEqual(listCmd?.payload, { limit: 100, source: 'my_published' })
+  // 目录候选读取显式限定 my_published，分页从 0 开始，每页上限 100。
+  const catalogCmd = api.sentCommands.find((c) => c.type === CommandTypes.PRODUCT_CATALOG_QUERY)
+  assert.equal((catalogCmd?.payload as { source?: string }).source, 'my_published')
+  assert.equal((catalogCmd?.payload as { page?: number }).page, 0)
+  assert.equal((catalogCmd?.payload as { pageSize?: number }).pageSize, 100)
+})
+
+test('Issue19: 同一 itemId 时本地记录优先，目录不重复追加', async () => {
+  const api = new MockBridgeApi()
+  api.productsToReturn = [makeMockProduct('dup_1', '本地记录', 100)]
+  api.catalogProductsToReturn = [makeCatalogCandidate('dup_1', '目录记录', 999)]
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+
+  const items = controller.getState().products.items
+  assert.equal(items.length, 1)
+  assert.equal(items[0]!.title, '本地记录')
+  assert.equal(items[0]!.priceNumber, 100)
+})
+
+test('Issue19: 真实空结果（两源均成功但无商品）→ ready + 空列表 + 无错误，区别于读取失败', async () => {
+  const api = new MockBridgeApi()
+  api.productsToReturn = []
+  api.catalogProductsToReturn = []
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+
+  const s = controller.getState()
+  assert.equal(s.products.phase, 'ready')
+  assert.deepEqual(s.products.items, [])
+  assert.equal(s.products.error, null)
+})
+
+test('Issue19: 目录读取失败但本地有候选 → 保留本地候选并暴露错误，不冒充完整列表', async () => {
+  const api = new MockBridgeApi()
+  api.productsToReturn = [makeMockProduct('local_1', '本地采集商品', 100)]
+  api.catalogErrorToThrow = new Error('平台读取失败')
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+
+  const s = controller.getState()
+  assert.equal(s.products.phase, 'ready')
+  assert.deepEqual(s.products.items.map((p) => p.itemId), ['local_1'])
+  assert.ok(s.products.error, '目录读取失败必须暴露，不得静默显示为完整候选')
+})
+
+test('Issue19: 两源均失败 → phase error，绝不用 0 候选冒充读取成功', async () => {
+  const api = new MockBridgeApi()
+  api.productListErrorToThrow = new Error('本地库读取失败')
+  api.catalogErrorToThrow = new Error('目录读取失败')
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+
+  const s = controller.getState()
+  assert.equal(s.products.phase, 'error')
+  assert.ok(s.products.error)
+  assert.deepEqual(s.products.items, [])
+})
+
+test('Issue19: 目录返回飞书素材 / 脏条目时绝不混入自营候选', async () => {
+  const api = new MockBridgeApi()
+  api.productsToReturn = []
+  api.catalogProductsToReturn = [
+    { ...makeCatalogCandidate('catalog_9', '官方在售商品', 88) },
+    { ...makeCatalogCandidate('feishu_rec', '飞书素材', 10), source: 'feishu', recordId: 'rec_1' },
+    { ...makeCatalogCandidate('', '脏数据', 10) },
+  ]
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+
+  const items = controller.getState().products.items
+  assert.deepEqual(items.map((p) => p.itemId), ['catalog_9'])
+})
+
+test('Issue19: 目录 warnings（如详情补齐失败）原样透出供 UI 提示', async () => {
+  const api = new MockBridgeApi()
+  api.productsToReturn = []
+  api.catalogProductsToReturn = [makeCatalogCandidate('catalog_9', '官方在售商品', 88)]
+  api.catalogWarningsToReturn = ['商品 catalog_8 详情补齐失败（unknown）']
+  const controller = new PublishController({ api })
+
+  await controller.loadProducts()
+
+  assert.deepEqual(controller.getState().products.warnings, ['商品 catalog_8 详情补齐失败（unknown）'])
 })

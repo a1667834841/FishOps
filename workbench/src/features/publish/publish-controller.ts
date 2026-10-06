@@ -20,6 +20,7 @@ import {
   type FinalPublishItem,
 } from './publish-format'
 import type {
+  CatalogProduct,
   FeishuProductGetResult,
   Product,
   PublishCreatePayload,
@@ -30,6 +31,7 @@ import type {
   PublishSubmitResult,
   PublishTask,
 } from '../contracts'
+import { PRODUCT_CATALOG_MAX_PAGE_SIZE, mapCatalogProductToProduct } from '../contracts'
 import type { BridgeApi } from '../shared/bridge-api'
 import { toErrorView, type ErrorView } from '../shared/error-format'
 import { StateStore, type ActionPhase, type LoadPhase } from '../shared/state-store'
@@ -69,11 +71,21 @@ export interface EditingPublishDraft {
 
 export interface PublishState {
   availability: 'unavailable' | 'ready'
-  /** 自营商品库候选源加载状态 */
+  /**
+   * 自营商品候选源加载状态（本地商品库 + 商品目录合并结果）。
+   *
+   * 加载 / 空结果 / 读取失败必须可区分：
+   * - `phase='loading'`：读取中；
+   * - `phase='ready'` 且 `items=[]` 且 `error=null`：真实空结果（当前账号无可发布商品）；
+   * - `phase='ready'` 且 `error!==null`：部分来源读取失败（保留另一来源真实候选），UI 必须提示；
+   * - `phase='error'`：所有来源均失败，绝不用 0 候选冒充读取成功。
+   */
   products: {
     phase: LoadPhase
     items: Product[]
     error: ErrorView | null
+    /** 非致命说明（如目录分页截断、目录部分商品详情补齐失败），UI 原样展示。 */
+    warnings: string[]
   }
   /** 当前选中的商品（自营商品来源） */
   selectedProduct: Product | null
@@ -129,7 +141,7 @@ export function createInitialPublishState(
 ): PublishState {
   return {
     availability,
-    products: { phase: 'idle', items: [], error: null },
+    products: { phase: 'idle', items: [], error: null, warnings: [] },
     selectedProduct: null,
     editingDraft: null,
     customRule: {
@@ -170,6 +182,35 @@ interface FrozenPublishIdentity {
   recordId?: string
   targetTableId?: string
   itemId?: string
+}
+
+/** 商品目录（官方在售）候选读取分页上限：每页 100 条，超出时保留已读页并在 UI 提示。 */
+const CANDIDATE_CATALOG_MAX_PAGES = 5
+
+/** 单个候选来源的读取结果：失败必须显式携带错误，绝不用空数组冒充读取成功。 */
+interface CandidateSourceOutcome {
+  items: Product[]
+  error: ErrorView | null
+  warnings: string[]
+}
+
+/** 判断桥返回是否为对象（非法结构不得当作空候选）。 */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+/**
+ * 合并两类候选来源：本地商品库记录优先（既有采集 / 本地发布口径），目录条目按 itemId 去重补齐。
+ */
+function mergeCandidateProducts(local: readonly Product[], catalog: readonly Product[]): Product[] {
+  const merged = [...local]
+  const seen = new Set(local.map((p) => p.itemId))
+  for (const product of catalog) {
+    if (seen.has(product.itemId)) continue
+    seen.add(product.itemId)
+    merged.push(product)
+  }
+  return merged
 }
 
 /**
@@ -418,39 +459,101 @@ export class PublishController extends StateStore<PublishState> {
   }
 
   /**
-   * 从自营商品库加载候选商品（PRODUCT_LIST { source: 'my_published' }）
+   * 加载自营发布候选：本地商品库（PRODUCT_LIST）与商品目录（PRODUCT_CATALOG_QUERY）合并。
+   *
+   * 背景：本地商品库只包含已采集且已确认归属的商品，未采集的自营商品不会出现在候选里；
+   * 商品目录读取的是官方「我的商品库」真实在售商品，与发布创建的来源契约一致。
+   *
+   * 加载 / 空结果 / 读取失败明确区分：只有两个来源均失败才进入 error；
+   * 单来源失败时保留另一来源的真实候选并把失败写入 products.error，绝不静默显示为 0 候选。
    */
   async loadProducts(): Promise<void> {
     if (!this.api) return
     const s = this.state
     this.patch({
-      products: { ...s.products, phase: 'loading', error: null },
+      products: { ...s.products, phase: 'loading', error: null, warnings: [] },
     })
 
+    const [local, catalog] = await Promise.all([
+      this.loadLocalCandidates(),
+      this.loadCatalogCandidates(),
+    ])
+    const items = mergeCandidateProducts(local.items, catalog.items)
+    const failure = local.error ?? catalog.error
+    const phase: LoadPhase = items.length === 0 && failure ? 'error' : 'ready'
+
+    // 保持用户此前明确选中的自营商品（若仍存在于新列表中），禁止自动偷选
+    const retainedProduct = s.selectedProduct
+      ? items.find((p) => p.itemId === s.selectedProduct?.itemId) ?? null
+      : null
+
+    this.patch({
+      products: {
+        phase,
+        items,
+        error: failure,
+        warnings: [...catalog.warnings, ...local.warnings],
+      },
+      selectedProduct: retainedProduct,
+    })
+  }
+
+  /** 读取本地商品库中已确认归属的自营商品（既有采集 / 本地发布路径）。 */
+  private async loadLocalCandidates(): Promise<CandidateSourceOutcome> {
     try {
-      const res = await this.api.call(CommandTypes.PRODUCT_LIST, {
+      const res = await this.api!.call(CommandTypes.PRODUCT_LIST, {
         limit: 100,
         source: 'my_published',
       })
-      const items = Array.isArray(res?.products) ? res.products : []
-
-      // 保持用户此前明确选中的自营商品（若仍存在于新列表中），禁止自动偷选
-      const retainedProduct = s.selectedProduct
-        ? items.find((p) => p.itemId === s.selectedProduct?.itemId) ?? null
-        : null
-
-      this.patch({
-        products: { phase: 'ready', items, error: null },
-        selectedProduct: retainedProduct,
-      })
+      if (!isObject(res) || !Array.isArray(res.products)) {
+        throw new Error('PRODUCT_LIST 返回结构非法')
+      }
+      return { items: res.products as Product[], error: null, warnings: [] }
     } catch (err: unknown) {
-      this.patch({
-        products: {
-          ...s.products,
-          phase: 'error',
-          error: toErrorView(err),
-        },
-      })
+      return { items: [], error: toErrorView(err), warnings: [] }
+    }
+  }
+
+  /**
+   * 读取商品目录中当前账号官方在售商品（只读）；分页拉取至读完或达上限。
+   * 目录按 session 快照复用：翻页不重复触发平台读取。
+   */
+  private async loadCatalogCandidates(): Promise<CandidateSourceOutcome> {
+    const items: Product[] = []
+    const warnings: string[] = []
+    try {
+      let page = 0
+      let hasMore = true
+      while (hasMore && page < CANDIDATE_CATALOG_MAX_PAGES) {
+        const res = await this.api!.call(CommandTypes.PRODUCT_CATALOG_QUERY, {
+          source: 'my_published',
+          page,
+          pageSize: PRODUCT_CATALOG_MAX_PAGE_SIZE,
+          order: 'captureTimeDesc',
+        })
+        if (!isObject(res) || !Array.isArray(res.products)) {
+          throw new Error('PRODUCT_CATALOG_QUERY 返回结构非法')
+        }
+        for (const catalogProduct of res.products as CatalogProduct[]) {
+          // 飞书素材 / 缺 itemId 的脏数据返回 null，不得混入自营候选。
+          const mapped = mapCatalogProductToProduct(catalogProduct)
+          if (mapped) items.push(mapped)
+        }
+        if (Array.isArray(res.warnings)) {
+          warnings.push(...res.warnings.filter((w): w is string => typeof w === 'string'))
+        }
+        hasMore = res.hasMore === true
+        page += 1
+      }
+      if (hasMore) {
+        warnings.push(
+          `当前账号在售商品超出 ${CANDIDATE_CATALOG_MAX_PAGES * PRODUCT_CATALOG_MAX_PAGE_SIZE} 件候选读取上限，仅展示前若干页，未展示部分不会被自动选中`,
+        )
+      }
+      return { items, error: null, warnings }
+    } catch (err: unknown) {
+      // 已读到的真实候选予以保留，但错误必须暴露，绝不伪造为完整列表。
+      return { items, error: toErrorView(err), warnings }
     }
   }
 

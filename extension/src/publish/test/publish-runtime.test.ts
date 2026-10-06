@@ -1902,3 +1902,67 @@ test('PublishRuntime: 官方阻断只记录 officialBlock code，绝不写页面
   assert.ok(!json.includes('页面 toast 原文'))
   assert.ok(!json.includes('请更换分类'))
 })
+
+// ---- Issue19：发布候选与创建同源（目录回退来源接线） ----
+
+test('Issue19: 本地库未命中时 PUBLISH_CREATE 经只读目录回退创建任务（不写本地库）', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+  const catalogProduct = makeProduct('catalog_prod')
+  let resolveCalls = 0
+
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    imageDownloader: new MockImageDownloader(),
+    ownedProducts: {
+      resolve: async (itemId: string) => {
+        resolveCalls += 1
+        return itemId === catalogProduct.itemId ? catalogProduct : null
+      },
+    },
+  })
+  await runtime.init()
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'catalog_prod' }),
+  )
+  assert.equal(res.ok, true)
+  const task = (res.result as PublishCreateResult).task
+  assert.equal(task.status, 'pending')
+  assert.equal(task.payload.itemId, 'catalog_prod')
+  assert.equal(task.meta?.sourceProductSnapshot?.title, catalogProduct.title)
+  assert.equal(resolveCalls, 1)
+
+  // 只读：目录回退绝不把商品写入本地商品库。
+  const page = await repository.list({ source: 'all', limit: 10 })
+  assert.equal(page.total, 0)
+})
+
+test('Issue19: 目录读取失败时 PUBLISH_CREATE 结构化拒绝且不创建任务', async () => {
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
+  const repository = createMemoryProductRepository()
+
+  const runtime = createPublishRuntime({
+    tasks,
+    repository,
+    imageDownloader: new MockImageDownloader(),
+    ownedProducts: {
+      resolve: async () => {
+        throw new Error('未登录或登录状态已失效')
+      },
+    },
+  })
+  await runtime.init()
+
+  const res = await runtime.handleCommand(
+    makeCommand(CommandTypes.PUBLISH_CREATE, { itemId: 'catalog_prod' }),
+  )
+  assert.equal(res.ok, false)
+  assert.equal(res.error?.businessCode, 'PRODUCT_SOURCE_UNAVAILABLE')
+
+  const list = await tasks.list({ type: 'publish' })
+  assert.equal(list.length, 0)
+})

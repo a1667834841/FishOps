@@ -159,6 +159,7 @@ export {
   type FeishuSchemaReconcileStrategy,
   type FeishuSchemaApiCapability,
 } from '../../../shared/data-source/feishu-schema-reconcile'
+export { mapCatalogProductToProduct } from '../../../shared/data-source/catalog-product-mapping'
 export { isCompilablePattern, isReplyRule } from '../../../shared/reply/validate'
 export {
   ALLOWED_TEMPLATE_VARIABLES,

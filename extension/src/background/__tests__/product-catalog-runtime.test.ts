@@ -467,3 +467,98 @@ test('缓存刷新：刷新期间新增来源会排队执行', async () => {
   assert.equal(feishuReads, 2)
   assert.equal(publishedReads, 1)
 })
+
+// ---- Issue19：发布创建复用同一来源契约（当前账号在售目录只读解析） ----
+
+test('Issue19: resolveMyPublishedItem 复用会话快照按 itemId 精确解析，未命中返回 null', async () => {
+  let reads = 0
+  const runtime = createProductCatalogRuntime({
+    platform: makePlatform({
+      listOnSaleItems: async () => {
+        reads += 1
+        return { accountId: 'u1', items: [card('a'), card('b')] }
+      },
+      detail: async () => ({ data: {} }),
+    }),
+    feishu: makeFeishu().port,
+    now: () => 1000,
+  })
+
+  assert.equal((await runtime.resolveMyPublishedItem('b'))?.itemId, 'b')
+  // 未命中（商品已下架 / 候选过期）：返回 null，绝不猜商品。
+  assert.equal(await runtime.resolveMyPublishedItem('not_exist'), null)
+  // 会话复用：解析不重复触发平台读取。
+  assert.equal(reads, 1)
+})
+
+test('Issue19: resolveMyPublishedItem 空 itemId 直接返回 null 且不触发平台读取', async () => {
+  let reads = 0
+  const runtime = createProductCatalogRuntime({
+    platform: makePlatform({
+      listOnSaleItems: async () => {
+        reads += 1
+        return { accountId: 'u1', items: [card('a')] }
+      },
+      detail: async () => ({ data: {} }),
+    }),
+    feishu: makeFeishu().port,
+    now: () => 1000,
+  })
+
+  assert.equal(await runtime.resolveMyPublishedItem('   '), null)
+  assert.equal(reads, 0)
+})
+
+test('Issue19: resolveMyPublishedItem 账号切换后旧集合清空，旧 itemId 不再命中', async () => {
+  let account = 'u1'
+  const runtime = createProductCatalogRuntime({
+    platform: makePlatform({
+      currentUserId: async () => account,
+      listOnSaleItems: async () =>
+        account === 'u1' ? { accountId: 'u1', items: [card('a')] } : { accountId: 'u2', items: [card('b')] },
+      detail: async () => ({ data: {} }),
+    }),
+    feishu: makeFeishu().port,
+    now: () => 1000,
+  })
+
+  assert.equal((await runtime.resolveMyPublishedItem('a'))?.itemId, 'a')
+  account = 'u2'
+  // 切号后绝不返回上一账号的商品。
+  assert.equal(await runtime.resolveMyPublishedItem('a'), null)
+  assert.equal((await runtime.resolveMyPublishedItem('b'))?.itemId, 'b')
+})
+
+test('Issue19: resolveMyPublishedItem 未登录 / 平台读取失败一律抛错，绝不降级为空', async () => {
+  const notLoggedIn = createProductCatalogRuntime({
+    platform: makePlatform({ currentUserId: async () => null }),
+    feishu: makeFeishu().port,
+    now: () => 1000,
+  })
+  await assert.rejects(
+    () => notLoggedIn.resolveMyPublishedItem('a'),
+    (err: unknown) => {
+      assert.ok(err instanceof PlatformError)
+      assert.equal((err as PlatformError).category, 'unauthorized')
+      return true
+    },
+  )
+
+  const failing = createProductCatalogRuntime({
+    platform: makePlatform({
+      listOnSaleItems: async () => {
+        throw new PlatformError('token-expired', '会话已过期')
+      },
+    }),
+    feishu: makeFeishu().port,
+    now: () => 1000,
+  })
+  await assert.rejects(
+    () => failing.resolveMyPublishedItem('a'),
+    (err: unknown) => {
+      assert.ok(err instanceof PlatformError)
+      assert.equal((err as PlatformError).category, 'token-expired')
+      return true
+    },
+  )
+})

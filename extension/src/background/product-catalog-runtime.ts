@@ -82,6 +82,17 @@ export interface ProductCatalogRuntimeDeps {
 export interface ProductCatalogRuntime {
   handleCommand(command: CommandEnvelope): Promise<ResponseEnvelope>
   refreshCaches(source?: 'feishu' | 'my_published' | 'all'): Promise<void>
+  /**
+   * 只读解析当前账号自有（`my_published`）商品：复用会话快照，按 itemId 精确匹配。
+   *
+   * 语义约定：
+   * - 命中返回目录条目；未命中返回 `null`（可能是已下架 / 候选过期，调用方应提示刷新）；
+   * - 空 itemId 直接返回 `null`，绝不猜商品；
+   * - 未登录 / 登录失效 / 账号变更 / 平台读取失败一律抛 {@link PlatformError}，
+   *   **绝不降级为空候选或返回其他账号的商品**；
+   * - 只读：不写入本地商品库，也不产生任何外部写入。
+   */
+  resolveMyPublishedItem(itemId: string): Promise<CatalogProduct | null>
 }
 
 /** 详情补齐默认时间预算（列表读取通常数秒，预算内补齐可保证首次调用在 bridge 超时内返回）。 */
@@ -441,6 +452,17 @@ export function createProductCatalogRuntime(deps: ProductCatalogRuntimeDeps): Pr
     await Promise.allSettled(tasks)
   }
 
+  /**
+   * 只读解析当前账号自有商品（当前账号官方在售目录）：复用会话快照（无快照时重建一次）。
+   * 账号失效 / 切换 / 平台读取失败抛错，未命中返回 null。
+   */
+  async function resolveMyPublishedItem(itemId: string): Promise<CatalogProduct | null> {
+    const target = itemId?.trim() ?? ''
+    if (!target) return null
+    const current = await load(false)
+    return current.products.find((product) => product.itemId === target) ?? null
+  }
+
   function toErrorResponse(command: CommandEnvelope, error: unknown): ResponseEnvelope {
     if (error instanceof PlatformError) {
       const protocolError: ProtocolError = {
@@ -483,5 +505,5 @@ export function createProductCatalogRuntime(deps: ProductCatalogRuntimeDeps): Pr
     }
   }
 
-  return { handleCommand, refreshCaches }
+  return { handleCommand, refreshCaches, resolveMyPublishedItem }
 }
