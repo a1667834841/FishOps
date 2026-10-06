@@ -15,7 +15,7 @@
 - `npm run build:workbench`：通过，退出码 0；产物输出 `extension/dist`。
 - `git diff --check`：通过。
 
-## 浏览器验收
+## 开发阶段浏览器检查（mock，不计入最终验收）
 
 入口为 `http://127.0.0.1:5174/test/direct-runtime.html?image-preview`，通过实际 Vue 商品库页面操作，Vite 热更新加载本次代码。专用 runtime mock 提供 6 行商品、内嵌横竖 SVG、无封面与失败封面。没有读取账号凭据，没有真实发布或外部写入。
 
@@ -31,18 +31,23 @@
 | 切出概览，再进入商品库 | 无残留，重新悬浮正常 | 清理卸载状态 |
 | 选择想要人数排序 | `PRODUCT_CATALOG_QUERY` 保留 `order: wantCntDesc` | 排序契约未修改 |
 
-## 实际页面效果图
+## 真实环境 1:1 最终验收与截图
 
-以下截图来自上述本地实际 Vue 页面，使用内嵌 SVG 测试图片，不是真实商品数据。
+在当前 worktree 运行 `npm run agent:setup`，退出码 0，输出 `SETUP_COMPLETED：插件已重载，配置与权限状态已验证。`。该分支尚无此命令，本次临时复用主工作区现有 agent 脚本及 npm 命令配置，执行后恢复；未将部署脚本改动提交到 PR。
 
-### 默认行距：横图悬浮放大与想要数纯数字展示
+部署来源为当前 worktree、提交 `39d76b69`，真实入口 `chrome-extension://lnkgjbkfdimiloglccfmeefcclfgifbo/workbench.html`。通过真实扩展、真实商品库读取 20 行数据，未注入数据或使用 mock runtime（`window.__FISHOPS_TEST_HARNESS__` 不存在）。没有执行发布或远端写入。
 
-![默认行距：横图悬浮放大，想要数保留 6、26、0 与缺失值](images/issue-11-preview-default.png)
+- 默认行距首行悬浮：真实图片尺寸 768×1376，contain，预览位于视口内，行高前后均为 64.5px。
+- 真实想要数展示为纯数字，前四行为 6、0、0、0。
+- 移出关闭、紧凑行距悬浮第二行、连续切换对应正确图片、切出概览清理均通过。
+- 未通过造数据来补齐边界：该次真实数据未覆盖缺失想要数和失败封面，其边界回归仅由开发阶段测试支持。
 
-### 紧凑行距：竖图保持比例
+### 默认行距：真实商品图片放大
 
-![紧凑行距：竖图悬浮放大并保持比例](images/issue-11-preview-compact.png)
+![真实环境默认行距悬浮预览](images/issue-11-real-default.png)
 
-## 验证边界
+### 紧凑行距：切换真实商品图片
 
-浏览器验收使用实际工作台页面及 mock runtime，不代表真实 Chrome 扩展账号、飞书表或闲鱼商品的联调验收。真实环境需重载构建后的扩展、刷新工作台，由人工 Review 后验证；不自动合并。
+![真实环境紧凑行距悬浮预览](images/issue-11-real-compact.png)
+
+PR 等待人工 Review，不自动合并。
