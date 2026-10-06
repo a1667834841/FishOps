@@ -35,6 +35,18 @@ const fixture = {
   tags: '',
   captureTimeMs: Date.now(),
 }
+/** 仅在专用验收 URL 启用图片 fixture，不访问外部图片或修改其他验收数据。 */
+const previewProducts = new URLSearchParams(location.search).has('image-preview')
+  ? [6, 26, 0, undefined, 2, 3].map((wantCnt, index) => ({
+      ...fixture,
+      itemId: `PREVIEW-${index}`,
+      title: `图片预览验收 ${index}`,
+      wantCnt,
+      coverUrl: index === 3 ? '' : index === 4 ? '/test/missing-preview-image.png'
+        : `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${index === 1 ? 120 : 320}" height="${index === 1 ? 320 : 120}"><rect width="100%" height="100%" fill="${index === 1 ? '#92c9d8' : '#f5c400'}"/></svg>`)}`,
+    }))
+  : null
+
 const calls: Window['__FISHOPS_TEST_HARNESS__']['calls'] = []
 let eventSeq = 0
 const listeners = new Map<string, Set<(message: unknown) => void>>()
@@ -237,7 +249,7 @@ const commandResult = (type: string, payload: Record<string, any> = {}): unknown
     case CommandTypes.CHAT_MARK_READ: return { ok: true, updated: true }
     case CommandTypes.RUNTIME_STATUS: return { status: 'disconnected', connected: false }
     case CommandTypes.PRODUCT_CATALOG_QUERY: {
-      const products = payload.source === 'my_published' ? [fixture, { ...fixture, itemId: 'TEST-ITEM-UNKNOWN-9', title: '独立 unknown 测试商品' }, { ...fixture, itemId: 'TEST-ITEM-TIMEOUT-7', title: '独立 timeout 测试商品' }] : []
+      const products = payload.source === 'my_published' ? previewProducts ?? [fixture, { ...fixture, itemId: 'TEST-ITEM-UNKNOWN-9', title: '独立 unknown 测试商品' }, { ...fixture, itemId: 'TEST-ITEM-TIMEOUT-7', title: '独立 timeout 测试商品' }] : []
       return { source: payload.source, products, total: products.length, page: payload.page ?? 0, pageSize: payload.pageSize ?? 20, hasMore: false }
     }
     case CommandTypes.PRODUCT_LIST: return { products: [fixture, { ...fixture, itemId: 'TEST-ITEM-UNKNOWN-9', title: '独立 unknown 测试商品' }, { ...fixture, itemId: 'TEST-ITEM-TIMEOUT-7', title: '独立 timeout 测试商品' }] }
