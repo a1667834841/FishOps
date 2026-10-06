@@ -37,7 +37,7 @@
 
 ## 验证边界与交付
 
-依据 `docs/development-testing.md` 的明确局部问题快速路径，本次使用真实 TaskManager、MemoryTaskStore 和 AdapterTaskStore 做确定性模块验证；Chrome StorageArea 使用 Mock，不能称为真实浏览器 E2E。
+依据[测试阶段规范](workflow/test.md)的局部逻辑路径，本次使用真实 TaskManager、MemoryTaskStore 和 AdapterTaskStore 做确定性模块验证；Chrome StorageArea 使用 Mock，不能称为真实浏览器 E2E。
 
 没有 DOM、页面、扩展入口或存储结构变更，没有执行 `agent:setup` 或真实浏览器部署，没有真实采集、发布、发送、飞书写入或 LLM 请求，无页面效果截图要求。真实 Chrome 用户操作时序未验证。
 
