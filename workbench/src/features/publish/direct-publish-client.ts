@@ -23,6 +23,8 @@ export interface DirectPublishJob {
   idempotencyKey: string
   status: string
   itemId?: string
+  /** 发布时冻结的商品名称，旧记录可缺省。 */
+  productName?: string
   at: string
   code?: string
   actionRequired?: string

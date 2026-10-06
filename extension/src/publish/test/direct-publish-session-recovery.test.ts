@@ -453,7 +453,7 @@ test('fail-closed：session 条目缺关键数据（缺 propertyCards）→ 拒�
 
 // ==================== 隐私与容量 ====================
 
-test('隐私：prepared 只落 session（非落盘），storage.local 不出现个人地址 / 正文', async () => {
+test('隐私：prepared 只落 session（非落盘），storage.local 仅审计及商品名称摘要，不保存地址或完整草稿', async () => {
   const env = makeEnv()
   const api = apiFor(env)
   const prepared = await prepareOk(api)
@@ -466,11 +466,17 @@ test('隐私：prepared 只落 session（非落盘），storage.local 不出现�
 
   const submitted = await api.submit!(submitBody(prepared.prepareToken as string))
   assert.equal(submitted.status, 'published')
-  // 落盘仅审计（脱敏），绝不含个人地址 / 正文。
+  // 落盘仅审计及公开商品名称摘要，不保存地址、图片或完整草稿。
   assert.deepEqual(Object.keys(env.storage.snapshot()), [DIRECT_PUBLISH_AUDIT_STORAGE_KEY])
   const localText = JSON.stringify(env.storage.snapshot())
   assert.ok(!localText.includes('测试发货点'))
-  assert.ok(!localText.includes('原始描述'))
+  const ledger = env.storage.snapshot()[DIRECT_PUBLISH_AUDIT_STORAGE_KEY] as { entries: Record<string, Record<string, unknown>> }
+  const entry = Object.values(ledger.entries)[0]!
+  assert.equal(entry.productName, '原始描述')
+  assert.ok(String(entry.productName).length <= 120)
+  assert.ok(!('draft' in entry))
+  assert.ok(!('address' in entry))
+  assert.ok(!('images' in entry))
   // token 已消耗：session 中条目清空，仅保留 consumed 记录（用于区分重复提交）。
   const after = env.session.snapshot()[DIRECT_PUBLISH_PREPARED_SESSION_KEY] as { entries: Record<string, unknown>; consumed: Record<string, number> }
   assert.equal(Object.keys(after.entries).length, 0)

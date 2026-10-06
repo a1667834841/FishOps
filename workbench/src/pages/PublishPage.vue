@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { enterDraftFlow } from '../features/publish/direct-publish-flow'
-import { DirectPublishClient } from '../features/publish/direct-publish-client'
+import { DirectPublishClient, type DirectPublishJob } from '../features/publish/direct-publish-client'
 import Callout from '../components/Callout.vue'
 import PanelCard from '../components/PanelCard.vue'
 import {
@@ -22,9 +22,8 @@ import type { PublishTask } from '../features/contracts'
 import {
   formatConfirmationStatus,
   formatPublishTaskStatus,
-  formatRMB,
 } from '../features/publish/publish-format'
-import { filterPublishHistory, mergePublishHistory } from '../features/publish/publish-history'
+import { filterPublishHistory, mergePublishHistory, resolvePublishHistoryNames } from '../features/publish/publish-history'
 import type { PublishDraft } from '../features/publish/publish-draft-store'
 import { publishDraftStore } from '../features/publish/publish-draft-store'
 
@@ -57,8 +56,6 @@ const {
 } = useDirectPublish()
 
 // 状态映射
-const productsState = computed(() => state.value.products)
-const products = computed(() => state.value.products.items)
 const selectedProduct = computed(() => state.value.selectedProduct)
 const editingDraft = computed(() => state.value.editingDraft)
 const taskListState = computed(() => state.value.taskList)
@@ -123,22 +120,27 @@ const isPublishing = computed(() => {
 const countdownSeconds = ref(0)
 // 是否展开“发布任务历史”：发布中心默认即展示任务列表，故初始为 true
 const taskHistoryOpen = ref(true)
-const directHistory = ref<Array<{ idempotencyKey: string; status: string; itemId?: string; at: string; code?: string; actionRequired?: string }>>([])
+const directHistory = ref<DirectPublishJob[]>([])
+let historyLoadSeq = 0
 const directHistoryError = ref('')
 const historyClient = new DirectPublishClient()
 async function loadDirectHistory(): Promise<void> {
+  const seq = ++historyLoadSeq
   const result = await historyClient.getJobs()
+  if (seq !== historyLoadSeq) return
   if (result.ok) {
     directHistory.value = result.jobs
     directHistoryError.value = ''
+    const resolved = await resolvePublishHistoryNames(result.jobs, historyClient)
+    if (seq === historyLoadSeq) directHistory.value = resolved
   } else {
     directHistoryError.value = result.error?.message || '读取直接发布历史失败'
   }
 }
 void loadDirectHistory()
 // 是否处于“仅任务列表”视图（发布成功倒计时结束时置 true）。
-// 该视图隐藏“选择发布素材”、成功结果区与 DirectPublishModal，只保留任务历史；
-// 默认 false，保证新挂载或以商品库进入时仍走正常选品/发布流程，不被上一次成功状态永久隐藏。
+// 该视图隐藏成功结果区与 DirectPublishModal，只保留任务历史；
+// 默认 false，保证新挂载或以商品库进入时仍走商品库草稿/发布流程，不被上一次成功状态永久隐藏。
 const showTaskListOnly = ref(false)
 // 计时器清理函数属于当前页面实例，离开发布页时立即释放，避免下次进入残留。
 let clearCountdownTimer = (): void => {}
@@ -206,6 +208,8 @@ watch(directPhase, (phase, previousPhase) => {
 })
 
 onUnmounted(() => {
+  // 作废在途历史读取，离开页面后不恢复旧数据。
+  historyLoadSeq++
   // 注销跨页面草稿订阅，避免切页累积旧回调
   unsubscribeDraftStore()
 
@@ -227,30 +231,6 @@ async function onRefreshTasks(): Promise<void> {
 }
 
 
-// ---------------- 商品选择操作 ----------------
-function onSelectProductChange(event: Event): void {
-  const target = event.target as HTMLSelectElement
-  controller.selectProduct(target.value)
-}
-
-async function onRandomPick(): Promise<void> {
-  await controller.selectRandomProduct()
-}
-
-function onClearDraft(): void {
-  // 用户主动重新选品时退出“仅任务列表”视图，恢复选品/发布入口，避免成功状态永久隐藏流程
-  showTaskListOnly.value = false
-  emit('clearDraft')
-  publishDraftStore.clearDraft()
-  controller.selectProduct('')
-}
-
-function onFocusTask(task: PublishTask): void {
-  controller.setCurrentTask(task)
-  if (task.id) {
-    void controller.getTask(task.id)
-  }
-}
 </script>
 
 <template>
@@ -279,13 +259,17 @@ function onFocusTask(task: PublishTask): void {
             </div>
             <div class="toolbar-right">
               <button
+                v-if="hasDraftOrProduct && !showTaskListOnly"
                 type="button"
-                v-if="showTaskListOnly"
-                class="btn btn--sm btn--ghost"
-                @click="onClearDraft"
-              >
-                重新选择素材
-              </button>
+                class="btn btn--sm"
+                :disabled="isPublishing || isDirectDraftLocked"
+                :aria-busy="isPublishing"
+                @click="onOpenPublishModal"
+              >核对当前商品</button>
+              <div v-if="hasDraftOrProduct && !showTaskListOnly" class="emoji-tooltip-trigger" tabindex="0" aria-label="表情符号清理提示">
+                <PhInfo :size="16" aria-hidden="true" />
+                <span class="emoji-tooltip-text">描述中的表情符号（emoji）已在发布前自动清理</span>
+              </div>
               <input
                 id="publish-search-input"
                 v-model="searchKeyword"
@@ -351,7 +335,7 @@ function onFocusTask(task: PublishTask): void {
             <table class="seline-table data-table">
               <thead>
                 <tr>
-                  <th style="width: 130px;">时间</th>
+                  <th style="width: 180px;">时间</th>
                   <th>摘要</th>
                   <th style="width: 116px;">任务状态</th>
                   <th style="width: 96px;">确认状态</th>
@@ -363,8 +347,6 @@ function onFocusTask(task: PublishTask): void {
                   <td class="col-time">{{ row.createdAt ? new Date(row.createdAt).toLocaleString() : '时间未知' }}</td>
                   <td class="col-summary">
                     <strong>{{ row.summary }}</strong>
-                    <small v-if="row.source === 'direct-audit'"> · 直接发布审计</small>
-                    <small v-else> · 旧任务</small>
                   </td>
                   <td>
                     <StatusTag :tone="row.statusTone || 'neutral'">
@@ -377,17 +359,22 @@ function onFocusTask(task: PublishTask): void {
                     </StatusTag>
                   </td>
                   <td class="col-actions" style="text-align: right;">
+                    <a
+                      v-if="row.itemUrl"
+                      class="btn btn--sm action-btn"
+                      :href="row.itemUrl"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="查看平台商品"
+                    >查看</a>
                     <button
-                      v-if="row.task"
+                      v-else
                       type="button"
                       class="btn btn--sm action-btn"
-                      title="查看任务详情"
-                      @click="onFocusTask(row.task)"
-                    >
-                      查看
-                    </button>
-                    <code v-else-if="row.itemId">{{ row.itemId }}</code>
-                    <span v-else>—</span>
+                      disabled
+                      title="缺少有效商品链接，暂不可查看"
+                      aria-label="查看（缺少有效商品链接）"
+                    >查看</button>
                   </td>
                 </tr>
               </tbody>
@@ -483,144 +470,6 @@ function onFocusTask(task: PublishTask): void {
           :diagnostics="diagnostics"
           class="result-diag"
         />
-      </PanelCard>
-
-      <!-- ============ 3. 自营素材挑选备用区（折叠辅助，不抢占首屏历史） ============ -->
-      <PanelCard
-        v-if="!showTaskListOnly"
-        title="选择发布素材"
-        description="从飞书采集商品库或自营商品中挑选待发布内容；支持直接从商品库行点击“发布”快速载入。"
-      >
-        <template #actions>
-          <button
-            type="button"
-            v-if="editingDraft"
-            class="btn btn--sm btn--ghost"
-            :disabled="isPublishing"
-            @click="onClearDraft"
-          >
-            重新选择素材
-          </button>
-          <button
-            type="button"
-            class="btn btn--sm btn--ghost"
-            :disabled="isPublishing || productsState.phase === 'loading'"
-            title="重新读取自营商品库"
-            @click="controller.loadProducts()"
-          >
-            <PhArrowsClockwise :size="16" aria-hidden="true" />
-            <span>刷新自营商品</span>
-          </button>
-        </template>
-
-        <div v-if="!editingDraft" class="select-form-container">
-          <div v-if="productsState.phase === 'loading'" class="loading-state">
-            <PhSpinnerGap class="loading-spinner" aria-hidden="true" :size="18" />
-            <span>正在读取自营商品库候选数据...</span>
-          </div>
-
-          <div v-else-if="productsState.phase === 'error' && productsState.error" class="error-state">
-            <Callout tone="error" :view="productsState.error">
-              <template #actions>
-                <button type="button" class="btn btn--sm" @click="controller.loadProducts()">
-                  重试加载自营商品
-                </button>
-              </template>
-            </Callout>
-          </div>
-
-          <template v-else>
-            <div
-              v-if="productsState.error"
-              class="error-state"
-              data-testid="publish-candidates-partial-warning"
-            >
-              <Callout tone="warn" :view="productsState.error">
-                <template #actions>
-                  <button type="button" class="btn btn--sm" @click="controller.loadProducts()">
-                    重新读取候选
-                  </button>
-                </template>
-              </Callout>
-            </div>
-            <p
-              v-for="warning in productsState.warnings"
-              :key="warning"
-              class="count-tip"
-              data-testid="publish-candidates-warning"
-            >
-              {{ warning }}
-            </p>
-            <p
-              v-if="products.length === 0 && !productsState.error"
-              class="count-tip"
-              data-testid="publish-candidates-empty"
-            >
-              当前账号暂无可用自营商品候选；请点「刷新自营商品」重新读取，或前往商品库确认官方在售商品。
-            </p>
-
-            <div class="select-form-row">
-              <div class="form-group flex-1">
-                <label for="product-select" class="form-label">
-                  显式选择自营商品：<span class="count-tip">(共 {{ products.length }} 件候选)</span>
-                </label>
-                <select
-                  id="product-select"
-                  class="input-select"
-                  :value="selectedProduct?.itemId || ''"
-                  :disabled="isPublishing"
-                  @change="onSelectProductChange"
-                >
-                  <option value="">-- 请选择待发布商品 --</option>
-                  <option v-for="p in products" :key="p.itemId" :value="p.itemId">
-                    {{ p.title }} ({{ formatRMB(p.price) }}) - [{{ p.itemId }}]
-                  </option>
-                </select>
-              </div>
-
-              <div class="action-btn-group">
-                <button
-                  type="button"
-                  class="btn"
-                  :disabled="isPublishing"
-                  @click="onRandomPick"
-                >
-                  🎲 随机选择 1 条商品
-                </button>
-                <button
-                  type="button"
-                  class="btn btn--primary"
-                  @click="emit('navigate', 'products')"
-                >
-                  前往商品库选品
-                </button>
-              </div>
-            </div>
-          </template>
-
-          <div v-if="!selectedProduct" class="select-guide-tip">
-            <span>💡 提示：系统不会自动暗中选择商品，请从上方下拉列表挑选，或前往「商品库」直接点击商品行的「发布」按钮快速载入。</span>
-          </div>
-        </div>
-
-        <!-- 显式核对入口栏 -->
-        <div v-if="hasDraftOrProduct" class="submit-action-bar">
-          <div class="submit-action-row">
-            <button
-              type="button"
-              class="btn btn-brand"
-              :disabled="isPublishing || isDirectDraftLocked"
-              :aria-busy="isPublishing"
-              @click="onOpenPublishModal"
-            >
-              安全核对并发布当前商品
-            </button>
-            <div class="emoji-tooltip-trigger" tabindex="0" aria-label="表情符号清理提示">
-              <PhInfo :size="16" aria-hidden="true" />
-              <span class="emoji-tooltip-text">描述中的表情符号（emoji）已在发布前自动清理</span>
-            </div>
-          </div>
-        </div>
       </PanelCard>
 
       <!-- ============ 4. 上下文核对与显式提交 Modal ============ -->
@@ -823,6 +672,7 @@ function onFocusTask(task: PublishTask): void {
   width: 100%;
   border-collapse: collapse;
   font-size: 12.5px;
+  min-width: 760px;
 }
 
 .data-table th,
@@ -841,10 +691,12 @@ function onFocusTask(task: PublishTask): void {
   background: var(--surface-sunken, #F9FAFB);
 }
 
+.col-time {
+  white-space: nowrap;
+}
+
 .col-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  min-width: 220px;
 }
 
 .item-desc-snippet {
@@ -854,9 +706,7 @@ function onFocusTask(task: PublishTask): void {
 }
 
 .col-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
+  white-space: nowrap;
 }
 
 .price-val {

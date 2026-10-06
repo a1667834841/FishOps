@@ -449,6 +449,10 @@ test('submit：修改后的 draft（描述/价格/规格/图片重排）真正�
   const ledger = harness.storage.snapshot()[DIRECT_PUBLISH_AUDIT_STORAGE_KEY] as { entries: Record<string, { status: string; itemId?: string }> }
   assert.equal(ledger.entries['acct-1::key-1']?.status, 'published')
   assert.equal(ledger.entries['acct-1::key-1']?.itemId, '1087000000001')
+  const restarted = setup({ accountScope: 'acct-1' }, { storage: harness.storage })
+  const history = await restarted.api.getJob()
+  assert.equal(history.jobs[0]?.productName, '改后的描述')
+
 })
 
 test('submit：cpvList 同步最终选择（从原始推荐卡克隆更新 isClicked），绝不传旧推荐状态', async () => {

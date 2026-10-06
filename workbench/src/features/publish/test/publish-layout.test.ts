@@ -89,14 +89,16 @@ test('单一发布主按钮接入两阶段直接发布弹窗，不再调用旧CR
   assert.ok(pageSource.includes(':source-product="directPublishSource"'), '弹窗需绑定真实草稿数据源')
   assert.ok(pageSource.includes(':controller="directController"'), '弹窗需绑定两阶段直接发布控制器')
 
-  // 编辑区/切素材在发布期间禁用
-  assert.ok(/:disabled="isPublishing"/.test(pageSource), '编辑区需在发布期间禁用')
+  // 核对入口在发布期间或结果锁定时禁用
+  assert.ok(/:disabled="isPublishing \|\| isDirectDraftLocked"/.test(pageSource), '编辑区需在发布期间禁用')
 
   // 必须具有防双击与无障碍属性
   assert.ok(pageSource.includes(':aria-busy="isPublishing"'), '发布中需具备 aria-busy 无障碍状态')
 
-  // 保留随机选品、放弃发布等明确入口（保持任务历史能力）
-  assert.ok(pageSource.includes('随机选择 1 条商品'), '缺少“随机选择 1 条商品”入口')
+  // 素材只从商品库进入，发布中心不再保留旧素材专区。
+  assert.ok(!pageSource.includes('选择发布素材'))
+  assert.ok(!pageSource.includes('重新选择素材'))
+  assert.ok(!pageSource.includes('随机选择 1 条商品'))
 
   // 所有按钮必须是 type="button"，避免意外的隐式表单提交
   const buttons = pageSource.match(/<button[\s\S]*?>/g) ?? []
@@ -215,4 +217,16 @@ test('两阶段弹窗业务拒绝不切页或锁定：保留在原编辑弹窗�
     !modalSource.includes('若平台准备令牌已失效'),
     'DirectPublishModal 严禁包含“若平台准备令牌已失效”旧统一尾文案',
   )
+})
+
+
+test('流水时间单行，操作跳转商品地址，缺少链接时禁用查看', () => {
+  assert.ok(ruleBlock(styleBlock(pageSource), '.col-time').includes('white-space:nowrap'))
+  const history = pageSource.split('id="publish-task-tbody"')[1]!.split('</tbody>')[0]!
+  assert.ok(!history.includes('<small'))
+  assert.ok(!history.includes('<code'))
+  assert.ok(!history.includes('onFocusTask'))
+  assert.ok(history.includes(':href="row.itemUrl"'))
+  assert.ok(history.includes('disabled'))
+  assert.ok(history.includes('缺少有效商品链接'))
 })
