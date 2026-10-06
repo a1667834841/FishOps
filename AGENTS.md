@@ -61,4 +61,4 @@
 ## 6. Gotchas
 （每个新人都踩过的坑)
 - **GitHub 写操作**：issue 的创建、更新、评论、标签统一用 `env -u GITHUB_TOKEN gh issue ...`（`GITHUB_TOKEN` 会劫持 gh 凭据报 403，该前缀让它改走 keyring 的 `gho_` token）；正文用 `--body-file` 传入，题名与八章节格式按 [Issue 规范](docs/issue-guidelines.md) 执行。MCP 的 github 写工具是交互式表单且提交后报错，只用于读取。
-- **功能开发、bug 修复、测试和交付前**，必须阅读并执行[项目开发与测试规范](docs/development-testing.md)。浏览器、扩展或 API 故障从真实入口取证、修复并闭环，使用子代理时优先由同一执行子代理完成；安全脱敏，纯函数问题走快速路径。
+- **需求实现、Bug 修复、测试和 PR 交付前**，读取并执行[项目开发与测试规范](docs/development-testing.md)：包含单测/Mock、`agent:setup` 部署、真实 1:1 E2E、页面效果截图及交付门槛；纯函数和纯文档按规范走快速路径。

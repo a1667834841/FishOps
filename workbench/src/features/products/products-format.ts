@@ -25,14 +25,15 @@ export const PRODUCT_TABS: readonly ProductTabOption[] = [
 export type ProductDisplaySource = ProductSource | 'feishu_material'
 
 /** 飞书商品库条目展示模型：独立保留 recordId 作为唯一 row identity，绝不冒充 my_published。 */
-export interface FeishuProductItem extends Omit<Product, 'source'> {
+export interface FeishuProductItem extends Omit<Product, 'source' | 'wantCnt'> {
+  wantCnt?: number
   recordId: string
   targetTableId?: string
   source: 'feishu_material'
 }
 
 /** 工作台商品库统一展示行类型（保证两个分支均有可选的 recordId）。 */
-export type ProductTableItem = (Product & { recordId?: string; targetTableId?: string }) | FeishuProductItem
+export type ProductTableItem = (Omit<Product, 'wantCnt'> & { wantCnt?: number; recordId?: string; targetTableId?: string }) | FeishuProductItem
 
 /** 来源过滤选项值（兼容旧定义）。 */
 export type ProductSourceFilter = ProductSource | 'all'
@@ -371,7 +372,8 @@ export function mapCatalogProductToTableItem(p: CatalogProduct): ProductTableIte
       priceNumber: p.priceNumber ?? 0,
       originalPrice: p.originalPrice || (p.originalPriceNumber > 0 ? `¥${p.originalPriceNumber}` : ''),
       originalPriceNumber: p.originalPriceNumber ?? 0,
-      wantCnt: p.wantCnt ?? 0,
+      // 缺失值显示为「—」，不得与真实的零混淆。
+      wantCnt: p.wantCnt,
       publishTime: '',
       publishTimeMs: 0,
       captureTime,
@@ -397,7 +399,7 @@ export function mapCatalogProductToTableItem(p: CatalogProduct): ProductTableIte
     priceNumber: p.priceNumber ?? 0,
     originalPrice: p.originalPrice || (p.originalPriceNumber > 0 ? `¥${p.originalPriceNumber}` : ''),
     originalPriceNumber: p.originalPriceNumber ?? 0,
-    wantCnt: p.wantCnt ?? 0,
+    wantCnt: p.wantCnt,
     publishTime: '',
     publishTimeMs: 0,
     captureTime,

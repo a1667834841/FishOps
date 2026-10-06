@@ -1,6 +1,6 @@
 /**
  /** 命令定义：Workbench → Extension 的请求负载与结果。 */
-import type { ChatMessage, Conversation, SyncError } from '../types/chat'
+import type { ChatMessage, Conversation, MessageCursor, SyncError } from '../types/chat'
 import type { Task, TaskStatus, TaskType } from '../types/task'
 import type {
   PublishCreatePayload,
@@ -357,6 +357,13 @@ export interface ChatGetMessagesPayload {
   order?: 'asc' | 'desc'
   /** 最多返回条数。 */
   limit?: number
+  /**
+   * 向前分页边界：只返回**严格早于**该游标的消息。
+   *
+   * 配合 `order: 'desc' | 'asc'` + `limit` 即可取「某游标之前最近的一页」；
+   * 不传时保持原有语义（从最早/最新的一端取 `limit` 条）。
+   */
+  before?: MessageCursor
 }
 
 /** CHAT_SYNC_HISTORY 请求负载。 */
@@ -366,6 +373,13 @@ export interface ChatSyncHistoryPayload {
   pages?: number
   /** 每页条数。 */
   count?: number
+  /**
+   * 服务端历史游标：从该游标继续向更早翻页。
+   *
+   * 不传时从最新一页开始（保持既有行为）；调用方可用上一次结果的
+   * `nextCursor` 递进，避免每次都从头拉取。
+   */
+  cursor?: number
 }
 
 /** CHAT_MARK_READ 请求负载；只接受规范化会话 ID 和服务端 messageId。 */
@@ -422,6 +436,13 @@ export interface ChatListConversationsResult {
 /** CHAT_GET_MESSAGES 结果。 */
 export interface ChatGetMessagesResult {
   messages: ChatMessage[]
+  /**
+   * 是否还存在比本页更早的消息。
+   *
+   * 仅在请求携带 `limit` 时有意义：为 `true` 表示本地缓存里本页之前仍有数据。
+   * 可选字段，未携带 `limit` 的旧调用方不受影响。
+   */
+  hasMore?: boolean
 }
 
 /**
@@ -436,6 +457,12 @@ export interface ChatSyncResultDto {
   added: number
   updated: number
   error?: SyncError
+  /**
+   * 下一次向更早翻页应使用的服务端游标；`hasMore` 为 `false` 或同步失败时缺省。
+   */
+  nextCursor?: number
+  /** 服务端是否还存在更早的历史（本次成功后仍可继续翻页）。 */
+  hasMore?: boolean
 }
 
 /** CHAT_SOCKET_EVENT 结果。 */

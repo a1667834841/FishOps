@@ -21,7 +21,7 @@ import {
   type EventPayloadMap,
 } from '@fishops/shared'
 import { describeError, describeSyncError } from './chat-format'
-import type { ChatMessage, ChatStatusResult, Conversation } from './types'
+import type { ChatMessage, ChatStatusResult, Conversation, MessageCursor } from './types'
 
 /** 本页面会用到的命令（均为只读）。 */
 export type ChatCommandType =
@@ -77,6 +77,12 @@ export interface MessagesState {
   items: ChatMessage[]
   error: string | null
   refreshing: boolean
+  /** 向前分页状态：独立于初次加载与刷新，失败时保留 items 供重试。 */
+  olderPhase: 'idle' | 'loading' | 'error'
+  /** 加载更早消息失败的原因（成功 / 首次加载时为 null）。 */
+  olderError: string | null
+  /** 是否还存在更早的消息（本地或平台任一还有则为 true）；false 时页面提示「没有更多了」。 */
+  hasMore: boolean
 }
 
 export interface SyncState {
@@ -119,6 +125,83 @@ export interface ChatCenterControllerOptions {
 
 const SOCKET_STATUSES: ReadonlySet<string> = new Set(['connecting', 'open', 'closed', 'error'])
 const BAD_SHAPE = '扩展返回的数据格式不正确'
+
+/** 打开会话 / 每次向前翻页的条数（最近 10 条）。 */
+export const MESSAGE_PAGE_SIZE = 10
+
+/** 单次「加载更早」最多向平台追朔的页数，避免极端情况下长时间循环。 */
+const MAX_OLDER_SYNC_ROUNDS = 5
+
+/** 平台历史游标的初始上界（与 shared/chat/protocol.ts 的 INITIAL_CURSOR 对齐，用于判定「是否真的前进」）。 */
+const CURSOR_UPPER_BOUND = Number.MAX_SAFE_INTEGER
+
+/**
+ * 各会话的分页位置：服务端游标、平台是否还有更早历史、本地是否已确认取尽。
+ *
+ * `localExhausted` 用于抵抗「实时刷新把 hasMore 重新置真」：刷新只读最近一页，
+ * 本地库仍比这一页多，但这不代表窗口最旧消息之前还有数据。
+ */
+interface PagingBook {
+  serverCursor: number | undefined
+  serverHasMore: boolean
+  localExhausted: boolean
+}
+
+/**
+ * 消息排序：与扩展侧 store 的 `compareMessages` 保持一致
+ * （createAt → messageId → id），保证前插合并后顺序稳定、不重复。
+ */
+function compareMessages(a: ChatMessage, b: ChatMessage): number {
+  if (a.createAt !== b.createAt) return a.createAt - b.createAt
+  if (a.messageId !== b.messageId) return a.messageId < b.messageId ? -1 : 1
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+/** 升序拷贝（不改动入参）。 */
+function sortMessages(messages: readonly ChatMessage[]): ChatMessage[] {
+  return [...messages].sort(compareMessages)
+}
+
+/** 按 id 去重合并两批消息并升序返回；同 id 以后到的为准（界面始终拿到最新快照）。 */
+function mergeMessageWindow(existing: readonly ChatMessage[], incoming: readonly ChatMessage[]): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>()
+  for (const message of existing) byId.set(message.id, message)
+  for (const message of incoming) byId.set(message.id, message)
+  return sortMessages([...byId.values()])
+}
+
+/** 解析分页结果：消息列表 + hasMore（缺省视为 false）。 */
+function parseMessagePage(value: unknown): { messages: ChatMessage[]; hasMore: boolean } | null {
+  const messages = parseMessages(value)
+  if (!messages) return null
+  return { messages, hasMore: isRecord(value) && value['hasMore'] === true }
+}
+
+/**
+ * 读取 CHAT_SYNC_HISTORY 结果的分页进度与失败原因。
+ *
+ * 平台游标必须严格向更早方向前进（递减正整数）：`hasMore` 为真时，
+ * 游标缺失、非安全正整数、或未前进（同值 / 反向 / 等于当前上界）都判为失败，
+ * 绝不把重复页当成终点，也绝不因此宣称「没有更多了」。
+ */
+function readSyncProgress(
+  result: unknown,
+  cursor: number | undefined,
+): { ok: boolean; hasMore: boolean; nextCursor?: number; error: string } {
+  if (!isRecord(result) || typeof result['ok'] !== 'boolean') return { ok: false, hasMore: false, error: BAD_SHAPE }
+  if (!result['ok']) {
+    const detail = isRecord(result['error']) ? result['error'] : undefined
+    return { ok: false, hasMore: false, error: describeSyncError(detail) }
+  }
+  if (result['hasMore'] !== true) return { ok: true, hasMore: false, error: '' }
+  const raw = result['nextCursor']
+  const nextCursor = typeof raw === 'number' ? raw : undefined
+  const upperBound = cursor ?? CURSOR_UPPER_BOUND
+  if (nextCursor === undefined || !Number.isSafeInteger(nextCursor) || nextCursor <= 0 || nextCursor >= upperBound) {
+    return { ok: false, hasMore: true, error: '平台分页游标无效' }
+  }
+  return { ok: true, hasMore: true, nextCursor, error: '' }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -168,7 +251,16 @@ export function createInitialState(availability: ChatCenterState['availability']
     status: { phase: 'idle', data: null, error: null },
     conversations: { phase: 'idle', items: [], error: null, refreshing: false },
     selectedId: null,
-    messages: { sessionId: null, phase: 'idle', items: [], error: null, refreshing: false },
+    messages: {
+      sessionId: null,
+      phase: 'idle',
+      items: [],
+      error: null,
+      refreshing: false,
+      olderPhase: 'idle',
+      olderError: null,
+      hasMore: false,
+    },
     socketStatus: null,
     conversationSync: idleSync(),
     historySync: idleSync(),
@@ -192,6 +284,16 @@ export class ChatCenterController {
 
   /** 各类请求的最新令牌；返回时令牌不一致说明已被更新的请求取代。 */
   private readonly seq = { status: 0, list: 0, messages: 0 }
+  /**
+   * 会话选择代（epoch）：切会话即递增，使旧会话在途的向前分页作废。
+   *
+   * 刻意不复用 `seq.messages`：同会话因事件触发的消息刷新不应中断向前分页。
+   */
+  private sessionEpoch = 0
+  /** 单飞：同一时刻只允许一次「加载更早」在途。 */
+  private olderInFlight: Promise<void> | null = null
+  /** 各会话的服务端分页位置（切会话即重置）。 */
+  private readonly paging = new Map<string, PagingBook>()
   private recentSyncInFlight: Promise<void> | null = null
   /** 全局单飞：同一时刻只允许一个已读请求在途，切会话立即作废旧响应，避免重复 / 竞态。 */
   private markReadInFlight: Promise<void> | null = null
@@ -254,6 +356,8 @@ export class ChatCenterController {
       }
     }
     this.listeners.clear()
+    this.paging.clear()
+    this.olderInFlight = null
   }
 
   /** 页面回到前台时调用：重新声明订阅（Port 可能已随 service worker 回收而断开）。 */
@@ -307,11 +411,23 @@ export class ChatCenterController {
     if (this.disposed || !this.api || !sessionId) return
     if (this.state.selectedId === sessionId) return
     this.markReadGeneration++
+    // 切会话即推进代，使旧会话在途的向前分页结果作废；并重置该会话的分页位置。
+    this.sessionEpoch++
     // 先让在途的旧会话请求作废，再切换，避免旧响应在切换瞬间写入。
     this.seq.messages++
+    this.paging.set(sessionId, { serverCursor: undefined, serverHasMore: true, localExhausted: false })
     this.patch({
       selectedId: sessionId,
-      messages: { sessionId, phase: 'loading', items: [], error: null, refreshing: false },
+      messages: {
+        sessionId,
+        phase: 'loading',
+        items: [],
+        error: null,
+        refreshing: false,
+        olderPhase: 'idle',
+        olderError: null,
+        hasMore: false,
+      },
       markReadError: null,
     })
     // 消息读取完成后会统一触发已读检查（见 loadMessages 成功分支）。
@@ -569,17 +685,52 @@ export class ChatCenterController {
     const sameSession = current.sessionId === sessionId
     const hadData = sameSession && current.phase === 'ready'
     if (!hadData) {
-      this.patch({ messages: { sessionId, phase: 'loading', items: [], error: null, refreshing: false } })
+      // 首次 / 切换 / 重试：从头开始一页，并重置该会话的分页位置。
+      this.paging.set(sessionId, { serverCursor: undefined, serverHasMore: true, localExhausted: false })
+      this.patch({
+        messages: {
+          sessionId,
+          phase: 'loading',
+          items: [],
+          error: null,
+          refreshing: false,
+          olderPhase: 'idle',
+          olderError: null,
+          hasMore: false,
+        },
+      })
     } else if (!silent) {
       this.patch({ messages: { ...current, refreshing: true } })
     }
     try {
-      const result = await api.call(CommandTypes.CHAT_GET_MESSAGES, { sessionId, order: 'asc' })
+      // 只取最近一页（默认 10 条）；刷新时与已有窗口合并，绝不缩回 10 条或整体覆盖。
+      const result = await api.call(CommandTypes.CHAT_GET_MESSAGES, {
+        sessionId,
+        order: 'desc',
+        limit: MESSAGE_PAGE_SIZE,
+      })
       // 令牌 + 选中会话双重校验：切会话后返回的旧请求不能覆盖新会话。
       if (this.isStale('messages', token) || this.state.selectedId !== sessionId) return
-      const items = parseMessages(result)
-      if (!items) throw new Error(BAD_SHAPE)
-      this.patch({ messages: { sessionId, phase: 'ready', items, error: null, refreshing: false } })
+      const page = parseMessagePage(result)
+      if (!page) throw new Error(BAD_SHAPE)
+      const latest = this.state.messages
+      const items = hadData && latest.sessionId === sessionId
+        ? mergeMessageWindow(latest.items, page.messages)
+        : sortMessages(page.messages)
+      const preserveOlderState = hadData && latest.sessionId === sessionId
+      this.patch({
+        messages: {
+          sessionId,
+          phase: 'ready',
+          items,
+          error: null,
+          refreshing: false,
+          olderPhase: preserveOlderState ? latest.olderPhase : 'idle',
+          olderError: preserveOlderState ? latest.olderError : null,
+          // 本地本页之前还有数据（且未确认取尽），或平台可能还有（未知即视为还有，等翻页时再确认）。
+          hasMore: (page.hasMore && !this.ensurePaging(sessionId).localExhausted) || this.ensurePaging(sessionId).serverHasMore,
+        },
+      })
       // 消息就绪后统一检查已读：会话切换与同会话新水位都由这里驱动（在途时会登记 dirty）。
       void this.markSelectedRead(sessionId)
     } catch (error) {
@@ -587,6 +738,7 @@ export class ChatCenterController {
       const latest = this.state.messages
       this.patch({
         messages: {
+          ...latest,
           sessionId,
           phase: hadData ? 'ready' : 'error',
           items: hadData ? latest.items : [],
@@ -595,6 +747,147 @@ export class ChatCenterController {
         },
       })
     }
+  }
+
+  /**
+   * 加载更早的一页消息（单次最多新增 `MESSAGE_PAGE_SIZE` 条）。
+   *
+   * 顺序：每轮先用「当前窗口最旧消息」作边界向本地取剩余额度；本地取尽仍凑不满一页时，
+   * 再按保存的服务端游标同步一页历史，然后回到本地重新取（边界随之更新，保证同步写入的
+   * 更早消息能被同一次调用读到），直到凑满一页、本地仍有更早、或平台确认耗尽。
+   * 单飞；失败只标记 `olderPhase: 'error'` 且游标不推进。
+   */
+  async loadOlder(): Promise<void> {
+    const api = this.api
+    const sessionId = this.state.selectedId
+    if (!api || this.disposed || !sessionId) return
+    const current = this.state.messages
+    if (current.sessionId !== sessionId) return
+    if (current.olderPhase === 'loading' || this.olderInFlight) return
+    const book = this.ensurePaging(sessionId)
+    const emptyWindow = current.items.length === 0
+    // 已确认耗尽时不重复请求；但空窗口例外：本地缓存可能随后写入，平台也可能还有历史，
+    // 不能因为 hasMore=false 就永久卡死（此时只有用户显式重试 / 刷新才会再次触发）。
+    if (!current.hasMore && !emptyWindow) return
+    const epoch = this.sessionEpoch
+    this.patchMessages(sessionId, { olderPhase: 'loading', olderError: null })
+    const run = (async () => {
+      let localMore = false
+      let added = 0
+      let rounds = 0
+      try {
+        while (added < MESSAGE_PAGE_SIZE) {
+          if (this.isOlderStale(epoch, sessionId)) return
+          // 每轮都用当前最旧消息作边界：同步补入的更早消息必须能在同一轮内被读到。
+          const boundary = this.oldestCursor(sessionId)
+          const page = await this.loadOlderFromLocal(sessionId, epoch, boundary, MESSAGE_PAGE_SIZE - added)
+          if (this.isOlderStale(epoch, sessionId)) return
+          localMore = page.hasMore
+          // 只累计本次真正新增的更早页条数：并发实时 append 到窗口尾部的新消息不计入，
+          // 否则会把 already 虚高、提前结束本轮，导致一次更早页都没取到。
+          added += page.added
+          // 凑满一页或本地还有更早（下一页已备好）：本次立即结束，不额外追平台。
+          if (added >= MESSAGE_PAGE_SIZE || localMore) break
+          if (!book.serverHasMore) break
+          if (rounds >= MAX_OLDER_SYNC_ROUNDS) break
+          rounds += 1
+          const cursor = book.serverCursor
+          const result = await api.call(CommandTypes.CHAT_SYNC_HISTORY, {
+            sessionId,
+            pages: 1,
+            count: MESSAGE_PAGE_SIZE,
+            ...(cursor === undefined ? {} : { cursor }),
+          })
+          if (this.isOlderStale(epoch, sessionId)) return
+          const sync = readSyncProgress(result, cursor)
+          if (!sync.ok) {
+            // 平台失败 / 游标未严格前进：保留本地已加载消息，标记错误供重试；游标不推进。
+            this.patchMessages(sessionId, { olderPhase: 'error', olderError: sync.error })
+            return
+          }
+          if (sync.hasMore && sync.nextCursor !== undefined) book.serverCursor = sync.nextCursor
+          else if (!sync.hasMore) book.serverHasMore = false
+        }
+        if (this.isOlderStale(epoch, sessionId)) return
+        // 只有本地与平台都确认耗尽才收起「还能继续翻」；本地耗尽不得宣称平台耗尽。
+        this.patchMessages(sessionId, {
+          olderPhase: 'idle',
+          olderError: null,
+          hasMore: localMore || book.serverHasMore,
+        })
+      } catch (error) {
+        if (this.isOlderStale(epoch, sessionId)) return
+        this.patchMessages(sessionId, { olderPhase: 'error', olderError: describeError(error) })
+      } finally {
+        this.olderInFlight = null
+      }
+    })()
+    this.olderInFlight = run
+    return run
+  }
+
+  /** 用本地游标取一页更早的消息并合并；返回本地是否还有更早的一页，以及本次真正新增的条数。 */
+  private async loadOlderFromLocal(
+    sessionId: string,
+    epoch: number,
+    before = this.oldestCursor(sessionId),
+    limit = MESSAGE_PAGE_SIZE,
+  ): Promise<{ hasMore: boolean; added: number }> {
+    const api = this.api
+    if (!api) return { hasMore: false, added: 0 }
+    const result = await api.call(CommandTypes.CHAT_GET_MESSAGES, {
+      sessionId,
+      order: 'desc',
+      limit,
+      ...(before ? { before } : {}),
+    })
+    if (this.isOlderStale(epoch, sessionId)) return { hasMore: false, added: 0 }
+    const page = parseMessagePage(result)
+    if (!page) throw new Error(BAD_SHAPE)
+    // 本次向前查询已把游标之前的本地消息取尽：记下来，避免刷新又把 hasMore 置真。
+    this.ensurePaging(sessionId).localExhausted = !page.hasMore
+    const added = page.messages.length > 0 ? this.mergeMessages(sessionId, page.messages) : 0
+    return { hasMore: page.hasMore, added }
+  }
+
+  /** 当前窗口最旧消息的排序游标；窗口为空时返回 undefined。 */
+  private oldestCursor(sessionId: string): MessageCursor | undefined {
+    const current = this.state.messages
+    if (current.sessionId !== sessionId) return undefined
+    const first = current.items[0]
+    if (!first) return undefined
+    return { createAt: first.createAt, messageId: first.messageId, id: first.id }
+  }
+
+  /** 按 id 去重合并一页消息并保持升序，保留已展开的旧窗口；返回本次真正新增的条数。 */
+  private mergeMessages(sessionId: string, incoming: readonly ChatMessage[]): number {
+    const current = this.state.messages
+    if (current.sessionId !== sessionId) return 0
+    const merged = mergeMessageWindow(current.items, incoming)
+    // 合并只增不减（旧窗口保留），因此长度差即本次真正新增（去重后）的条数。
+    const added = Math.max(0, merged.length - current.items.length)
+    this.patchMessages(sessionId, { items: merged })
+    return added
+  }
+
+  /** 只更新仍属于该会话的消息状态，避免切换会话后旧请求写回。 */
+  private patchMessages(sessionId: string, partial: Partial<MessagesState>): void {
+    const current = this.state.messages
+    if (current.sessionId !== sessionId) return
+    this.patch({ messages: { ...current, ...partial } })
+  }
+
+  private ensurePaging(sessionId: string): PagingBook {
+    let book = this.paging.get(sessionId)
+    if (!book) {
+      book = { serverCursor: undefined, serverHasMore: true, localExhausted: false }
+      this.paging.set(sessionId, book)
+    }
+    return book
+  }
+
+  private isOlderStale(epoch: number, sessionId: string): boolean {
+    return this.disposed || this.sessionEpoch !== epoch || this.state.selectedId !== sessionId
   }
 
   private toSyncState(result: unknown, sessionId: string | null): SyncState {
