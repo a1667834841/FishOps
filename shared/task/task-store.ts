@@ -30,6 +30,8 @@ export function cloneTask<T extends Task>(task: T): T {
  * 任务持久化存储接口
  */
 export interface TaskStore {
+  /** 可选的共享命名空间身份；包装同一底层存储的实例必须返回同一对象。 */
+  readonly updateCoordinationKey?: object;
   /** 根据任务 ID 查询任务，不存在返回 null */
   get(id: string): Promise<Task | null>;
   /** 查询符合条件的任务列表 */
@@ -42,6 +44,27 @@ export interface TaskStore {
   delete(id: string): Promise<boolean>;
   /** 清空存储中所有任务（主要用于测试或重置） */
   clear(): Promise<void>;
+}
+
+const taskUpdateQueues = new WeakMap<object, Map<string, Promise<void>>>();
+const taskStoreNamespaces = new WeakMap<object, Map<string, object>>();
+
+/** 在同一 realm 内按存储命名空间与任务 ID 串行执行完整读、校验、写入操作。 */
+export function withTaskUpdateLock<T>(store: TaskStore, id: string, operation: () => Promise<T>): Promise<T> {
+  const key = store.updateCoordinationKey ?? store;
+  let queues = taskUpdateQueues.get(key);
+  if (!queues) {
+    queues = new Map();
+    taskUpdateQueues.set(key, queues);
+  }
+  const result = (queues.get(id) ?? Promise.resolve()).then(operation);
+  // 当前调用保留拒绝结果，队列尾部消费异常，避免一次失败阻断后续任务操作。
+  const tail = result.then(() => undefined, () => undefined);
+  queues.set(id, tail);
+  void tail.then(() => {
+    if (queues.get(id) === tail) queues.delete(id);
+  });
+  return result;
 }
 
 /**
@@ -335,6 +358,8 @@ export class AdapterTaskStore implements TaskStore {
   private readonly prefix: string;
   private readonly indexKey: string;
   private readonly coordinationKey: object;
+  /** 同一区域和前缀共用身份，单任务队列与索引写队列分离，避免重入死锁。 */
+  public readonly updateCoordinationKey: object;
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     // 同一 realm 内相同存储区域和前缀共享互斥队列，避免索引读改写覆盖；
@@ -355,6 +380,17 @@ export class AdapterTaskStore implements TaskStore {
     this.prefix = prefix;
     this.indexKey = `${prefix}:task_index`;
     this.coordinationKey = adapter.coordinationKey ?? adapter;
+    let namespaces = taskStoreNamespaces.get(this.coordinationKey);
+    if (!namespaces) {
+      namespaces = new Map();
+      taskStoreNamespaces.set(this.coordinationKey, namespaces);
+    }
+    let namespace = namespaces.get(prefix);
+    if (!namespace) {
+      namespace = {};
+      namespaces.set(prefix, namespace);
+    }
+    this.updateCoordinationKey = namespace;
   }
 
   private getTaskKey(id: string): string {
