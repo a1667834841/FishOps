@@ -433,7 +433,7 @@ test('ProductsController: 切换到自己发布的商品库复用缓存且清空
 test('ProductsController: 飞书未配置或缺失凭据时，识别 isConfigMissing 引导去设置', async () => {
   const api = new MockBridgeApi()
   api.respond(CommandTypes.PRODUCT_CATALOG_QUERY, () => {
-    throw new Error('飞书配置缺少 spreadsheetToken 或 productTableId (CONFIG_MISSING)')
+    throw new Error('飞书未配置：请先在设置页填写飞书应用与多维表格信息 (INVALID_PAYLOAD)')
   })
 
   const controller = new ProductsController({ api })

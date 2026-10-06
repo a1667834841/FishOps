@@ -11,6 +11,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { CommandTypes, createCommand } from '@fishops/shared'
 import { PlatformError } from '../../platform/errors'
+import { FeishuProductsError } from '../feishu-products-runtime'
 import {
   createProductCatalogRuntime,
   type CatalogPlatformPort,
@@ -67,6 +68,42 @@ function ok(res: Envelope): ProductCatalogQueryResult {
   assert.equal(res.ok, true, `expected ok, got error: ${JSON.stringify(res.error)}`)
   return res.result as ProductCatalogQueryResult
 }
+
+test('feishu：缺少配置返回明确设置提示，不读取商品或伪装为空列表', async () => {
+  const feishu = makeFeishu({ cacheIdentity: async () => null })
+  const runtime = createProductCatalogRuntime({ platform: makePlatform(), feishu: feishu.port })
+  const res = await runtime.handleCommand(createCommand(CommandTypes.PRODUCT_CATALOG_QUERY, { source: 'feishu' }))
+  assert.equal(res.ok, false)
+  assert.equal(res.error?.code, 'INVALID_PAYLOAD')
+  assert.match(res.error!.message, /飞书未配置/)
+  assert.equal(res.error?.businessCode, 'CONFIG_MISSING')
+  assert.equal(feishu.calls.length, 0)
+})
+
+test('feishu：首页查询无结果且无后续页时，返回正常空列表及数量 0', async () => {
+  const runtime = createProductCatalogRuntime({ platform: makePlatform(), feishu: makeFeishu().port })
+  const result = ok(await runtime.handleCommand(createCommand(CommandTypes.PRODUCT_CATALOG_QUERY, { source: 'feishu', keyword: '无匹配商品' })))
+  assert.deepEqual(result.products, [])
+  assert.equal(result.total, 0)
+  assert.equal(result.hasMore, false)
+})
+
+test('feishu：保留脱敏故障提示，未知底层错误不泄露凭据且不返回空列表', async () => {
+  for (const error of [new FeishuProductsError('INTERNAL', '飞书网络请求失败：请检查网络后重试'), new Error('secret=敏感凭据')]) {
+    const runtime = createProductCatalogRuntime({ platform: makePlatform(), feishu: makeFeishu({ page: async () => { throw error } }).port })
+    const result = await runtime.handleCommand(createCommand(CommandTypes.PRODUCT_CATALOG_QUERY, { source: 'feishu' }))
+    assert.equal(result.ok, false)
+    assert.equal(result.error?.code, 'INTERNAL')
+    assert.equal(result.error?.message, error instanceof FeishuProductsError ? error.message : '商品目录查询失败：请稍后重试')
+    assert.equal(result.result, undefined)
+  }
+})
+
+test('feishu：后续页为空不能把全库未知总数改成 0', async () => {
+  const runtime = createProductCatalogRuntime({ platform: makePlatform(), feishu: makeFeishu().port })
+  const result = ok(await runtime.handleCommand(createCommand(CommandTypes.PRODUCT_CATALOG_QUERY, { source: 'feishu', page: 1, cursor: 'next', targetTableId: 'tbl' })))
+  assert.equal(result.total, null)
+})
 
 test('my_published：会话内复用（不因 60s 过期重建），forceRefresh / 账号变化重建', async () => {
   let clock = 1000
@@ -357,8 +394,10 @@ test('feishu：复用专用分页读取，游标必须绑定 targetTableId，返
   assert.equal(calls[0]!.order, 'captureTimeDesc')
 })
 
-test('feishu：未返回 total 时为 null（绝不伪造）', async () => {
-  const runtime = createProductCatalogRuntime({ platform: makePlatform(), feishu: makeFeishu().port, now: () => 1000 })
+test('feishu：还有后续页且未返回 total 时为 null（绝不伪造）', async () => {
+  const runtime = createProductCatalogRuntime({ platform: makePlatform(), feishu: makeFeishu({
+    page: async () => ({ rows: [], hasMore: true, nextPageToken: 'next', targetTableId: 'tbl' }),
+  }).port, now: () => 1000 })
   const result = ok(await runtime.handleCommand(createCommand(CommandTypes.PRODUCT_CATALOG_QUERY, { source: 'feishu' })))
   assert.equal(result.total, null)
 })

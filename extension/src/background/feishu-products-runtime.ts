@@ -73,7 +73,7 @@ export const FEISHU_PRODUCTS_COMMANDS: ReadonlySet<string> = new Set<string>([
 ])
 
 /** 内部结构化错误：统一映射为 ProtocolError（可携带业务码，非敏感）。 */
-class FeishuProductsError extends Error {
+export class FeishuProductsError extends Error {
   readonly code: ProtocolErrorCode
   readonly businessCode?: string
 
