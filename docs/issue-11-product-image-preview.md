@@ -3,14 +3,14 @@
 ## 范围与实现
 
 - 商品库两类来源共用 `ProductImagePreview`。悬浮显示，移出关闭；`Teleport` 到 `body`，固定定位，不改变表格行高，不受滚动容器裁切。
-- 预览最大 280px，按视口缩小并限制位置；图片使用 `object-fit: contain` 保持比例。加载完成前隐藏，失败后关闭。滚动、窗口调整、图片变化和组件卸载清理预览及监听。
+- 预览居中，占视口宽、高的三分之二；图片使用 `object-fit: contain` 保持比例。加载完成前隐藏，失败后关闭。滚动、窗口调整、图片变化和组件卸载清理预览及监听。
 - 想要数只显示有限数字，真实 0 显示 0，缺失显示「—」。发现 `mapCatalogProductToTableItem` 原先用 `p.wantCnt ?? 0` 混淆缺失与零，已建立失败回归后移除该补值。仅调整工作台展示模型，不修改共享协议、后台排序或数据存储。
 
 ## 自动检查
 
 - 缺失值回归修复前失败：`AssertionError [ERR_ASSERTION]: 0 !== undefined`；修复后通过，覆盖飞书与当前账号两类来源的缺失、0、26。
-- 新增预览定位测试：右侧优先、右边缘左侧打开、上下边缘限制、窄屏及紧凑缩略图。
-- `npm run test --workspace @fishops/workbench`：388/388，通过，退出码 0。
+- 新增预览定位测试：视口居中、宽高三分之二、窄屏及横屏。
+- `npm run test --workspace @fishops/workbench`：387/387，通过，退出码 0。
 - `npm run typecheck --workspace @fishops/workbench`：通过，退出码 0。
 - `npm run build:workbench`：通过，退出码 0；产物输出 `extension/dist`。
 - `git diff --check`：通过。
@@ -51,3 +51,9 @@
 ![真实环境紧凑行距悬浮预览](images/issue-11-real-compact.png)
 
 PR 等待人工 Review，不自动合并。
+
+## 居中大图调整复验
+
+按用户要求将预览改为屏幕中央，宽、高分别为视口的 2/3；实际图片仍保持比例，不拉伸、不裁切。新定位回归在旧实现上失败，修改后通过。工作台 387/387 测试、typecheck 通过；重新执行 agent:setup 完整构建、部署并重载成功（退出码 0，SETUP_COMPLETED）。部署包含本次未提交的代码改动。
+
+真实扩展重新打开后，视口 1357×615，预览位置约 (226.16, 102.5)、尺寸约 904.66×410，符合居中及 2/3 比例；真实图片 768×1376 使用 contain，行高前后均为 64.5px。移出关闭、连续切换与页面切出清理通过，无 mock、无数据注入或外部写入。以上两张真实截图已更新为居中大图效果。

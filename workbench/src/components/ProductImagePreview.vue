@@ -15,10 +15,9 @@ function close(): void {
   window.removeEventListener('resize', close)
 }
 
-function open(event: MouseEvent): void {
+function open(): void {
   if (!props.src || failed.value) return
-  const anchor = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  position.value = imagePreviewPosition(anchor, { width: window.innerWidth, height: window.innerHeight })
+  position.value = imagePreviewPosition({ width: window.innerWidth, height: window.innerHeight })
   // 滚动或调整窗口后关闭，避免预览残留在已离开视口的旧商品位置。
   window.addEventListener('scroll', close, true)
   window.addEventListener('resize', close)
@@ -47,7 +46,7 @@ onBeforeUnmount(close)
       class="product-image-preview"
       :style="{
         left: `${position.left}px`, top: `${position.top}px`,
-        width: `${position.size}px`, height: `${position.size}px`,
+        width: `${position.width}px`, height: `${position.height}px`,
         visibility: loaded ? 'visible' : 'hidden',
       }"
       role="img"
