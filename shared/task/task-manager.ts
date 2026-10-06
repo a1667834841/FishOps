@@ -24,6 +24,7 @@ import type {
 } from './task-machine.ts';
 import {
   cloneTask,
+  withTaskUpdateLock,
   createDefaultTaskStore,
 } from './task-store.ts';
 import type {
@@ -160,68 +161,76 @@ export class TaskManager {
     const now = Date.now();
     const id = input.id ?? this.idGenerator(input.type);
 
-    // 查重保护，防止覆盖已有任务
-    const existing = await this.store.get(id);
-    if (existing) {
-      throw new Error(`[TaskManager] 任务 ID "${id}" 已存在，不可重复创建`);
-    }
+    return withTaskUpdateLock(this.store, id, async () => {
+      // 查重保护，防止覆盖已有任务
+      const existing = await this.store.get(id);
+      if (existing) {
+        throw new Error(`[TaskManager] 任务 ID "${id}" 已存在，不可重复创建`);
+      }
 
-    const task: Task<TType> = {
-      id,
-      type: input.type,
-      status: 'pending',
-      progress: 0,
-      createdAt: now,
-      updatedAt: now,
-      payload: input.payload,
-      meta: (input.meta ?? {}) as any,
-    };
+      const task: Task<TType> = {
+        id,
+        type: input.type,
+        status: 'pending',
+        progress: 0,
+        createdAt: now,
+        updatedAt: now,
+        payload: input.payload,
+        meta: (input.meta ?? {}) as any,
+      };
 
-    await this.store.save(task);
-    this.notify('created', task);
+      await this.store.save(task);
+      this.notify('created', task);
 
-    return cloneTask(task);
+      return cloneTask(task);
+    });
   }
 
   /**
    * 启动任务 (pending -> running)
    */
   public async start(id: string): Promise<Task> {
-    const current = await this.getRequiredTask(id);
-    const prevStatus = current.status;
-    const next = transitionTask(current, 'running');
+    return withTaskUpdateLock(this.store, id, async () => {
+      const current = await this.getRequiredTask(id);
+      const prevStatus = current.status;
+      const next = transitionTask(current, 'running');
 
-    await this.store.save(next);
-    this.notify('updated', next, prevStatus);
-    return cloneTask(next);
+      await this.store.save(next);
+      this.notify('updated', next, prevStatus);
+      return cloneTask(next);
+    });
   }
 
   /**
    * 暂停任务 (running -> paused)
    */
   public async pause(id: string, reason?: string): Promise<Task> {
-    const current = await this.getRequiredTask(id);
-    const prevStatus = current.status;
-    const next = transitionTask(current, 'paused', {
-      meta: reason ? { pauseReason: reason } : undefined,
-    });
+    return withTaskUpdateLock(this.store, id, async () => {
+      const current = await this.getRequiredTask(id);
+      const prevStatus = current.status;
+      const next = transitionTask(current, 'paused', {
+        meta: reason ? { pauseReason: reason } : undefined,
+      });
 
-    await this.store.save(next);
-    this.notify('updated', next, prevStatus);
-    return cloneTask(next);
+      await this.store.save(next);
+      this.notify('updated', next, prevStatus);
+      return cloneTask(next);
+    });
   }
 
   /**
    * 恢复暂停中的任务 (paused -> running)
    */
   public async resume(id: string): Promise<Task> {
-    const current = await this.getRequiredTask(id);
-    const prevStatus = current.status;
-    const next = transitionTask(current, 'running');
+    return withTaskUpdateLock(this.store, id, async () => {
+      const current = await this.getRequiredTask(id);
+      const prevStatus = current.status;
+      const next = transitionTask(current, 'running');
 
-    await this.store.save(next);
-    this.notify('updated', next, prevStatus);
-    return cloneTask(next);
+      await this.store.save(next);
+      this.notify('updated', next, prevStatus);
+      return cloneTask(next);
+    });
   }
 
   /**
@@ -231,45 +240,51 @@ export class TaskManager {
    * 时才转为 running；transitionTask 会保留首次 startedAt（不重置为出队时间）。
    */
   public async requeue(id: string): Promise<Task> {
-    const current = await this.getRequiredTask(id);
-    const prevStatus = current.status;
-    const next = transitionTask(current, 'pending');
+    return withTaskUpdateLock(this.store, id, async () => {
+      const current = await this.getRequiredTask(id);
+      const prevStatus = current.status;
+      const next = transitionTask(current, 'pending');
 
-    await this.store.save(next);
-    this.notify('updated', next, prevStatus);
-    return cloneTask(next);
+      await this.store.save(next);
+      this.notify('updated', next, prevStatus);
+      return cloneTask(next);
+    });
   }
 
   /**
    * 取消任务 (pending | running | paused -> cancelled)
    */
   public async cancel(id: string, reason?: string): Promise<Task> {
-    const current = await this.getRequiredTask(id);
-    const prevStatus = current.status;
-    const next = transitionTask(current, 'cancelled', {
-      error: reason,
-      meta: reason ? { cancelReason: reason } : undefined,
-    });
+    return withTaskUpdateLock(this.store, id, async () => {
+      const current = await this.getRequiredTask(id);
+      const prevStatus = current.status;
+      const next = transitionTask(current, 'cancelled', {
+        error: reason,
+        meta: reason ? { cancelReason: reason } : undefined,
+      });
 
-    await this.store.save(next);
-    this.notify('updated', next, prevStatus);
-    return cloneTask(next);
+      await this.store.save(next);
+      this.notify('updated', next, prevStatus);
+      return cloneTask(next);
+    });
   }
 
   /**
    * 标记任务执行成功 (running -> completed)
    */
   public async complete(id: string, result?: unknown): Promise<Task> {
-    const current = await this.getRequiredTask(id);
-    const prevStatus = current.status;
-    const next = transitionTask(current, 'completed', {
-      progress: 100,
-      result,
-    });
+    return withTaskUpdateLock(this.store, id, async () => {
+      const current = await this.getRequiredTask(id);
+      const prevStatus = current.status;
+      const next = transitionTask(current, 'completed', {
+        progress: 100,
+        result,
+      });
 
-    await this.store.save(next);
-    this.notify('updated', next, prevStatus);
-    return cloneTask(next);
+      await this.store.save(next);
+      this.notify('updated', next, prevStatus);
+      return cloneTask(next);
+    });
   }
 
   /**
@@ -279,32 +294,36 @@ export class TaskManager {
     id: string,
     patch?: { result?: unknown; progress?: number; meta?: Record<string, unknown> },
   ): Promise<Task> {
-    const current = await this.getRequiredTask(id);
-    const prevStatus = current.status;
-    const next = transitionTask(current, 'waiting_confirmation', {
-      progress: patch?.progress ?? 100,
-      result: patch?.result,
-      meta: patch?.meta,
-    });
+    return withTaskUpdateLock(this.store, id, async () => {
+      const current = await this.getRequiredTask(id);
+      const prevStatus = current.status;
+      const next = transitionTask(current, 'waiting_confirmation', {
+        progress: patch?.progress ?? 100,
+        result: patch?.result,
+        meta: patch?.meta,
+      });
 
-    await this.store.save(next);
-    this.notify('updated', next, prevStatus);
-    return cloneTask(next);
+      await this.store.save(next);
+      this.notify('updated', next, prevStatus);
+      return cloneTask(next);
+    });
   }
 
   /**
    * 标记任务执行失败 (running | paused -> failed)
    */
   public async fail(id: string, error: string): Promise<Task> {
-    const current = await this.getRequiredTask(id);
-    const prevStatus = current.status;
-    const next = transitionTask(current, 'failed', {
-      error,
-    });
+    return withTaskUpdateLock(this.store, id, async () => {
+      const current = await this.getRequiredTask(id);
+      const prevStatus = current.status;
+      const next = transitionTask(current, 'failed', {
+        error,
+      });
 
-    await this.store.save(next);
-    this.notify('updated', next, prevStatus);
-    return cloneTask(next);
+      await this.store.save(next);
+      this.notify('updated', next, prevStatus);
+      return cloneTask(next);
+    });
   }
 
   /**
@@ -315,30 +334,32 @@ export class TaskManager {
     progress: number,
     metaPatch?: Record<string, unknown>,
   ): Promise<Task> {
-    const current = await this.getRequiredTask(id);
+    return withTaskUpdateLock(this.store, id, async () => {
+      const current = await this.getRequiredTask(id);
 
-    if (current.status !== 'running' && current.status !== 'paused') {
-      throw new Error(
-        `[TaskManager] 无法更新状态为 "${current.status}" 的任务进度 (仅允许 running / paused 状态更新进度)`,
-      );
-    }
+      if (current.status !== 'running' && current.status !== 'paused') {
+        throw new Error(
+          `[TaskManager] 无法更新状态为 "${current.status}" 的任务进度 (仅允许 running / paused 状态更新进度)`,
+        );
+      }
 
-    const safeProgress = Math.max(0, Math.min(100, progress));
-    const now = Date.now();
+      const safeProgress = Math.max(0, Math.min(100, progress));
+      const now = Date.now();
 
-    const updated: Task = {
-      ...current,
-      progress: safeProgress,
-      updatedAt: now,
-      meta: {
-        ...current.meta,
-        ...metaPatch,
-      },
-    };
+      const updated: Task = {
+        ...current,
+        progress: safeProgress,
+        updatedAt: now,
+        meta: {
+          ...current.meta,
+          ...metaPatch,
+        },
+      };
 
-    await this.store.save(updated);
-    this.notify('updated', updated, current.status);
-    return cloneTask(updated);
+      await this.store.save(updated);
+      this.notify('updated', updated, current.status);
+      return cloneTask(updated);
+    });
   }
 
   /**
@@ -358,11 +379,15 @@ export class TaskManager {
 
     const recoveredList: Task[] = [];
     for (const task of allTasks) {
-      const prevStatus = task.status;
-      const recovered = recoverTaskAfterRestart(task, options);
-      await this.store.save(recovered);
-      this.notify('updated', recovered, prevStatus);
-      recoveredList.push(cloneTask(recovered));
+      await withTaskUpdateLock(this.store, task.id, async () => {
+        // list 只是候选快照；排队期间任务可能已取消、删除或完成，必须重读并校验。
+        const current = await this.store.get(task.id);
+        if (!current || current.status !== 'running') return;
+        const recovered = recoverTaskAfterRestart(current, options);
+        await this.store.save(recovered);
+        this.notify('updated', recovered, current.status);
+        recoveredList.push(cloneTask(recovered));
+      });
     }
 
     return recoveredList;
@@ -372,15 +397,17 @@ export class TaskManager {
    * 删除任务（从持久化存储中移除）
    */
   public async remove(id: string): Promise<boolean> {
-    const existing = await this.store.get(id);
-    if (!existing) {
-      return false;
-    }
+    return withTaskUpdateLock(this.store, id, async () => {
+      const existing = await this.store.get(id);
+      if (!existing) {
+        return false;
+      }
 
-    const success = await this.store.delete(id);
-    if (success) {
-      this.notify('removed', existing);
-    }
-    return success;
+      const success = await this.store.delete(id);
+      if (success) {
+        this.notify('removed', existing);
+      }
+      return success;
+    });
   }
 }

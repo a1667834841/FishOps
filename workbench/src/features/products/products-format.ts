@@ -107,6 +107,11 @@ export function displayCaptureTime(product: Pick<Product, 'captureTimeMs' | 'cap
   return formatFullTime(product.captureTimeMs) || product.captureTime || ''
 }
 
+/** 发布时间展示：只展示官方发布时间，缺失时显示破折号。 */
+export function displayPublishTime(product: Pick<Product, 'publishTimeMs' | 'publishTime'>): string {
+  return formatFullTime(product.publishTimeMs) || product.publishTime || '—'
+}
+
 /** 分页信息推导；页码从 0 开始。 */
 export function pageInfo(total: number, pageSize: number, page: number): {
   totalPages: number
@@ -400,8 +405,8 @@ export function mapCatalogProductToTableItem(p: CatalogProduct): ProductTableIte
     originalPrice: p.originalPrice || (p.originalPriceNumber > 0 ? `¥${p.originalPriceNumber}` : ''),
     originalPriceNumber: p.originalPriceNumber ?? 0,
     wantCnt: p.wantCnt,
-    publishTime: '',
-    publishTimeMs: 0,
+    publishTime: formatFullTime(p.publishTimeMs ?? 0),
+    publishTimeMs: p.publishTimeMs ?? 0,
     captureTime,
     captureTimeMs,
     sellerNick: p.sellerNick ?? '',

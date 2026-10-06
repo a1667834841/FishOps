@@ -132,7 +132,7 @@ function resolvePageSize(requested?: number): number {
   return Math.min(Math.max(1, Math.floor(requested)), PRODUCT_CATALOG_MAX_PAGE_SIZE)
 }
 
-/** 在完整集合上排序（与本地商品库口径一致）。 */
+/** 在完整集合上排序（自有商品使用发布时间，兼容既有时间排序枚举）。 */
 function sortCatalogProducts(
   products: readonly CatalogProduct[],
   order: ProductOrder = 'captureTimeDesc',
@@ -140,14 +140,14 @@ function sortCatalogProducts(
   const copy = [...products]
   switch (order) {
     case 'captureTimeAsc':
-      copy.sort((a, b) => (a.captureTimeMs ?? 0) - (b.captureTimeMs ?? 0))
+      copy.sort((a, b) => (a.publishTimeMs ?? 0) - (b.publishTimeMs ?? 0))
       break
     case 'wantCntDesc':
-      copy.sort((a, b) => b.wantCnt - a.wantCnt || (b.captureTimeMs ?? 0) - (a.captureTimeMs ?? 0))
+      copy.sort((a, b) => b.wantCnt - a.wantCnt || (b.publishTimeMs ?? 0) - (a.publishTimeMs ?? 0))
       break
     case 'captureTimeDesc':
     default:
-      copy.sort((a, b) => (b.captureTimeMs ?? 0) - (a.captureTimeMs ?? 0))
+      copy.sort((a, b) => (b.publishTimeMs ?? 0) - (a.publishTimeMs ?? 0))
       break
   }
   return copy
@@ -211,7 +211,8 @@ export function createProductCatalogRuntime(deps: ProductCatalogRuntimeDeps): Pr
         product.coverUrl &&
         product.wantCnt > 0 &&
         product.sellerCity &&
-        product.sellerNick
+        product.sellerNick &&
+        product.publishTimeMs
       ) {
         continue
       }
@@ -222,6 +223,7 @@ export function createProductCatalogRuntime(deps: ProductCatalogRuntimeDeps): Pr
       try {
         const raw = await deps.platform.detail(product.itemId)
         const patch = normalizeDetailPatch(raw)
+        if (patch.publishTimeMs) product.publishTimeMs = patch.publishTimeMs
         if (patch.desc) product.desc = patch.desc
         if (typeof patch.wantCnt === 'number') product.wantCnt = patch.wantCnt
         // 详情补出的卖家地区 / 昵称：列表未提供时才写入，绝不覆盖已有真实值。
