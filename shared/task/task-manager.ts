@@ -65,6 +65,12 @@ export interface TaskManagerOptions {
   idGenerator?: (type: TaskType) => string;
 }
 
+/** 启动恢复配置；未指定类型时保留全类型恢复，模块初始化必须指定所属类型。 */
+export interface StartupRecoveryOptions extends RecoveryOptions {
+  /** 仅恢复该类型的 running 任务，不改写其他类型的状态或元数据。 */
+  type?: TaskType;
+}
+
 /**
  * 任务管理器核心实现
  */
@@ -338,14 +344,14 @@ export class TaskManager {
   /**
    * Service Worker 启动/唤醒后执行的孤儿任务恢复
    *
-   * 扫描持久化存储中所有遗留处于 running 状态的任务，根据策略将其流转为 paused（默认）或 failed，
-   * 确保状态机不出现永久挂起的假 running 任务。
+   * 扫描指定类型（未指定时为所有类型）的遗留 running 任务，按策略转为 paused（默认）或 failed。
+   * 共享存储的模块必须限定类型，避免初始化顺序导致其他模块的恢复策略和断点失效。
    *
-   * @param options 恢复配置 (默认策略 'paused')
+   * @param options 恢复配置 (默认策略 'paused'，可指定任务类型)
    * @returns 成功恢复的任务列表
    */
-  public async recoverOnStartup(options: RecoveryOptions = {}): Promise<Task[]> {
-    const allTasks = await this.store.list({ status: 'running' });
+  public async recoverOnStartup(options: StartupRecoveryOptions = {}): Promise<Task[]> {
+    const allTasks = await this.store.list({ status: 'running', type: options.type });
     if (allTasks.length === 0) {
       return [];
     }
