@@ -28,6 +28,7 @@ import {
   ChromeStorageSessionAdapter,
   MemoryStorageAdapter,
   MemoryTaskStore,
+  ChromeStorageLocalAdapter,
 } from './task-store.ts';
 import { TaskManager } from './task-manager.ts';
 import type { TaskChangeEvent } from '../types/task.ts';
@@ -235,6 +236,139 @@ test('事件订阅与快照不可变保护', async () => {
   unsubscribe();
   await manager.create({ type: 'publish', payload: {} });
   assert.equal(events.length, 4); // 数量不再增加
+});
+
+test('AdapterTaskStore 并发写入保持索引一致并按实体键自愈', async () => {
+  const adapter = new MemoryStorageAdapter();
+  const store = new AdapterTaskStore(adapter, 'concurrent');
+  const makeTask = (id: string) => ({
+    id, type: 'capture' as const, status: 'pending' as const, progress: 0,
+    createdAt: Number(id), updatedAt: Number(id), payload: {},
+  });
+
+  await Promise.all([store.save(makeTask('1')), store.save(makeTask('2'))]);
+  assert.deepEqual((await adapter.getItem<string[]>('concurrent:task_index'))?.slice().sort(), ['1', '2']);
+  assert.ok(await adapter.getItem('concurrent:task:1'));
+  assert.ok(await adapter.getItem('concurrent:task:2'));
+  assert.deepEqual((await store.list()).map((task) => task.id).sort(), ['1', '2']);
+
+  await Promise.all([
+    store.saveBatch([makeTask('3'), makeTask('4')]),
+    store.delete('1'),
+    store.save(makeTask('5')),
+  ]);
+  assert.deepEqual(new Set(await adapter.getItem<string[]>('concurrent:task_index')), new Set(['2', '3', '4', '5']));
+  for (const id of ['2', '3', '4', '5']) assert.ok(await adapter.getItem(`concurrent:task:${id}`));
+  assert.equal(await adapter.getItem('concurrent:task:1'), null);
+  assert.deepEqual(new Set((await store.list()).map((task) => task.id)), new Set(['2', '3', '4', '5']));
+
+  await adapter.setItem('concurrent:task:orphan', makeTask('orphan'));
+  assert.deepEqual((await store.list()).map((task) => task.id).sort(), ['2', '3', '4', '5', 'orphan']);
+});
+
+test('AdapterTaskStore 的同 StorageArea 多实例共用索引协调且错误后队列可继续', async () => {
+  const data = new Map<string, unknown>();
+  const area = {
+    async get(keys?: string | string[] | Record<string, unknown> | null) {
+      if (keys === null || keys === undefined) return Object.fromEntries(data);
+      const list = typeof keys === 'string' ? [keys] : Array.isArray(keys) ? keys : Object.keys(keys);
+      return Object.fromEntries(list.filter((key) => data.has(key)).map((key) => [key, data.get(key)]));
+    },
+    async set(items: Record<string, unknown>) { for (const [key, value] of Object.entries(items)) data.set(key, value); },
+    async remove(keys: string | string[]) { for (const key of Array.isArray(keys) ? keys : [keys]) data.delete(key); },
+  };
+  const first = new AdapterTaskStore(new ChromeStorageLocalAdapter(area), 'shared');
+  const second = new AdapterTaskStore(new ChromeStorageLocalAdapter(area), 'shared');
+  const makeTask = (id: string) => ({
+    id, type: 'capture' as const, status: 'pending' as const, progress: 0,
+    createdAt: Number(id), updatedAt: Number(id), payload: {},
+  });
+  await Promise.all([first.save(makeTask('1')), second.save(makeTask('2'))]);
+  assert.deepEqual(new Set(data.get('shared:task_index') as string[]), new Set(['1', '2']));
+  assert.ok(data.has('shared:task:1'));
+  assert.ok(data.has('shared:task:2'));
+  assert.deepEqual((await first.list()).map((task) => task.id).sort(), ['1', '2']);
+  const isolated = new AdapterTaskStore(new MemoryStorageAdapter(), 'shared');
+  await isolated.save(makeTask('9'));
+  assert.deepEqual((await isolated.list()).map((task) => task.id), ['9']);
+  const otherPrefix = new AdapterTaskStore(new ChromeStorageLocalAdapter(area), 'other');
+  await otherPrefix.save(makeTask('10'));
+  assert.deepEqual((await first.list()).map((task) => task.id).sort(), ['1', '2']);
+
+  let indexWrites = 0;
+  const orderedAdapter = new MemoryStorageAdapter();
+  const orderedSetItem = orderedAdapter.setItem.bind(orderedAdapter);
+  orderedAdapter.setItem = async (key, value) => {
+    if (key === 'ordered:task_index') indexWrites++;
+    await orderedSetItem(key, value);
+  };
+  const ordered = new AdapterTaskStore(orderedAdapter, 'ordered');
+  await ordered.saveBatch([makeTask('6'), makeTask('7'), makeTask('6')]);
+  assert.deepEqual((await ordered.list()).map((task) => task.id), ['7', '6']);
+  const indexWritesAfterInsert = indexWrites;
+  await ordered.save(makeTask('6'));
+  assert.equal(indexWrites, indexWritesAfterInsert);
+  await Promise.all([ordered.clear(), ordered.save(makeTask('8'))]);
+  assert.deepEqual((await ordered.list()).map((task) => task.id), ['8']);
+
+  await ordered.save(makeTask('11'));
+  await ordered.clear();
+  assert.equal(await orderedAdapter.getItem('ordered:task:11'), null);
+  await orderedAdapter.setItem('ordered:task:orphan', makeTask('orphan'));
+  await orderedAdapter.setItem('other:task:keep', makeTask('keep'));
+  await orderedAdapter.setItem('ordered:unrelated', 'keep');
+  await ordered.clear();
+  assert.equal(await orderedAdapter.getItem('ordered:task:orphan'), null);
+  assert.ok(await orderedAdapter.getItem('other:task:keep'));
+  assert.equal(await orderedAdapter.getItem('ordered:unrelated'), 'keep');
+
+  const sameAdapterFirst = new AdapterTaskStore(orderedAdapter, 'multi');
+  const sameAdapterSecond = new AdapterTaskStore(orderedAdapter, 'multi');
+  await Promise.all([sameAdapterFirst.save(makeTask('12')), sameAdapterSecond.save(makeTask('13'))]);
+  assert.deepEqual(new Set(await orderedAdapter.getItem<string[]>('multi:task_index')), new Set(['12', '13']));
+
+  await sameAdapterFirst.delete('12');
+  await sameAdapterSecond.save(makeTask('12'));
+  assert.deepEqual(await orderedAdapter.getItem<string[]>('multi:task_index'), ['13', '12']);
+  await Promise.all([sameAdapterFirst.save(makeTask('14')), sameAdapterSecond.delete('14')]);
+  assert.deepEqual(await orderedAdapter.getItem<string[]>('multi:task_index'), ['13', '12']);
+  assert.equal(await orderedAdapter.getItem('multi:task:14'), null);
+
+  const sessionStoreA = new AdapterTaskStore(new ChromeStorageSessionAdapter(area), 'session');
+  const sessionStoreB = new AdapterTaskStore(new ChromeStorageSessionAdapter(area), 'session');
+  await Promise.all([sessionStoreA.save(makeTask('15')), sessionStoreB.save(makeTask('16'))]);
+  assert.deepEqual(new Set(data.get('session:task_index') as string[]), new Set(['15', '16']));
+
+  const failing = new MemoryStorageAdapter();
+  const originalSet = failing.setItem.bind(failing);
+  let shouldFail = true;
+  failing.setItem = async (key, value) => {
+    if (key === 'failure:task_index' && shouldFail) { shouldFail = false; throw new Error('index failed'); }
+    await originalSet(key, value);
+  };
+  const store = new AdapterTaskStore(failing, 'failure');
+  await assert.rejects(store.save(makeTask('3')), /index failed/);
+  await store.save(makeTask('4'));
+  assert.deepEqual((await store.list()).map((task) => task.id).sort(), ['3', '4']);
+});
+
+test('AdapterTaskStore 在调用时捕获 save 与 saveBatch 输入快照', async () => {
+  const adapter = new MemoryStorageAdapter();
+  const store = new AdapterTaskStore(adapter, 'snapshot');
+  const task = { id: '1', type: 'capture' as const, status: 'pending' as const, progress: 0, createdAt: 1, updatedAt: 1, payload: { value: 'before' } };
+  const savePromise = store.save(task);
+  task.payload.value = 'after';
+  task.id = 'changed';
+  await savePromise;
+  assert.equal((await store.get('1'))?.payload.value, 'before');
+  assert.equal(await store.get('changed'), null);
+  assert.deepEqual(await adapter.getItem('snapshot:task_index'), ['1']);
+
+  const batchTask = { ...task, id: '2', payload: { value: 'before' } };
+  const batchPromise = store.saveBatch([batchTask]);
+  batchTask.payload.value = 'after';
+  await batchPromise;
+  assert.equal((await store.get('2'))?.payload.value, 'before');
 });
 
 test('持久化适配器 AdapterTaskStore 与 ChromeStorageSessionAdapter 隔离检测', async () => {

@@ -53,6 +53,8 @@ export interface KeyValueStorageAdapter {
   removeItem(key: string): Promise<void>;
   getKeys(): Promise<string[]>;
   clear(): Promise<void>;
+  /** 可选的底层区域身份，用于同一 realm 内共享操作协调。 */
+  readonly coordinationKey?: object;
 }
 
 /**
@@ -182,6 +184,9 @@ export interface MinimalChromeStorageArea {
 export class ChromeStorageSessionAdapter implements KeyValueStorageAdapter {
   private readonly storageArea: MinimalChromeStorageArea;
 
+  /** 返回底层区域身份，使包装同一 StorageArea 的适配器共享任务写队列。 */
+  get coordinationKey(): object { return this.storageArea; }
+
   constructor(customStorageArea?: MinimalChromeStorageArea) {
     if (customStorageArea) {
       this.storageArea = customStorageArea;
@@ -253,6 +258,9 @@ export class ChromeStorageSessionAdapter implements KeyValueStorageAdapter {
 export class ChromeStorageLocalAdapter implements KeyValueStorageAdapter {
   private readonly storageArea: MinimalChromeStorageArea;
 
+  /** 返回底层区域身份，使包装同一 StorageArea 的适配器共享任务写队列。 */
+  get coordinationKey(): object { return this.storageArea; }
+
   constructor(customStorageArea?: MinimalChromeStorageArea) {
     if (customStorageArea) {
       this.storageArea = customStorageArea;
@@ -312,23 +320,41 @@ export class ChromeStorageLocalAdapter implements KeyValueStorageAdapter {
   }
 }
 
+const taskStoreQueues = new WeakMap<object, Map<string, Promise<void>>>();
+
 /**
  * 基于底层 KeyValueStorageAdapter 构建的通用持久化 TaskStore。
  *
  * 采用独立 Key + 索引列表存储模式：
  * - 任务实体 Key 格式: `${prefix}:task:${taskId}`
- * - 任务 ID 索引列表 Key: `${prefix}:index`
+ * - 任务 ID 索引列表 Key: `${prefix}:task_index`
  * 保证高效按 ID 单条读写，同时支持列表按条件索引过滤。
  */
 export class AdapterTaskStore implements TaskStore {
   private readonly adapter: KeyValueStorageAdapter;
   private readonly prefix: string;
   private readonly indexKey: string;
+  private readonly coordinationKey: object;
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    // 同一 realm 内相同存储区域和前缀共享互斥队列，避免索引读改写覆盖；
+    // 队列尾部消费失败状态以便后续操作继续，当前操作仍保留原始拒绝结果。
+    let queues = taskStoreQueues.get(this.coordinationKey);
+    if (!queues) {
+      queues = new Map();
+      taskStoreQueues.set(this.coordinationKey, queues);
+    }
+    const previous = queues.get(this.prefix) ?? Promise.resolve();
+    const result = previous.then(operation);
+    queues.set(this.prefix, result.then(() => undefined, () => undefined));
+    return result;
+  }
 
   constructor(adapter: KeyValueStorageAdapter, prefix = 'fishops') {
     this.adapter = adapter;
     this.prefix = prefix;
     this.indexKey = `${prefix}:task_index`;
+    this.coordinationKey = adapter.coordinationKey ?? adapter;
   }
 
   private getTaskKey(id: string): string {
@@ -350,66 +376,75 @@ export class AdapterTaskStore implements TaskStore {
   }
 
   async list(filter?: TaskFilter): Promise<Task[]> {
-    const index = await this.getIndex();
-    if (index.length === 0) return [];
-
-    const tasks: Task[] = [];
-    for (const id of index) {
-      const task = await this.get(id);
-      if (task && matchTaskFilter(task, filter)) {
-        tasks.push(task);
+    return this.enqueue(async () => {
+      const index = await this.getIndex();
+      const keys = await this.adapter.getKeys();
+      const ids = Array.from(new Set([
+        ...index,
+        ...keys.filter((key) => key.startsWith(`${this.prefix}:task:`))
+          .map((key) => key.slice(`${this.prefix}:task:`.length)),
+      ]));
+      const tasks: Task[] = [];
+      const existingIds: string[] = [];
+      for (const id of ids) {
+        const task = await this.get(id);
+        if (task) {
+          existingIds.push(id);
+          if (matchTaskFilter(task, filter)) tasks.push(task);
+        }
       }
-    }
-
-    return tasks.sort((a, b) => b.createdAt - a.createdAt);
+      if (existingIds.length !== index.length || existingIds.some((id, i) => id !== index[i])) {
+        await this.saveIndex(existingIds);
+      }
+      return tasks.sort((a, b) => b.createdAt - a.createdAt);
+    });
   }
 
   async save(task: Task): Promise<void> {
     const cloned = cloneTask(task);
-    await this.adapter.setItem(this.getTaskKey(task.id), cloned);
-
-    const index = await this.getIndex();
-    if (!index.includes(task.id)) {
-      index.push(task.id);
-      await this.saveIndex(index);
-    }
+    return this.enqueue(async () => {
+      await this.adapter.setItem(this.getTaskKey(cloned.id), cloned);
+      const index = await this.getIndex();
+      if (!index.includes(cloned.id)) {
+        index.push(cloned.id);
+        await this.saveIndex(index);
+      }
+    });
   }
 
   async saveBatch(tasks: Task[]): Promise<void> {
     if (tasks.length === 0) return;
-
-    const index = await this.getIndex();
-    const indexSet = new Set(index);
-
-    for (const task of tasks) {
-      const cloned = cloneTask(task);
-      await this.adapter.setItem(this.getTaskKey(task.id), cloned);
-      indexSet.add(task.id);
-    }
-
-    await this.saveIndex(Array.from(indexSet));
+    const clonedTasks = tasks.map((task) => cloneTask(task));
+    return this.enqueue(async () => {
+      const indexSet = new Set(await this.getIndex());
+      for (const task of clonedTasks) {
+        await this.adapter.setItem(this.getTaskKey(task.id), task);
+        indexSet.add(task.id);
+      }
+      await this.saveIndex(Array.from(indexSet));
+    });
   }
 
   async delete(id: string): Promise<boolean> {
-    const key = this.getTaskKey(id);
-    const existing = await this.adapter.getItem(key);
-    if (!existing) {
-      return false;
-    }
-
-    await this.adapter.removeItem(key);
-    const index = await this.getIndex();
-    const filtered = index.filter((item) => item !== id);
-    await this.saveIndex(filtered);
-    return true;
+    return this.enqueue(async () => {
+      const key = this.getTaskKey(id);
+      const existing = await this.adapter.getItem(key);
+      if (!existing) return false;
+      await this.adapter.removeItem(key);
+      await this.saveIndex((await this.getIndex()).filter((item) => item !== id));
+      return true;
+    });
   }
 
   async clear(): Promise<void> {
-    const index = await this.getIndex();
-    for (const id of index) {
-      await this.adapter.removeItem(this.getTaskKey(id));
-    }
-    await this.adapter.removeItem(this.indexKey);
+    return this.enqueue(async () => {
+      const prefix = `${this.prefix}:task:`;
+      const keys = await this.adapter.getKeys();
+      for (const key of keys) {
+        if (key.startsWith(prefix)) await this.adapter.removeItem(key);
+      }
+      await this.adapter.removeItem(this.indexKey);
+    });
   }
 }
 
