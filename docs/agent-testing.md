@@ -19,7 +19,7 @@ CI 与 Release 继续使用原来的 `npm run build`，不写入本机测试目�
 在主工作区填写 `agent-config.json.local`。该文件匹配 Git 的 `*.local` 忽略规则，不提交到仓库，也不复制进构建产物。配置包含 `ai`、`feishu`、`reply` 三组；不需要的配置组可整组删除。需要使用的组必须按设置页面要求填写完整。
 
 - `ai`：`baseUrl`、`apiKey`、`model`、`timeoutMs`。
-- `feishu`：`appId`、`appSecret`、`spreadsheetToken`、`productTableId`、`sellerTableId`。每日分表模式允许 `productTableId` 留空；`sellerTableId` 为可选项。
+- `feishu`：必填 `appId`、`appSecret`、`spreadsheetToken`。每日分表模式无需 `productTableId`，可移除此字段；`sellerTableId` 为可选项。导入采用 PATCH 合并，移除字段不会清除浏览器已有旧值；迁移时先在设置页清空旧商品表 ID。
 - `reply`：测试环境使用 `enabled: false` 和 `mode: "suggest"`，避免自动发送真实消息。
 
 worktree 优先读取自身的配置文件；文件不存在时，读取 `git worktree list` 的主工作区中的同名文件。也可指定其他本地文件：
@@ -59,6 +59,8 @@ npm run agent:uninstall
 卸载会清除该扩展在浏览器内保存的配置和任务数据。再次使用时，需在 ego lite 中手动加载固定目录，然后运行 `npm run agent:setup` 导入本地配置。
 
 ## 验证脚本
+
+完整回归运行 `npm run regression:full`；只检查飞书、AI 等真实入口时运行 `npm run regression:e2e`。覆盖范围、配置条件与报告见[回归测试](regression-testing.md)。
 
 ```sh
 npm run test:agent

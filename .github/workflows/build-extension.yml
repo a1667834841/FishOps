@@ -27,20 +27,17 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
-      - name: 运行单元测试
-        run: npm test
+      - name: 运行本地全量回归
+        run: npm run regression
 
-      - name: 检查类型
-        run: npm run typecheck
-
-      - name: 构建扩展和工作台
-        run: npm run build
-
-      - name: 运行安全回归测试
-        run: npm run test:security
-
-      - name: 验证构建产物
-        run: npm run test:smoke
+      - name: 保留回归报告与检查日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report
+          path: .regression/
+          include-hidden-files: true
+          retention-days: 14
 
       - name: 打包插件
         working-directory: extension/dist
