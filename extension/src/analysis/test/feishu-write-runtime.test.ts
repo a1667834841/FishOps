@@ -378,6 +378,61 @@ test('飞书写入: 选品内容变化后执行被拒绝', async () => {
   assert.equal(harness.batchCalls.length, 0)
 })
 
+// 覆盖去重组合键之外的全部写入字段，保证没有预览过的新内容不会落表。
+const writeFieldChanges: Array<[string, Partial<Product>]> = [
+  ['标题', { title: '预览后更新的标题' }],
+  ['描述', { desc: '预览后更新的描述' }],
+  ['原价', { originalPriceNumber: 300 }],
+  ['发布时间', { publishTimeMs: 1_000 }],
+  ['采集时间', { captureTimeMs: 2_000 }],
+  ['卖家昵称', { sellerNick: '更新的昵称' }],
+  ['地区', { sellerCity: '杭州' }],
+  ['包邮', { freeShip: '是' }],
+  ['标签', { tags: '更新标签' }],
+  ['封面链接', { coverUrl: 'https://image.example/changed.jpg' }],
+  ['详情链接', { detailUrl: 'https://item.example/changed' }],
+]
+
+for (const [field, patch] of writeFieldChanges) {
+  test(`飞书写入: 同组合键下${field}变化拒绝旧预览且重新预览可执行`, async () => {
+    const repository = await seedRepository()
+    const harness = createHarness()
+    const runtime = setup(harness, new MemoryFeishuConfigStore(CONFIG), repository)
+    const previewId = ((await preview(runtime, ['A', 'B'])).result as FeishuProductWritePreviewResult).previewId
+
+    await repository.upsertProducts([{ ...makeProduct('B', 20, 200), ...patch }], 2)
+    const res = await execute(runtime, previewId)
+    assert.equal(res.ok, false)
+    assert.equal(res.error?.code, 'INVALID_PAYLOAD')
+    assert.equal(res.error?.message.includes('选品已变化'), true)
+    assert.equal(harness.batchCalls.length, 0)
+    assert.equal(harness.fieldPosts, 0)
+    assert.equal((await execute(runtime, previewId)).ok, false)
+
+    const freshId = ((await preview(runtime, ['A', 'B'])).result as FeishuProductWritePreviewResult).previewId
+    const fresh = await execute(runtime, freshId)
+    assert.equal(fresh.ok, true)
+    assert.equal((fresh.result as FeishuProductWriteExecuteResult).createdCount, 2)
+  })
+}
+
+test('飞书写入: 缺失描述变为空串与非写入字段变化不作废预览', async () => {
+  const repository = await seedRepository()
+  const harness = createHarness()
+  const runtime = setup(harness, new MemoryFeishuConfigStore(CONFIG), repository)
+  const previewId = ((await preview(runtime, ['B'])).result as FeishuProductWritePreviewResult).previewId
+
+  // 这些变化不改变实际写入 payload，也不应要求用户重复确认。
+  await repository.upsertProducts([{
+    ...makeProduct('B', 20, 200), desc: '', browseCnt: 42, images: ['https://image.example/extra.jpg'],
+    price: '200 元', originalPrice: '原价未知', publishTime: '新的展示文案', captureTime: '新的展示文案',
+  }], 2)
+  const res = await execute(runtime, previewId)
+  assert.equal(res.ok, true)
+  assert.equal((res.result as FeishuProductWriteExecuteResult).createdCount, 1)
+  assert.equal(harness.batchCalls[0][0].fields['商品描述'], '')
+})
+
 test('飞书写入: previewId 一次性（重放被拒绝）', async () => {
   const repository = await seedRepository()
   const harness = createHarness()

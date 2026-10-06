@@ -94,7 +94,7 @@ interface CachedPreview {
   previewId: string
   /** 目标指纹：appId + spreadsheetToken + productTableId（非敏感，仅内存复验）。 */
   targetKey: string
-  /** 选品内容指纹（itemId + 去重组合键），用于判断「选品未变」。 */
+  /** 选品内容指纹（itemId + 规范化后的完整写入记录），仅存内存供复验。 */
   selectionKey: string
   /** 预览选定的唯一 itemId 列表（去重后）。 */
   itemIds: string[]
@@ -165,15 +165,14 @@ function buildTargetKey(config: FeishuConfig): string {
   return `${config.appId}|${config.spreadsheetToken}|${config.productTableId}`
 }
 
-/** 选品内容指纹：按 itemId 顺序拼接 (itemId, 去重组合键)，缺失标记为 __missing__。 */
+/** 选品内容指纹：按选择顺序序列化完整写入记录，缺失商品用 null 标记。 */
 function buildSelectionKey(itemIds: string[], productMap: Map<string, Product>): string {
-  return itemIds
-    .map((id) => {
-      const product = productMap.get(id)
-      if (!product) return `${id}:__missing__`
-      return `${id}:${buildFeishuProductDedupeKey(product.itemId, product.wantCnt, product.priceNumber)}`
-    })
-    .join('|')
+  // 与实际写入共用固定字段顺序和归一规则，避免去重键漏掉标题等内容，
+  // 也避免原始展示文案、对象属性顺序或非写入字段变化误使预览失效。
+  return JSON.stringify(itemIds.map((id) => {
+    const product = productMap.get(id)
+    return [id, product ? FeishuDataSource.convertProductToFeishuRecord(product) : null]
+  }))
 }
 
 /** 创建飞书商品写入运行时。 */
