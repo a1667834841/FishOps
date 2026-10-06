@@ -28,6 +28,7 @@ import {
   type ResponseEnvelope,
 } from '@fishops/shared'
 import { PlatformError } from '../platform/errors'
+import { FeishuProductsError } from './feishu-products-runtime'
 import { mergeProductImages, normalizeDetailPatch } from '../../../shared/capture/normalizer'
 import { mapFeishuRowToCatalogProduct } from '../../../shared/data-source/feishu-product-mapping'
 import { mapOnSaleCardToProduct } from '../../../shared/data-source/published-item-mapping'
@@ -349,7 +350,7 @@ export function createProductCatalogRuntime(deps: ProductCatalogRuntimeDeps): Pr
   async function queryFeishu(payload: ProductCatalogQueryPayload): Promise<ProductCatalogQueryResult> {
     const pageSize = resolvePageSize(payload.pageSize)
     const identity = await deps.feishu.cacheIdentity()
-    if (!identity) throw new Error('飞书配置不可用')
+    if (!identity) throw new FeishuProductsError('INVALID_PAYLOAD', '飞书未配置：请先在设置页填写飞书应用与多维表格信息', 'CONFIG_MISSING')
     if (!payload.forceRefresh && cacheRefresh &&
       (activeRefreshSources.has('all') || activeRefreshSources.has('feishu'))) {
       await cacheRefresh
@@ -374,8 +375,10 @@ export function createProductCatalogRuntime(deps: ProductCatalogRuntimeDeps): Pr
         ...(payload.order ? { order: toFeishuOrder(payload.order) } : {}),
       })
       const products = res.rows.map((row) => mapFeishuRowToCatalogProduct(row))
+      // 首页为空且没有后续页即可确定总数为 0；其他未知总数仍保持未知。
       const total =
-        typeof res.total === 'number' && Number.isFinite(res.total) && res.total >= 0 ? res.total : null
+        typeof res.total === 'number' && Number.isFinite(res.total) && res.total >= 0 ? res.total
+          : !payload.cursor && !payload.page && products.length === 0 && !res.hasMore ? 0 : null
       const result: ProductCatalogQueryResult = {
         source: 'feishu',
         products,
@@ -466,6 +469,14 @@ export function createProductCatalogRuntime(deps: ProductCatalogRuntimeDeps): Pr
   }
 
   function toErrorResponse(command: CommandEnvelope, error: unknown): ResponseEnvelope {
+    // 仅透传飞书运行时已脱敏的结构化错误，保留配置引导及真实故障类型。
+    if (error instanceof FeishuProductsError) {
+      return createErrorResponse(command.requestId, command.type, {
+        code: error.code,
+        message: error.message,
+        ...(error.businessCode === undefined ? {} : { businessCode: error.businessCode }),
+      })
+    }
     if (error instanceof PlatformError) {
       const protocolError: ProtocolError = {
         code: 'PLATFORM_ERROR',
