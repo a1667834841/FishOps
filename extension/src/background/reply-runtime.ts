@@ -340,7 +340,9 @@ export function createReplyRuntime(deps: ReplyRuntimeDeps): ReplyRuntime {
   }
 
   async function suggestion(payload: { sessionId: string; messageId?: string; respectPause?: boolean; includeImages?: boolean }): Promise<ReplySuggestionResult> {
-    const messages = await deps.getMessages(payload.sessionId, { order: 'asc', limit: 200 })
+    // 目标查找覆盖整个本地会话，避免历史指定 ID 或连续出站消息被上下文窗口截断。
+    // AI 上下文仍由 resolveAiReply 单独按 maxHistory 限量，不增加联网历史请求。
+    const messages = await deps.getMessages(payload.sessionId, { order: 'asc' })
     const target = pickTargetMessage(messages, payload.messageId)
     if (!target) return { ok: false, code: 'NO_MESSAGE', message: '该会话没有可用于生成建议的消息' }
 
@@ -413,7 +415,8 @@ export function createReplyRuntime(deps: ReplyRuntimeDeps): ReplyRuntime {
     messageId: string | undefined,
   ): Promise<string | null> {
     if (explicit) return explicit
-    const messages = await deps.getMessages(sessionId, { order: 'asc', limit: 200 })
+    // 与建议目标保持同一查找范围；显式收件人仍在读取消息前直接返回。
+    const messages = await deps.getMessages(sessionId, { order: 'asc' })
     const target = pickTargetMessage(messages, messageId)
     return target ? target.senderId : null
   }
