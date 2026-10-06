@@ -19,6 +19,7 @@ import { MemoryReplyConfigStore } from '../reply-config'
 import { createReplyRuntime, type ReplyIncomingSource } from '../../background/reply-runtime'
 import { ChatMessageSender } from '../send-client'
 import type { ChatSendTransport } from '../send-transport'
+import { ChatStore } from '../store'
 
 class FakeTransport implements ChatSendTransport {
   readonly sent: LwpRequest[] = []
@@ -78,17 +79,81 @@ function setup(options: {
     fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ model: 'm', choices: [{ message: { content: 'AI 建议内容' } }] }) }),
   })
   const messages = options.messages ?? [chatMessage()]
+  const messageStore = new ChatStore()
+  messageStore.upsertMessages(messages)
   const runtime = createReplyRuntime({
     configStore: store,
     sender,
     ai,
-    getMessages: async () => messages,
+    getMessages: async (sessionId, query) => messageStore.getMessages(sessionId, query),
     myUserId: 'me',
     now: () => 5000,
     sleep: async () => {},
   })
   return { transport, runtime, store, sentCount: () => transport.sent.length }
 }
+
+function longHistory(): ChatMessage[] {
+  return Array.from({ length: 401 }, (_, index) => chatMessage({
+    id: `m${index + 1}`,
+    messageId: `m${index + 1}`,
+    createAt: index + 1,
+  }))
+}
+
+for (const messageId of [undefined, 'm401', 'm1', 'm250', 'missing']) {
+  test(`长会话建议：真实 ChatStore 定位 ${messageId ?? '最新入站'}`, async () => {
+    const s = setup({ messages: longHistory() })
+    const response = await s.runtime.handleCommand(createCommand(CommandTypes.CHAT_GET_REPLY_SUGGESTION, {
+      sessionId: 's1', ...(messageId === undefined ? {} : { messageId }),
+    }))
+    const result = response.result as { ok: boolean; code?: string; suggestion?: { messageId: string } }
+    if (messageId === 'missing') {
+      assert.equal(result.ok, false)
+      assert.equal(result.code, 'NO_MESSAGE')
+    } else {
+      assert.equal(result.ok, true)
+      assert.equal(result.suggestion?.messageId, messageId ?? 'm401')
+    }
+    assert.equal(s.sentCount(), 0)
+  })
+}
+
+test('长会话建议：超过 200 条连续出站及空白入站不遮蔽最近有效入站', async () => {
+  const messages = longHistory().map((m, index) => index >= 150 ? { ...m, direction: 'out' as const } : m)
+  messages.push(chatMessage({ messageId: 'blank', createAt: 1000, content: '  ' }))
+  const s = setup({ messages })
+  const response = await s.runtime.handleCommand(createCommand(CommandTypes.CHAT_GET_REPLY_SUGGESTION, { sessionId: 's1' }))
+  const result = response.result as { ok: boolean; suggestion?: { messageId: string } }
+  assert.equal(result.ok, true)
+  assert.equal(result.suggestion?.messageId, 'm150')
+  assert.equal(s.sentCount(), 0)
+})
+
+for (const messageId of [undefined, 'm401', 'm1', 'missing']) {
+  test(`长会话采用建议：安全发送替身推断 ${messageId ?? '最新入站'} 的收件人`, async () => {
+    const messages = longHistory().map((m, index) => ({ ...m, senderId: `peer${index + 1}` }))
+    const s = setup({ messages })
+    const response = await s.runtime.handleCommand(createCommand(CommandTypes.CHAT_APPLY_REPLY, {
+      sessionId: 's1', content: '测试回复', ...(messageId === undefined ? {} : { messageId }),
+    }))
+    assert.equal(response.ok, messageId !== 'missing')
+    assert.equal(s.sentCount(), messageId === 'missing' ? 0 : 1)
+    if (messageId !== 'missing') {
+      assert.equal((response.result as { receiverId: string }).receiverId, `peer${(messageId ?? 'm401').slice(1)}`)
+    }
+  })
+}
+
+test('长会话采用建议：显式收件人不受不存在的消息 ID 影响', async () => {
+  const s = setup({ messages: longHistory() })
+  const response = await s.runtime.handleCommand(createCommand(CommandTypes.CHAT_APPLY_REPLY, {
+    sessionId: 's1', content: '测试回复', receiverId: 'explicit-peer', messageId: 'missing',
+  }))
+  assert.equal(response.ok, true)
+  assert.equal((response.result as { receiverId: string }).receiverId, 'explicit-peer')
+  assert.equal(s.sentCount(), 1)
+})
 
 test('状态：默认建议模式、规则数与 AI 配置布尔', async () => {
   const { runtime } = setup({ aiConfigured: true })

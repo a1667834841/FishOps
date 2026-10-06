@@ -177,7 +177,7 @@ export class ChatStore {
    *
    * 语义与 {@link getMessages} 的区别：`limit` 取的是**窗口内最近**的 N 条
    * （而不是最早的 N 条），并额外返回 `hasMore`。专用于历史向前翻页，
-   * 因此不影响 `getMessages` 的既有语义（reply-runtime 依赖其 asc+limit 取最早）。
+   * 因此不影响 `getMessages` 的既有语义（asc+limit 仍从最早端截取）。
    */
   getMessagePage(sessionId: string, options: MessagePageQueryOptions = {}): MessagePageResult {
     const bucket = this.messagesBySession.get(sessionId)
