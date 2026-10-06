@@ -134,12 +134,13 @@ export function createCaptureRuntime(deps: CaptureRuntimeDeps): CaptureRuntime {
     })
   })
 
-  // 启动恢复仅执行一次：running → paused（保留断点，不自动续跑）；pending 重新入队调度。
+  // 仅恢复本模块的采集任务：running → paused（保留断点，不自动续跑）；pending 重新入队调度。
   let initPromise: Promise<void> | null = null
   const ensureInit = (): Promise<void> => {
     if (!initPromise) {
       initPromise = tasks
         .recoverOnStartup({
+          type: 'capture',
           strategy: 'paused',
           reason: 'Service Worker 重启，采集任务已挂起，等待手动续采',
         })

@@ -160,7 +160,9 @@ export function createAnalysisRuntime(deps: AnalysisRuntimeDeps): AnalysisRuntim
   let initPromise: Promise<void> | null = null
   const ensureInit = (): Promise<void> => {
     if (!initPromise) {
+      // 与采集共享默认存储，仅中止本模块任务，不改写采集断点及其恢复策略。
       initPromise = tasks.recoverOnStartup({
+        type: 'analysis',
         strategy: 'failed',
         reason: 'Service Worker 重启，未完成的分析任务已中止',
       }).then(() => undefined)
