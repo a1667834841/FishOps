@@ -141,6 +141,8 @@ export interface DirectPublishJobPublic {
   fingerprint: string
   status: string
   itemId?: string
+  /** 实际发布描述首行（最多 120 字）；不保存完整正文、地址或来源标题。 */
+  productName?: string
   code?: string
   actionRequired?: string
   at: string
@@ -478,6 +480,8 @@ interface DirectPublishAuditEntry {
   status: 'attempting' | 'published' | 'rejected' | 'action_required' | 'unknown'
   at: string
   itemId?: string
+  /** 实际发布描述首行（最多 120 字）；不保存完整正文、地址或来源标题。 */
+  productName?: string
   code?: string
   actionRequired?: string
 }
@@ -500,7 +504,7 @@ function assertAuditEntry(value: unknown): DirectPublishAuditEntry {
     if (typeof raw !== 'string' || raw === '') throw new Error(`审计账本损坏：条目缺少字段 ${field}`)
   }
   if (!AUDIT_ENTRY_STATUSES.has(value['status'] as string)) throw new Error('审计账本损坏：条目状态非法')
-  for (const field of ['itemId', 'code', 'actionRequired'] as const) {
+  for (const field of ['itemId', 'productName', 'code', 'actionRequired'] as const) {
     const raw = value[field]
     if (raw !== undefined && typeof raw !== 'string') throw new Error(`审计账本损坏：字段 ${field} 类型非法`)
   }
@@ -511,6 +515,7 @@ function assertAuditEntry(value: unknown): DirectPublishAuditEntry {
     status: value['status'] as DirectPublishAuditEntry['status'],
     at: value['at'] as string,
     itemId: value['itemId'] as string | undefined,
+    productName: value['productName'] as string | undefined,
     code: value['code'] as string | undefined,
     actionRequired: value['actionRequired'] as string | undefined,
   }
@@ -1611,6 +1616,7 @@ export function createDirectPublishApi(deps: DirectPublishApiDeps): DirectPublis
               accountScope,
               idempotencyKey,
               fingerprint,
+              productName: 'product' in normalized.source ? normalized.source.product.description.trim().split(/\r?\n/)[0]?.slice(0, 120) : undefined,
               status: auditStatus,
               at: new Date().toISOString(),
               code: mapped.code,
@@ -1630,6 +1636,7 @@ export function createDirectPublishApi(deps: DirectPublishApiDeps): DirectPublis
               accountScope,
               idempotencyKey,
               fingerprint,
+              productName: 'product' in normalized.source ? normalized.source.product.description.trim().split(/\r?\n/)[0]?.slice(0, 120) : undefined,
               status: 'action_required',
               at: new Date().toISOString(),
               code: 'ACCOUNT_CHANGED',
@@ -1655,6 +1662,7 @@ export function createDirectPublishApi(deps: DirectPublishApiDeps): DirectPublis
             accountScope,
             idempotencyKey,
             fingerprint,
+            productName: 'product' in normalized.source ? normalized.source.product.description.trim().split(/\r?\n/)[0]?.slice(0, 120) : undefined,
             status: 'attempting',
             at: new Date().toISOString(),
           })
@@ -1689,6 +1697,7 @@ export function createDirectPublishApi(deps: DirectPublishApiDeps): DirectPublis
             accountScope,
             idempotencyKey,
             fingerprint,
+            productName: 'product' in normalized.source ? normalized.source.product.description.trim().split(/\r?\n/)[0]?.slice(0, 120) : undefined,
             status: finalStatus,
             at: new Date().toISOString(),
             itemId: result.itemId,
@@ -1777,6 +1786,7 @@ export function createDirectPublishApi(deps: DirectPublishApiDeps): DirectPublis
         fingerprint: entry.fingerprint,
         status: entry.status,
         itemId: entry.itemId,
+        productName: entry.productName,
         code: entry.code,
         actionRequired: entry.actionRequired,
         at: entry.at,
@@ -2141,6 +2151,7 @@ export function createDirectPublishApi(deps: DirectPublishApiDeps): DirectPublis
             accountScope,
             idempotencyKey,
             fingerprint,
+            productName: normalizedDraft.core.description.trim().split(/\r?\n/)[0]?.slice(0, 120),
             status: 'attempting',
             at: new Date().toISOString(),
           })
@@ -2185,6 +2196,7 @@ export function createDirectPublishApi(deps: DirectPublishApiDeps): DirectPublis
             accountScope,
             idempotencyKey,
             fingerprint,
+            productName: normalizedDraft.core.description.trim().split(/\r?\n/)[0]?.slice(0, 120),
             status: finalStatus,
             at: new Date().toISOString(),
             itemId: result.itemId,

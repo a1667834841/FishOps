@@ -169,7 +169,7 @@ export function getPublishTaskSummary(task: PublishTask): string {
   if (snap) {
     return `${snap.title} (${formatRMB(snap.price)})`
   }
-  return `商品 ID: ${task.payload?.itemId || task.id}`
+  return '商品名称暂不可用'
 }
 
 /**

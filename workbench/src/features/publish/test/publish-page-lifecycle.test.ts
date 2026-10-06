@@ -197,11 +197,7 @@ test('倒计时结束切到“仅任务列表”视图，隐藏选品/结果/弹
     '倒计时结束只做纯前端视图切换，绝不调用发布控制器触发 prepare/submit',
   )
 
-  // 三处条件渲染：选品区、结果区、DirectPublishModal 都要受 showTaskListOnly 控制
-  assert.ok(
-    /v-if="!showTaskListOnly"\s*\n\s*title="选择发布素材"/.test(pageSource),
-    '“选择发布素材”区域必须用 v-if="!showTaskListOnly" 隐藏',
-  )
+  assert.ok(!pageSource.includes('title="选择发布素材"'), '素材专区应整体移除')
   assert.ok(
     /v-if="!showTaskListOnly && \(directSubmitResult/.test(pageSource),
     '成功结果区域必须受 showTaskListOnly 控制隐藏',
@@ -212,16 +208,10 @@ test('倒计时结束切到“仅任务列表”视图，隐藏选品/结果/弹
   )
 })
 
-test('用户主动重新选品可退出“仅任务列表”视图，避免成功状态永久隐藏发布入口', () => {
-  const clearBody = pageSource.match(/function onClearDraft\(\): void \{[\s\S]{0,240}?\n\}/)
-  assert.ok(clearBody, '未找到 onClearDraft 实现')
-  assert.ok(
-    clearBody![0].includes('showTaskListOnly.value = false'),
-    '用户主动清草稿/重新选品必须重置 showTaskListOnly，恢复选品入口',
-  )
-  // 任务列表视图上必须有恢复按钮，且仅在 showTaskListOnly 时出现
-  assert.ok(
-    /v-if="showTaskListOnly"[\s\S]{0,160}?重新选择素材/.test(pageSource),
-    '“仅任务列表”视图必须提供“重新选择素材”恢复入口',
-  )
+test('商品库传入新草稿时重新开放发布弹窗，不需要素材专区恢复按钮', () => {
+  const openBody = pageSource.match(/function onOpenPublishModal\(\): void \{[\s\S]{0,240}?\n\}/)
+  assert.ok(openBody)
+  assert.ok(openBody[0].includes('showTaskListOnly.value = false'))
+  assert.ok(pageSource.includes('if (d && enterDraftFlow(directFlow, d)) onOpenPublishModal()'))
+  assert.ok(!pageSource.includes('重新选择素材'))
 })
