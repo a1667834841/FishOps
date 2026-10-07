@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import BackupNotice from '../components/BackupNotice.vue'
 import {
   PhArrowClockwise as ArrowClockwise,
@@ -24,12 +24,32 @@ import {
   type OverviewTask,
 } from '../features/overview/overview-controller'
 
-const emit = defineEmits<{ navigate: [page: PageId] }>()
+const emit = defineEmits<{ navigate: [page: PageId, sessionId?: string] }>()
 
 const { state, controller } = useBridgeController<OverviewState, OverviewController>({
   events: OVERVIEW_EVENTS,
   create: (api) => new OverviewController(api),
 })
+
+const openingUnread = ref(false)
+const unreadNavigationError = ref<string | null>(null)
+let active = true
+onBeforeUnmount(() => { active = false })
+
+async function navigateMetric(metric: { id: string; target: PageId }): Promise<void> {
+  if (metric.id !== 'conversations') { emit('navigate', metric.target); return }
+  if (openingUnread.value) return
+  openingUnread.value = true
+  unreadNavigationError.value = null
+  try {
+    const id = await controller.getLatestUnreadSessionId()
+    if (active) emit('navigate', 'chat', id ?? undefined)
+  } catch {
+    if (active) unreadNavigationError.value = '无法定位未读会话，请刷新后重试。'
+  } finally {
+    if (active) openingUnread.value = false
+  }
+}
 
 const counts = computed(() => taskCounts(state.value))
 const showAllTasks = ref(false)
@@ -213,7 +233,9 @@ function taskStatusClass(status: string): string {
         :key="metric.id"
         type="button"
         class="metric-card"
-        @click="emit('navigate', metric.target)"
+        :disabled="metric.id === 'conversations' && openingUnread"
+        :aria-busy="metric.id === 'conversations' && openingUnread ? 'true' : undefined"
+        @click="navigateMetric(metric)"
       >
         <div class="metric-header">
           <span class="metric-label">{{ metric.label }}</span>
@@ -235,6 +257,8 @@ function taskStatusClass(status: string): string {
         </div>
       </button>
     </div>
+
+    <p v-if="unreadNavigationError" class="callout callout--error" role="alert">{{ unreadNavigationError }}</p>
 
     <!-- 3. 下方分栏布局：左侧近期任务，右侧运行状态与快捷入口 -->
     <div class="dashboard-split">

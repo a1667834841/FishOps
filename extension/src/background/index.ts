@@ -370,6 +370,7 @@ async function createChatRuntimeInstance(): Promise<ChatRuntime> {
     ? createBackgroundChatReadTransport(createChromeChatReadExecutor(readScripting, resolveChatTabId))
     : undefined
   const runtime = createChatRuntime({
+    liveSince: realtimeStartedAt,
     transport,
     ...(readTransport === undefined ? {} : { readTransport }),
     persistence: new SessionChatPersistence(chrome.storage.session),
@@ -397,9 +398,10 @@ function flushChatEvents(): void {
 }
 
 // 连接前的补推仅入库；旧宿主回退到后台启动边界，回复队列独立于聊天入库。
+const realtimeStartedAt = Date.now()
 const chatReplyIngestor = createChatReplyIngestor({
   extensionId: chrome.runtime.id,
-  liveSince: Date.now(),
+  liveSince: realtimeStartedAt,
   getChatRuntime,
   getReplyRuntime,
   flushChatEvents,

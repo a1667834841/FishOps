@@ -26,9 +26,13 @@ import {
 } from '../features/chat/chat-format'
 import { REPLY_EVENTS, ReplyController, type ReplyState } from '../features/reply/reply-controller'
 
+const props = defineProps<{ initialSessionId?: string | null }>()
+
 const emit = defineEmits<{ navigate: [page: PageId]; diagnostics: [] }>()
 
 const { state, controller } = useChatCenter()
+// 导航明确指定会话时复用正常选择流程；读取成功后才请求平台已读确认。
+watch(() => props.initialSessionId, id => { if (id) controller.selectSession(id) }, { immediate: true })
 const appBootstrap = getAppBootstrapController()
 const bootstrapState = ref(appBootstrap.getState())
 let unsubscribeBootstrapState = (): void => {}
@@ -818,6 +822,8 @@ watch(
 /* 会话列表：Seline 暖纸黄色微调 */
 .convs {
   display: grid;
+  /* 长摘要不能撑大网格列，否则右侧未读角标会被面板裁掉。 */
+  grid-template-columns: minmax(0, 1fr);
   max-height: 100%;
   overflow-y: auto;
   list-style: none;

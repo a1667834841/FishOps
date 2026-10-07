@@ -20,6 +20,8 @@ const SettingsPage = defineAsyncComponent(() => import('./pages/SettingsPage.vue
 /** 页面导航使用本地状态：不写入 URL 或存储，刷新后回到概览。 */
 const page = ref<PageId>(DEFAULT_PAGE)
 const diagnosticsOpen = ref(false)
+/** 概览未读入口的目标会话，仅在本次聊天页导航中使用。 */
+const pendingChatSessionId = ref<string | null>(null)
 const mainRef = ref<HTMLElement | null>(null)
 /** 跨页面传递的待发布草稿（从 ProductsPage 传递到 PublishPage） */
 const pendingDraft = ref<PublishDraft | null>(null)
@@ -58,7 +60,8 @@ watch(
   { immediate: true },
 )
 
-async function go(next: PageId): Promise<void> {
+async function go(next: PageId, sessionId?: string): Promise<void> {
+  pendingChatSessionId.value = next === 'chat' ? sessionId ?? null : null
   if (next === page.value) return
   page.value = next
   window.scrollTo({ top: 0 })
@@ -110,7 +113,7 @@ function handleClearDraft(): void {
         <Transition name="page" mode="out-in">
           <OverviewPage v-if="page === 'overview'" @navigate="go" />
           <CollectPage v-else-if="page === 'collect'" @navigate="go" @diagnostics="diagnosticsOpen = true" />
-          <ChatCenterPage v-else-if="page === 'chat'" @navigate="go" @diagnostics="diagnosticsOpen = true" />
+          <ChatCenterPage v-else-if="page === 'chat'" :initial-session-id="pendingChatSessionId" @navigate="go" @diagnostics="diagnosticsOpen = true" />
           <ProductsPage v-else-if="page === 'products'" @navigate="go" @publish-item="handlePublishItem" />
           <PublishPage
             v-else-if="page === 'publish'"

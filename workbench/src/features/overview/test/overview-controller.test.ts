@@ -149,3 +149,32 @@ test('分页缺少或循环游标时计数失败，不显示不完整总数', as
   assert.ok(controller.getState().products.error)
   controller.dispose()
 })
+
+test('未读入口从最新快照选择最近未读会话；无未读不选择其他会话', async () => {
+  const api = new FakeApi()
+  api.responders.set(CommandTypes.CHAT_LIST_CONVERSATIONS, () => ({ conversations: [
+    { sessionId: 'read', unreadCount: 0, lastMessageTime: 300 },
+    { sessionId: 'older', unreadCount: 2, lastMessageTime: 100 },
+    { sessionId: 'latest', unreadCount: 1, lastMessageTime: 200 },
+  ] }))
+  const controller = new OverviewController(api)
+  assert.equal(await controller.getLatestUnreadSessionId(), 'latest')
+  api.responders.set(CommandTypes.CHAT_LIST_CONVERSATIONS, () => ({ conversations: [
+    { sessionId: 'read', unreadCount: 0, lastMessageTime: 300 },
+  ] }))
+  assert.equal(await controller.getLatestUnreadSessionId(), null)
+  controller.dispose()
+})
+
+test('未读定位拒绝不完整数据；在途请求完成后已卸载不再导航', async () => {
+  const api = new FakeApi()
+  api.responders.set(CommandTypes.CHAT_LIST_CONVERSATIONS, () => ({ conversations: [{ unreadCount: 1 }] }))
+  const controller = new OverviewController(api)
+  await assert.rejects(controller.getLatestUnreadSessionId(), /定位信息/)
+  const pending = deferred<unknown>()
+  api.responders.set(CommandTypes.CHAT_LIST_CONVERSATIONS, () => pending.promise)
+  const request = controller.getLatestUnreadSessionId()
+  controller.dispose()
+  pending.resolve({ conversations: [{ sessionId: 'latest', unreadCount: 1, lastMessageTime: 200 }] })
+  assert.equal(await request, null)
+})

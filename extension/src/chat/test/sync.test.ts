@@ -465,3 +465,54 @@ test('syncConversations：resolver 抛错不中断会话同步（走兜底提示
   assert.equal(store.sessionCount, 1)
   assert.ok((result.notes ?? []).some((n) => n.includes('失败')))
 })
+
+test('新实时消息更新会话摘要和未读数，重复/出站/旧消息不重复计数', () => {
+  const store = new ChatStore()
+  store.upsertConversations([{ sessionId: '123', cid: '123@goofish', peerUserName: '买家',
+    lastMessage: '旧摘要', lastMessageTime: 1000, unreadCount: 0, sortIndex: 1000, visible: true }])
+  const sync = new ChatSync({ store }, { myUserId: 'me' })
+  const raw = realtimeTextPayload('123', '新消息', 2000, 'new')
+  sync.ingestRealtime(raw)
+  assert.equal(store.getConversation('123')?.unreadCount, 1)
+  assert.equal(store.getConversation('123')?.lastMessage, '新消息')
+  sync.ingestRealtime(raw)
+  sync.ingestRealtime(realtimeTextPayload('123', '旧补推', 500, 'old'))
+  assert.equal(store.getConversation('123')?.unreadCount, 1)
+  assert.equal(store.getConversation('123')?.lastMessage, '新消息')
+  const outbound = JSON.parse(realtimeTextPayload('123', '已回复', 3000, 'out'))
+  outbound.body.extension.senderUserId = 'me'
+  sync.ingestRealtime(JSON.stringify(outbound))
+  assert.equal(store.getConversation('123')?.unreadCount, 1)
+  assert.equal(store.getConversation('123')?.lastMessage, '已回复')
+})
+
+test('未入缓存但已被平台会话快照计数的消息不再累加', () => {
+  const store = new ChatStore()
+  store.upsertConversations([{ sessionId: '123', cid: '123@goofish', peerUserName: '买家',
+    lastMessage: '平台快照', lastMessageTime: 3000, unreadCount: 4, sortIndex: 3000, visible: true }])
+  new ChatSync({ store }, { myUserId: 'me' }).ingestRealtime(realtimeTextPayload('123', '补推', 2000, 'snapshot'))
+  assert.equal(store.getConversation('123')?.unreadCount, 4)
+  assert.equal(store.getConversation('123')?.lastMessage, '平台快照')
+})
+
+test('同时间新消息分别计数，已读确认后新消息重新从零计数', () => {
+  const store = new ChatStore()
+  const sync = new ChatSync({ store }, { myUserId: 'me' })
+  sync.ingestRealtime(realtimeTextPayload('123', '第一条', 2000, 'one'))
+  sync.ingestRealtime(realtimeTextPayload('123', '第二条', 2000, 'two'))
+  assert.equal(store.getConversation('123')?.unreadCount, 2)
+  store.upsertConversations([{ ...store.getConversation('123')!, unreadCount: 0 }])
+  sync.ingestRealtime(realtimeTextPayload('123', '已读前补推', 1500, 'before-read'))
+  assert.equal(store.getConversation('123')?.unreadCount, 0)
+  sync.ingestRealtime(realtimeTextPayload('123', '再次入站', 3000, 'after-read'))
+  assert.equal(store.getConversation('123')?.unreadCount, 1)
+})
+
+test('连接前重放和未来帧只保存消息，不新建未读会话', () => {
+  const store = new ChatStore()
+  const sync = new ChatSync({ store }, { myUserId: 'me' })
+  sync.ingestRealtime(realtimeTextPayload('123', '重放', 99, 'old'), { from: 100, to: 300 })
+  sync.ingestRealtime(realtimeTextPayload('123', '未来', 301, 'future'), { from: 100, to: 300 })
+  assert.equal(store.messageCount, 2)
+  assert.equal(store.getConversation('123'), undefined)
+})

@@ -112,6 +112,8 @@ function sanitizeSyncMessage(message: string): string {
 /** 聊天同步器。 */
 export class ChatSync {
   private readonly store: ChatStore
+  // 平台快照/已读确认作为未读水位；本地摘要时间推进不代表该消息已被平台计数。
+  private readonly unreadSnapshots = new Map<string, { at: number; count: number }>()
   private readonly history?: ChatHistoryClient
   private readonly parseCtx: ParseContext
   private readonly sleep: (ms: number) => Promise<void>
@@ -174,7 +176,7 @@ export class ChatSync {
   /** 摄入一条实时 WebSocket 原始消息。
    * 解析失败返回 `{ ok: false, error }`，绝不写入 store，也不抛错。
    */
-  ingestRealtime(raw: unknown): SyncResult {
+  ingestRealtime(raw: unknown, window?: { from: number; to: number }): SyncResult {
     const parsed = parseWebSocketMessage(raw, this.parseCtx)
     if (!parsed.ok) {
       return { ok: false, added: 0, updated: 0, error: parsed.error }
@@ -190,6 +192,8 @@ export class ChatSync {
     }
     // 保留原批量持久化，避免每条消息单独读取和重写 session 缓存。
     const count = this.store.upsertMessages(parsed.event.messages)
+    this.updateRealtimeConversations(newMessages.filter(m =>
+      !window || (m.createAt >= window.from && m.createAt <= window.to)))
     return {
       ok: true,
       kind: parsed.event.kind,
@@ -198,6 +202,41 @@ export class ChatSync {
       updated: count.updated,
       notes: parsed.event.notes,
     }
+  }
+
+  /** 新实时消息更新会话；历史补推保持平台摘要和已计数的未读数。 */
+  private updateRealtimeConversations(messages: readonly ChatMessage[]): void {
+    const updates = new Map<string, Conversation>()
+    for (const message of messages) {
+      const existing = updates.get(message.sessionId) ?? this.store.getConversation(message.sessionId)
+      let snapshot = this.unreadSnapshots.get(message.sessionId)
+      // 已读或平台刷新改变计数时，重新采用权威快照；同批本地变化不重置水位。
+      if (!snapshot || snapshot.count !== (existing?.unreadCount ?? 0)) {
+        snapshot = { at: existing?.lastMessageTime ?? 0, count: existing?.unreadCount ?? 0 }
+      }
+      if (message.createAt <= snapshot.at) continue
+      const newer = message.createAt >= (existing?.lastMessageTime ?? 0)
+      const unreadCount = (existing?.unreadCount ?? 0) + (message.direction === 'in' ? 1 : 0)
+      const base: Conversation = existing ?? {
+        sessionId: message.sessionId,
+        cid: `${message.sessionId}@goofish`,
+        peerUserName: message.direction === 'in' ? message.senderName : '',
+        lastMessage: '', lastMessageTime: 0, sortIndex: 0, visible: true, unreadCount: 0,
+      }
+      const conversation: Conversation = {
+        ...base,
+        peerUserName: base.peerUserName || (message.direction === 'in' ? message.senderName : ''),
+        ...(newer ? { lastMessage: message.content, lastMessageTime: message.createAt,
+          sortIndex: Math.max(existing?.sortIndex ?? 0, message.createAt) } : {}),
+        unreadCount,
+        ...(message.direction === 'in' && message.senderAvatarUrl && !existing?.peerAvatarUrl
+          ? { peerAvatarUrl: message.senderAvatarUrl } : {}),
+      }
+      snapshot.count = unreadCount
+      this.unreadSnapshots.set(message.sessionId, snapshot)
+      updates.set(message.sessionId, conversation)
+    }
+    if (updates.size) this.store.upsertConversations([...updates.values()])
   }
 
   /** 摄入一批标准消息（历史抓取或测试注入）。 */
@@ -264,6 +303,9 @@ export class ChatSync {
             ...(existing.peerAvatarUrl && !conv.peerAvatarUrl ? { peerAvatarUrl: existing.peerAvatarUrl } : {}),
             ...(existing.peerUserId && !conv.peerUserId ? { peerUserId: existing.peerUserId } : {}),
           }
+        })
+        for (const conv of incoming) this.unreadSnapshots.set(conv.sessionId, {
+          at: conv.lastMessageTime, count: conv.unreadCount,
         })
         const count = this.store.upsertConversations(incoming)
         added += count.added
