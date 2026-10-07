@@ -568,7 +568,7 @@ export class CaptureController {
         const pageProducts = normalizeProductsFromSearchPayload(raw, capturedAt)
         checkpoint.stats.fetched += pageProducts.length
 
-        const collected: Product[] = []
+        let collected: Product[] = []
         for (const product of pageProducts) {
           product.captureKeyword = checkpoint.keyword
           if (!passesCaptureFilter(product, payload.filter)) {
@@ -605,6 +605,15 @@ export class CaptureController {
               await this.persistCheckpoint(id, checkpoint)
             }
           }
+          // 列表预筛选保持原有请求范围；详情覆盖筛选字段后，只有最终合格商品可以入库。
+          // 同时撤销候选阶段的有效计数和去重标记，允许后续页重新采到合格观测。
+          collected = collected.filter((product) => {
+            if (passesCaptureFilter(product, payload.filter)) return true
+            checkpoint.stats.valid -= 1
+            checkpoint.stats.filtered += 1
+            seen.delete(buildCaptureDedupeKey(product.itemId, capturedAt, checkpoint.keyword))
+            return false
+          })
         }
 
         // 账号读取前后都确认运行权，避免暂停后继续标记 / 入库。

@@ -801,3 +801,97 @@ test('详情失败统计及时持久化：meta.capture.stats 可见 detailFailed
   assert.equal(stats.detailFailed, 1)
   assert.equal(stats.failed, 1)
 })
+
+for (const scenario of [
+  { name: '详情低于阈值', listWant: 10, detailWant: 1, accepted: false },
+  { name: '详情高于阈值', listWant: 10, detailWant: 8, accepted: true },
+  { name: '详情等于阈值', listWant: 10, detailWant: 5, accepted: true },
+  { name: '详情缺少想要人数', listWant: 10, accepted: true },
+  { name: '详情请求失败保留列表值', listWant: 10, detailError: true, accepted: true },
+  { name: '未开启详情采集', listWant: 10, detailWant: 1, fetchDetail: false, accepted: true },
+  { name: '列表预筛选不通过时不请求详情', listWant: 1, detailWant: 10, accepted: false },
+]) {
+  test(`最终采集筛选：${scenario.name}，统计、快照及同步一致`, async () => {
+    const tasks = new TaskManager({ store: new MemoryTaskStore() })
+    const repository = new MemoryProductRepository()
+    const platform = new MockPlatform()
+    const clock = makeClock()
+    platform.pages.set(1, makePage([makeListItem({ itemId: 'filtered-item', wantCnt: scenario.listWant })]))
+    platform.detailPayload = { data: { itemDO: scenario.detailWant === undefined ? {} : { wantCnt: scenario.detailWant } } }
+    if (scenario.detailError) platform.detailError = new Error('详情网络失败')
+    const synced: import('../../../../shared/types/product').Product[] = []
+    const syncedIds: string[] = []
+    const controller = new CaptureController({
+      tasks, repository, platform, now: clock.now, sleep: clock.sleep,
+      syncProducts: async (ids, _keep, products) => {
+        syncedIds.push(...ids)
+        synced.push(...products)
+        return { createdCount: products.length, skippedCount: 0 }
+      },
+    })
+    const task = await controller.create({ keyword: '筛选', pages: 1, fetchDetail: scenario.fetchDetail ?? true, filter: { minWantCnt: 5 } })
+    await controller.start(task.id)
+    const done = await waitForTask(controller, task.id, (current) => current.status === 'completed')
+    const expected = scenario.accepted ? 1 : 0
+    const result = resultOf(done)
+    assert.deepEqual(platform.detailCalls, scenario.fetchDetail === false || scenario.listWant < 5 ? [] : ['filtered-item'])
+    assert.equal(result.fetched, 1)
+    assert.equal(result.valid, expected)
+    assert.equal(result.filtered, 1 - expected)
+    assert.equal(result.stored, expected)
+    assert.equal(result.duplicates, 0)
+    assert.equal(result.detailFailed, scenario.detailError ? 1 : 0)
+    assert.equal(result.failed, scenario.detailError ? 1 : 0)
+    assert.equal(result.pagesCompleted, 1)
+    assert.equal(result.nextPage, 2)
+    assert.equal(result.feishuSync?.createdCount, expected)
+    assert.equal(result.ownershipUnconfirmed, expected)
+    const stored = await repository.list({ source: 'all' })
+    assert.equal(stored.total, expected)
+    assert.equal(synced.length, expected)
+    assert.deepEqual(syncedIds, scenario.accepted ? ['filtered-item'] : [])
+    assert.deepEqual(checkpointOf(done).storedIds ?? [], syncedIds)
+    assert.equal(checkpointOf(done).capturedRecords?.length ?? 0, expected)
+    assert.equal((await repository.getSnapshots('filtered-item')).length, expected)
+    if (scenario.accepted) {
+      const wantCnt = scenario.fetchDetail === false || scenario.detailError || scenario.detailWant === undefined
+        ? scenario.listWant : scenario.detailWant
+      assert.equal(stored.products[0]!.wantCnt, wantCnt)
+      assert.equal(synced[0]!.wantCnt, wantCnt)
+    }
+  })
+}
+
+test('详情筛除商品不占用去重标记，跨页再次符合条件时可以入库且后续重复跳过', async () => {
+  const tasks = new TaskManager({ store: new MemoryTaskStore() })
+  const repository = new MemoryProductRepository()
+  const platform = new MockPlatform()
+  const clock = makeClock()
+  for (let page = 1; page <= 3; page += 1) {
+    platform.pages.set(page, makePage([makeListItem({ itemId: 'retry-item', wantCnt: 10 })]))
+  }
+  let detailCalls = 0
+  platform.detail = async () => ({ data: { itemDO: { wantCnt: ++detailCalls === 1 ? 1 : 6 } } })
+  const synced: import('../../../../shared/types/product').Product[] = []
+  const controller = new CaptureController({
+    tasks, repository, platform, now: clock.now, sleep: clock.sleep,
+    syncProducts: async (_ids, _keep, products) => {
+      synced.push(...products)
+      return { createdCount: products.length, skippedCount: 0 }
+    },
+  })
+  const task = await controller.create({ keyword: '筛选', pages: 3, fetchDetail: true, filter: { minWantCnt: 5 } })
+  await controller.start(task.id)
+  const done = await waitForTask(controller, task.id, (current) => current.status === 'completed')
+  const result = resultOf(done)
+  assert.equal(result.fetched, 3)
+  assert.equal(result.filtered, 1)
+  assert.equal(result.valid, 1)
+  assert.equal(result.stored, 1)
+  assert.equal(result.duplicates, 1)
+  assert.equal(detailCalls, 2)
+  assert.equal((await repository.list({ source: 'all' })).products[0]!.wantCnt, 6)
+  assert.equal((await repository.getSnapshots('retry-item')).length, 1)
+  assert.equal(checkpointOf(done).capturedRecords!.length, 1)
+  assert.deepEqual(synced.map((product) => [product.itemId, product.wantCnt]), [['retry-item', 6]])
+})
