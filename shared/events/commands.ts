@@ -68,6 +68,10 @@ import type { PlatformErrorCategory } from './protocol'
 
 /** 命令类型常量。 */
 export const CommandTypes = {
+  /** 独立文件备份的状态、立即保存和合并恢复。 */
+  DATA_BACKUP_STATUS: 'DATA_BACKUP_STATUS',
+  DATA_BACKUP_SAVE: 'DATA_BACKUP_SAVE',
+  DATA_BACKUP_RESTORE: 'DATA_BACKUP_RESTORE',
   /** 连通性探测，用于验证 Workbench ↔ Extension 链路。 */
   PING: 'PING',
   /** 声明订阅的事件类型（页面侧通道使用；扩展内页走长连接 Port）。 */
@@ -1063,6 +1067,9 @@ export {
 
 /** 命令 → 负载 映射。 */
 export interface CommandPayloadMap {
+  [CommandTypes.DATA_BACKUP_STATUS]: Record<string, never>
+  [CommandTypes.DATA_BACKUP_SAVE]: Record<string, never>
+  [CommandTypes.DATA_BACKUP_RESTORE]: { content: string }
   [CommandTypes.PING]: PingPayload
   [CommandTypes.SUBSCRIBE]: SubscribePayload
   [CommandTypes.UNSUBSCRIBE]: UnsubscribePayload
@@ -1129,6 +1136,9 @@ export interface CommandPayloadMap {
 
 /** 命令 → 结果 映射。 */
 export interface CommandResultMap {
+  [CommandTypes.DATA_BACKUP_STATUS]: import('../persistence/backup-status').BackupStatus
+  [CommandTypes.DATA_BACKUP_SAVE]: import('../persistence/backup-status').BackupStatus
+  [CommandTypes.DATA_BACKUP_RESTORE]: { products: number; tasks: number }
   [CommandTypes.PING]: PingResult
   [CommandTypes.SUBSCRIBE]: SubscribeResult
   [CommandTypes.UNSUBSCRIBE]: UnsubscribeResult
