@@ -118,6 +118,7 @@ export class ChatSync {
   private readonly parseCtx: ParseContext
   private readonly sleep: (ms: number) => Promise<void>
   private readonly peerProfiles?: PeerProfileResolver
+  private accountGeneration = 0
 
   constructor(deps: ChatSyncDeps, parseCtx: ParseContext = {}) {
     this.store = deps.store
@@ -144,6 +145,14 @@ export class ChatSync {
    */
   setMyUserId(myUserId?: string): void {
     const next = typeof myUserId === 'string' && myUserId.length > 0 ? myUserId : undefined
+    const previous = normalizeUserId(this.parseCtx.myUserId)
+    if (normalizeUserId(next) !== previous) this.accountGeneration += 1
+    // 已知账号的旧缓存补记归属；切换后列表按归属过滤，不能借昵称或商品跨账号匹配。
+    if (previous && normalizeUserId(next) !== previous) {
+      const legacy = this.store.listConversations().filter(conv => !conv.accountUserId)
+      if (legacy.length) this.store.upsertConversations(legacy.map(conv => ({ ...conv, accountUserId: previous })))
+      this.unreadSnapshots.clear()
+    }
     this.parseCtx.myUserId = next
     this.history?.setMyUserId(next)
     // 头像补齐器若支持动态用户同步，顺带通知（避免其冻结在旧 ID 而错判归属）。
@@ -208,7 +217,10 @@ export class ChatSync {
   private updateRealtimeConversations(messages: readonly ChatMessage[]): void {
     const updates = new Map<string, Conversation>()
     for (const message of messages) {
-      const existing = updates.get(message.sessionId) ?? this.store.getConversation(message.sessionId)
+      const candidate = updates.get(message.sessionId) ?? this.store.getConversation(message.sessionId)
+      const account = normalizeUserId(this.parseCtx.myUserId)
+      const existing = candidate && account && normalizeUserId(candidate.accountUserId) !== account
+        ? undefined : candidate
       let snapshot = this.unreadSnapshots.get(message.sessionId)
       // 已读或平台刷新改变计数时，重新采用权威快照；同批本地变化不重置水位。
       if (!snapshot || snapshot.count !== (existing?.unreadCount ?? 0)) {
@@ -225,6 +237,7 @@ export class ChatSync {
       }
       const conversation: Conversation = {
         ...base,
+        accountUserId: normalizeUserId(this.parseCtx.myUserId) || undefined,
         peerUserName: base.peerUserName || (message.direction === 'in' ? message.senderName : ''),
         ...(newer ? { lastMessage: message.content, lastMessageTime: message.createAt,
           sortIndex: Math.max(existing?.sortIndex ?? 0, message.createAt) } : {}),
@@ -253,6 +266,7 @@ export class ChatSync {
   async syncHistory(sessionId: string, options: SyncHistoryOptions = {}): Promise<SyncResult> {
     if (!this.history) return { ok: false, added: 0, updated: 0, error: { code: 'DECODE_FAILED', message: '未配置 ChatHistoryClient' } }
     const pages = options.pages ?? 1
+    const generation = this.accountGeneration
     let added = 0
     let updated = 0
     let cursor: number | undefined = options.cursor
@@ -261,6 +275,7 @@ export class ChatSync {
     try {
       for (let page = 0; page < pages; page++) {
         const result = await this.history.listMessageHistory(sessionId, { cursor, count: options.count })
+        if (generation !== this.accountGeneration) return accountChangedResult()
         // 历史批次是权威边界：以它的时间上界剔除已覆盖的本地发送回显（仅此类批次可当边界）。
         const count = this.store.upsertMessages(result.messages.map(normalizeMessage), { authoritativeHistory: true })
         added += count.added
@@ -287,20 +302,29 @@ export class ChatSync {
   async syncConversations(options: SyncConversationsOptions = {}): Promise<SyncResult> {
     if (!this.history) return { ok: false, added: 0, updated: 0, error: { code: 'DECODE_FAILED', message: '未配置 ChatHistoryClient' } }
     const pages = options.pages ?? 1
+    const generation = this.accountGeneration
     let added = 0
     let updated = 0
     let cursor: number | undefined
     try {
       for (let page = 0; page < pages; page++) {
         const result = await this.history.listConversations({ cursor, pageSize: options.pageSize })
+        if (generation !== this.accountGeneration) return accountChangedResult()
         // LWP 会话数据不含头像 / 对方 ID；合并时保留 store 中已补齐 / 已校正的值，
-        // 避免重复同步把头像与对方 ID 抹掉（昵称不保留，由 latest 解析与 session.sync 共同负责）。
+        // 同一对方身份下保留可信资料与商品封面；商品变化时不能沿用旧图。
         const incoming = result.conversations.map((conv) => {
           const existing = this.store.getConversation(conv.sessionId)
-          if (!existing) return conv
+          const accountUserId = normalizeUserId(this.parseCtx.myUserId) || undefined
+          const incoming = { ...conv, accountUserId }
+          if (!existing || (accountUserId && normalizeUserId(existing.accountUserId) !== accountUserId)) return incoming
+          const samePeer = !conv.peerUserId || !existing.peerUserId ||
+            normalizeUserId(conv.peerUserId) === normalizeUserId(existing.peerUserId)
+          const sameItem = !conv.itemId || conv.itemId === existing.itemId
           return {
-            ...conv,
-            ...(existing.peerAvatarUrl && !conv.peerAvatarUrl ? { peerAvatarUrl: existing.peerAvatarUrl } : {}),
+            ...incoming,
+            ...(samePeer && !conv.peerUserName ? { peerUserName: existing.peerUserName } : {}),
+            ...(sameItem ? { itemId: conv.itemId ?? existing.itemId, itemCoverUrl: existing.itemCoverUrl } : {}),
+            ...(samePeer && existing.peerAvatarUrl && !conv.peerAvatarUrl ? { peerAvatarUrl: existing.peerAvatarUrl } : {}),
             ...(existing.peerUserId && !conv.peerUserId ? { peerUserId: existing.peerUserId } : {}),
           }
         })
@@ -316,6 +340,7 @@ export class ChatSync {
       }
       await this.store.flush()
       const notes = await this.resolvePeerAvatars()
+      if (generation !== this.accountGeneration) return accountChangedResult()
       return { ok: true, added, updated, ...(notes === undefined ? {} : { notes }) }
     } catch (error) {
       // transport reject（无 tab / 未登录 / 超时）/ LWP 业务失败 / 持久化失败：归一为结构化错误。
@@ -333,9 +358,12 @@ export class ChatSync {
   private async resolvePeerAvatars(): Promise<string[] | undefined> {
     if (!this.peerProfiles) return undefined
     try {
-      const all = this.store.listConversations()
+      const generation = this.accountGeneration
+      const account = normalizeUserId(this.parseCtx.myUserId)
+      const all = this.store.listConversations().filter(conv => !account || normalizeUserId(conv.accountUserId) === account)
       if (all.length === 0) return undefined
       const updates = await this.peerProfiles.resolveMissing(all)
+      if (generation !== this.accountGeneration) return ['账号已变化，已丢弃旧会话资料响应']
 
       const merged: Conversation[] = []
       for (const update of updates) {
@@ -343,19 +371,28 @@ export class ChatSync {
         if (!current) continue
         const next: Conversation = { ...current }
         let changed = false
+        if (update.itemId !== undefined) {
+          // 封面与商品 ID 同批替换；缺图也清除旧图，避免新商品沿用旧封面。
+          next.itemId = update.itemId
+          next.itemCoverUrl = update.itemCoverUrl
+          changed = next.itemId !== current.itemId || next.itemCoverUrl !== current.itemCoverUrl
+        }
         if (
           update.peerUserId !== undefined &&
           normalizeUserId(update.peerUserId) !== normalizeUserId(current.peerUserId)
         ) {
           next.peerUserId = update.peerUserId
+          // 身份已变化时，资料查询失败也不能继续展示旧对方的昵称或头像。
+          next.peerUserName = ''
+          next.peerAvatarUrl = undefined
           changed = true
         }
-        if (update.peerUserName !== undefined && update.peerUserName !== current.peerUserName) {
+        if (update.peerUserName !== undefined && update.peerUserName !== next.peerUserName) {
           next.peerUserName = update.peerUserName
           changed = true
         }
         // 头像：仅当确实拿到、且与现值不同才写（纠正错 peer 时覆盖旧头像）。
-        if (update.peerAvatarUrl !== undefined && update.peerAvatarUrl !== current.peerAvatarUrl) {
+        if (update.peerAvatarUrl !== undefined && update.peerAvatarUrl !== next.peerAvatarUrl) {
           next.peerAvatarUrl = update.peerAvatarUrl
           changed = true
         }
@@ -402,4 +439,9 @@ function readHistoryProgress(
     return { ok: false, error: { code: 'CURSOR_STALLED', message: '平台历史分页游标未严格前进，已停止并标记失败' } }
   }
   return { ok: true, hasMore: true, nextCursor: next }
+}
+
+/** 切换账号后丢弃在途响应，避免旧商品和身份进入当前会话。 */
+function accountChangedResult(): SyncResult {
+  return { ok: false, added: 0, updated: 0, error: { code: 'ACCOUNT_CHANGED', message: '账号已变化，请重新同步会话' } }
 }

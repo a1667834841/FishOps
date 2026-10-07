@@ -468,7 +468,7 @@ test('syncConversations：resolver 抛错不中断会话同步（走兜底提示
 
 test('新实时消息更新会话摘要和未读数，重复/出站/旧消息不重复计数', () => {
   const store = new ChatStore()
-  store.upsertConversations([{ sessionId: '123', cid: '123@goofish', peerUserName: '买家',
+  store.upsertConversations([{ sessionId: '123', cid: '123@goofish', accountUserId: 'me', peerUserName: '买家',
     lastMessage: '旧摘要', lastMessageTime: 1000, unreadCount: 0, sortIndex: 1000, visible: true }])
   const sync = new ChatSync({ store }, { myUserId: 'me' })
   const raw = realtimeTextPayload('123', '新消息', 2000, 'new')
@@ -488,7 +488,7 @@ test('新实时消息更新会话摘要和未读数，重复/出站/旧消息不
 
 test('未入缓存但已被平台会话快照计数的消息不再累加', () => {
   const store = new ChatStore()
-  store.upsertConversations([{ sessionId: '123', cid: '123@goofish', peerUserName: '买家',
+  store.upsertConversations([{ sessionId: '123', cid: '123@goofish', accountUserId: 'me', peerUserName: '买家',
     lastMessage: '平台快照', lastMessageTime: 3000, unreadCount: 4, sortIndex: 3000, visible: true }])
   new ChatSync({ store }, { myUserId: 'me' }).ingestRealtime(realtimeTextPayload('123', '补推', 2000, 'snapshot'))
   assert.equal(store.getConversation('123')?.unreadCount, 4)
@@ -515,4 +515,79 @@ test('连接前重放和未来帧只保存消息，不新建未读会话', () =>
   sync.ingestRealtime(realtimeTextPayload('123', '未来', 301, 'future'), { from: 100, to: 300 })
   assert.equal(store.messageCount, 2)
   assert.equal(store.getConversation('123'), undefined)
+})
+
+test('重复同步保留买家身份，按会话补齐商品并在关联变化时清除旧封面', async () => {
+  let itemId = 1001
+  let cover: string | undefined = 'https://img.alicdn.com/item-a.jpg'
+  const requester = new FakePeerRequester(() => ({ data: { sessions: [{ session: {
+    sessionId: '111', ownerInfo: { userId: 'me', fishNick: '卖家', logo: AVATAR },
+    userInfo: { userId: 'peer', fishNick: '买家', logo: 'https://img.alicdn.com/buyer.jpg' },
+    itemInfo: { itemId, mainPic: cover },
+  } }] } }))
+  const store = new ChatStore()
+  const sync = new ChatSync({ store,
+    history: new ChatHistoryClient({ transport: conversationTransport(), myUserId: 'me' }),
+    peerProfiles: new PeerProfileResolver({ requester, myUserId: 'me' }),
+  })
+  assert.equal((await sync.syncConversations()).ok, true)
+  assert.equal(store.getConversation('111')?.itemCoverUrl, cover)
+  assert.equal(store.getConversation('111')?.peerUserName, '买家')
+  assert.equal((await sync.syncConversations()).ok, true)
+  assert.equal(store.getConversation('111')?.itemCoverUrl, cover)
+  itemId = 1002
+  cover = undefined
+  await sync.syncConversations()
+  assert.equal(store.getConversation('111')?.itemId, '1002')
+  assert.equal(store.getConversation('111')?.itemCoverUrl, undefined)
+  assert.equal(store.getConversation('111')?.peerUserName, '买家')
+})
+
+test('资料接口失败时，卖家最新消息重复同步仍保留可信买家昵称与封面', async () => {
+  const store = new ChatStore()
+  store.upsertConversations([{ sessionId: '111', cid: '111@goofish', peerUserId: 'peer',
+    accountUserId: 'me', peerUserName: '可信买家', peerAvatarUrl: AVATAR, itemId: '456', itemCoverUrl: AVATAR,
+    lastMessage: '', lastMessageTime: 0, unreadCount: 0, sortIndex: 0, visible: true }])
+  const sync = new ChatSync({ store, history: new ChatHistoryClient({ transport: conversationTransport(), myUserId: 'me' }),
+    peerProfiles: new PeerProfileResolver({ requester: new FakePeerRequester(() => { throw new Error('offline') }), myUserId: 'me' }) }, { myUserId: 'me' })
+  await sync.syncConversations()
+  assert.equal(store.getConversation('111')?.peerUserName, '可信买家')
+  assert.equal(store.getConversation('111')?.itemCoverUrl, AVATAR)
+})
+
+test('账号切换不继承旧买家和商品，切换前会话响应不能回填', async () => {
+  let resolveResponse!: (value: LwpResponse) => void
+  const store = new ChatStore()
+  store.upsertConversations([{ sessionId: '111', cid: '111@goofish', accountUserId: 'old',
+    peerUserName: '旧买家', peerAvatarUrl: AVATAR, itemId: 'old-item', itemCoverUrl: AVATAR,
+    lastMessage: '', lastMessageTime: 0, unreadCount: 0, sortIndex: 0, visible: true }])
+  const sync = new ChatSync({ store, history: new ChatHistoryClient({ transport: {
+    send: () => new Promise(resolve => { resolveResponse = resolve }),
+  } }) }, { myUserId: 'old' })
+  const pending = sync.syncConversations()
+  sync.setMyUserId('new')
+  resolveResponse({ code: 200, body: { userConvs: [{ singleChatUserConversation: { cid: '111@goofish' } }] } })
+  assert.equal((await pending).error?.code, 'ACCOUNT_CHANGED')
+  assert.equal(store.getConversation('111')?.accountUserId, 'old')
+  const fresh = new ChatSync({ store, history: new ChatHistoryClient({ transport: conversationTransport() }) }, { myUserId: 'new' })
+  await fresh.syncConversations()
+  assert.equal(store.getConversation('111')?.accountUserId, 'new')
+  assert.equal(store.getConversation('111')?.peerUserName, '')
+  assert.equal(store.getConversation('111')?.itemCoverUrl, undefined)
+})
+
+test('校正对方 ID 时，即使权威昵称和头像与旧值相同，也完整写回资料', async () => {
+  const store = new ChatStore()
+  store.upsertConversations([{ sessionId: '111', cid: '111@goofish', accountUserId: 'me',
+    peerUserName: '买家', peerAvatarUrl: AVATAR, peerUserId: 'old-peer',
+    lastMessage: '', lastMessageTime: 0, unreadCount: 0, sortIndex: 0, visible: true }])
+  const requester = new FakePeerRequester(() => ({ data: { sessions: [{ session: {
+    sessionId: '111', ownerInfo: { userId: 'me' }, userInfo: { userId: 'peer', fishNick: '买家', logo: AVATAR },
+  } }] } }))
+  const sync = new ChatSync({ store, history: new ChatHistoryClient({ transport: conversationTransport() }),
+    peerProfiles: new PeerProfileResolver({ requester, myUserId: 'me' }) }, { myUserId: 'me' })
+  await sync.syncConversations()
+  assert.equal(store.getConversation('111')?.peerUserId, 'peer')
+  assert.equal(store.getConversation('111')?.peerUserName, '买家')
+  assert.equal(store.getConversation('111')?.peerAvatarUrl, AVATAR)
 })

@@ -1330,3 +1330,21 @@ test('平台游标无进展或反向：按失败处理，不得宣称耗尽或�
   controller.dispose()
   second.dispose()
 })
+
+test('账号过滤或相同 sessionId 归属变化后清除旧选择与消息', async () => {
+  for (const next of [[], [conv('a', { accountUserId: 'new' })]]) {
+    const api = baseApi()
+    api.respond(CommandTypes.CHAT_LIST_CONVERSATIONS, () => ({ conversations: [conv('a', { accountUserId: 'old' })] }))
+    const controller = new ChatCenterController({ api })
+    controller.start()
+    await settle()
+    controller.selectSession('a')
+    await settle()
+    assert.equal(controller.getState().selectedId, 'a')
+    api.respond(CommandTypes.CHAT_LIST_CONVERSATIONS, () => ({ conversations: next }))
+    await controller.refresh()
+    assert.equal(controller.getState().selectedId, null)
+    assert.deepEqual(controller.getState().messages.items, [])
+    controller.dispose()
+  }
+})

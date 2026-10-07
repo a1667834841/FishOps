@@ -184,12 +184,12 @@ test('会话头像：从 userInfo/ownerInfo.logo 提取，忽略商品 itemMainP
       extension: { itemMainPic: 'https://img.alicdn.com/bao/uploaded/i3/x-0-fleamarket.jpg' },
       userInfo: { userId: '999', nick: '买家', logo: avatar },
     },
-  })
+  }, 'me')
   assert.equal(viaUserInfo?.peerAvatarUrl, avatar)
 
   const viaOwnerInfo = parseConversationItem({
-    singleChatUserConversation: { cid: '123@goofish', modifyTime: 1000, ownerInfo: { logo: avatar } },
-  })
+    singleChatUserConversation: { cid: '123@goofish', modifyTime: 1000, ownerInfo: { userId: '999', logo: avatar } },
+  }, 'me')
   assert.equal(viaOwnerInfo?.peerAvatarUrl, avatar)
 })
 
@@ -324,4 +324,16 @@ test('会话解析：sender.uid 作为最后消息发送者的回退来源', () 
   }
   const conv = parseConversationItem(item, 'me')
   assert.equal(conv?.peerUserName, '买家', 'sender.uid 归一后等于 peerUserId 时采用昵称')
+})
+
+
+test('卖家最新消息与身份未知资料不能覆盖买家头像', () => {
+  const avatar = 'https://img.alicdn.com/seller.jpg'
+  const parsed = parseConversationItem({ singleChatUserConversation: {
+    cid: '123@goofish', userInfo: { userId: 'me', logo: avatar }, ownerInfo: { logo: avatar },
+    lastMessage: { message: { extension: { senderUserId: 'me', avatar: avatar, reminderTitle: '卖家',
+      reminderUrl: 'https://www.goofish.com/im?peerUserId=buyer' } } },
+  } }, 'me')
+  assert.equal(parsed?.peerUserName, '')
+  assert.equal(parsed?.peerAvatarUrl, undefined)
 })
