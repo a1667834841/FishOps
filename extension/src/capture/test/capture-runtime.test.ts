@@ -29,6 +29,7 @@ function cmd(type: string, payload: unknown): CommandEnvelope {
 function setup(options: {
   available?: boolean
   store?: MemoryTaskStore
+  syncProducts?: import('../controller').CaptureControllerDeps['syncProducts']
   getCurrentUserId?: () => Promise<string | undefined> | string | undefined
 } = {}) {
   const store = options.store ?? new MemoryTaskStore()
@@ -44,6 +45,7 @@ function setup(options: {
     sleep: async () => {}, // 跳过真实限速等待
     onEvent: (event) => events.push(event),
     getCurrentUserId: options.getCurrentUserId,
+    syncProducts: options.syncProducts,
   })
   return { store, tasks, repository, platform, events, runtime }
 }
@@ -538,4 +540,39 @@ test('跨日覆盖本地商品并重启 Worker 后，恢复同步仍读取原任
   assert.equal(attempts, 2)
   assert.deepEqual(platform.searchCalls, [1])
   assert.equal((await repository.list({ source: 'all' })).products[0]!.captureKeyword, '新关键字')
+})
+
+
+test('采集控制命令拒绝分析任务：状态、结果、进度、元数据及副作用不变', async (t) => {
+  for (const status of ['pending', 'running', 'paused'] as const) {
+    for (const type of [CommandTypes.CAPTURE_PAUSE, CommandTypes.CAPTURE_RESUME, CommandTypes.CAPTURE_CANCEL]) {
+      await t.test(`${status}/${type}`, async () => {
+        let syncCalls = 0
+        const { runtime, store, tasks, repository, platform, events } = setup({
+          syncProducts: async () => { syncCalls += 1; return { createdCount: 0, skippedCount: 0 } },
+        })
+        // 先初始化再创建分析任务，隔离启动恢复行为，只验证控制命令。
+        await runtime.init()
+        const created = await tasks.create({ type: 'analysis', payload: { ruleId: 'synthetic', dataSourceType: 'feishu' }, meta: { marker: '保留断点' } })
+        if (status !== 'pending') await tasks.start(created.id)
+        if (status === 'paused') await tasks.pause(created.id)
+        if (status !== 'pending') await tasks.updateProgress(created.id, 37)
+        const before: Task = { ...(await tasks.getById(created.id))!, result: { summary: '保留结果' } }
+        await store.save(before)
+        events.length = 0
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const response = await runtime.handleCommand(cmd(type, { id: created.id }))
+          assert.equal(response.ok, false)
+          assert.equal(response.error?.code, 'INVALID_PAYLOAD')
+          assert.match(response.error!.message, /任务类型不匹配.*capture.*analysis/)
+        }
+        assert.deepEqual(await tasks.getById(created.id), before)
+        assert.deepEqual(events, [])
+        assert.deepEqual(platform.searchCalls, [])
+        assert.deepEqual(platform.detailCalls, [])
+        assert.equal(syncCalls, 0)
+        assert.equal(await repository.count(), 0)
+      })
+    }
+  }
 })
