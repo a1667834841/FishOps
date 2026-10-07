@@ -132,6 +132,11 @@ export class ChatStore {
     this.applyConversations(conversations)
   }
 
+  /** 按现有会话和去重键检查消息是否已入库，不读取或复制全量会话。 */
+  hasMessage(message: ChatMessage): boolean {
+    return this.messagesBySession.get(message.sessionId)?.has(ChatStore.keyOf(message)) ?? false
+  }
+
   /** 批量 upsert 消息，返回新增/覆盖统计。 */
   upsertMessages(messages: readonly ChatMessage[], options: UpsertMessagesOptions = {}): UpsertResult {
     const changed: ChatMessage[] = []

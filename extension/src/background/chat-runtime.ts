@@ -22,7 +22,7 @@ import { ChatHistoryClient, type ChatTransport } from '../chat/history'
 import { PeerProfileResolver, type PeerProfileRequester } from '../chat/peer-profiles'
 import { fetchPeerProfileInPage, isPeerProfilePageResult } from '../chat/peer-profiles-main'
 import { ChatStore, type ChatPersistence } from '../chat/store'
-import { ChatSync } from '../chat/sync'
+import { ChatSync, type SyncResult } from '../chat/sync'
 import type { ChatReadTransport } from '../chat/read-transport'
 
 /** 需要 background `ChatRuntime` 处理的 Workbench 命令。 */
@@ -64,7 +64,7 @@ export interface ChatRuntime {
   /** 处理一条 Workbench 聊天命令。 */
   handleCommand(command: CommandEnvelope): Promise<ResponseEnvelope>
   /** 摄入一条 MAIN world 上报的 socket 事件（不抛错）。 */
-  ingestSocketEvent(payload: ChatSocketEventPayload): void
+  ingestSocketEvent(payload: ChatSocketEventPayload): SyncResult | undefined
   /** 取出并清空待广播事件。 */
   drainEvents(): BridgeEventEnvelopeLike[]
   /**
@@ -154,10 +154,10 @@ export function createChatRuntime(deps: ChatRuntimeDeps = {}): ChatRuntime {
       }
     },
 
-    ingestSocketEvent(payload: ChatSocketEventPayload): void {
+    ingestSocketEvent(payload: ChatSocketEventPayload): SyncResult | undefined {
       switch (payload.event) {
         case 'message':
-          if (typeof payload.raw === 'string') adapter.ingestRealtime(payload.raw)
+          if (typeof payload.raw === 'string') return adapter.ingestRealtime(payload.raw)
           break
         case 'open':
           adapter.reportSocketStatus('open')

@@ -39,6 +39,7 @@ import {
 import { handleCommand, type PlatformRouterDeps } from './message-router'
 import { createChatRuntime, type ChatRuntime } from './chat-runtime'
 import { isTrustedChatContentSource } from './chat-source'
+import { createChatReplyIngestor } from './chat-reply-ingest'
 import { isExtensionPageSender } from './sender-policy'
 import { incrementCounter, readState, writeState } from './session-store'
 import type { TabsApi } from './tab-manager'
@@ -395,21 +396,16 @@ function flushChatEvents(): void {
   }
 }
 
-// ---- 实时帧串行队列：保证「先 init，再按到达顺序 ingest」 ----
-
-/** 实时帧处理链；每帧在上帧完成后才执行，避免乱序或旧缓存覆盖新帧。 */
-let chatIngestChain: Promise<void> = Promise.resolve()
-
-function enqueueChatIngest(payload: ChatSocketEventPayload): Promise<void> {
-  const run = chatIngestChain.then(async () => {
-    const runtime = await getChatRuntime()
-    runtime.ingestSocketEvent(payload)
-    flushChatEvents()
-  })
-  // 单帧失败不阻塞后续帧（链继续）；错误仍返回给调用方，不在此吞掉。
-  chatIngestChain = run.catch(() => {})
-  return run
-}
+// 连接前的补推仅入库；旧宿主回退到后台启动边界，回复队列独立于聊天入库。
+const chatReplyIngestor = createChatReplyIngestor({
+  extensionId: chrome.runtime.id,
+  liveSince: Date.now(),
+  getChatRuntime,
+  getReplyRuntime,
+  flushChatEvents,
+  flushReplyEvents,
+  onReplyError: () => console.warn('[FishOps:Background] 实时回复处理失败；未自动重试发送'),
+})
 
 /**
  * 处理来自 goofish content script 的原始 socket 事件。
@@ -425,8 +421,7 @@ async function handleChatSocketEvent(
   if (!isChatSocketEventPayload(message.payload)) return false
   // socket 状态同步记录（不依赖 init），供 `CHAT_RUNTIME_PREPARE` 等待 WebSocket open。
   noteSocketStatusFromEvent(message.payload)
-  await enqueueChatIngest(message.payload)
-  return true
+  return chatReplyIngestor.handle(message.payload, sender)
 }
 
 // ---- 采集层（P4）：惰性组装；复用 P3 的 platform.search / platform.detail ----

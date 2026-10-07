@@ -62,6 +62,7 @@ function statusToEvent(status: ChatSocketStatus): ChatSocketEventPayload['event'
 export function createChatHost(options: ChatHostOptions): ChatHost {
   const now = options.now ?? (() => Date.now())
   let socket: WebSocketLike | null = null
+  let connectedAt = now()
 
   const transport = new ChatSocketTransport({
     getSocket: () => socket,
@@ -85,6 +86,7 @@ export function createChatHost(options: ChatHostOptions): ChatHost {
     const tooLarge = raw.length > CHAT_SOCKET_MAX_RAW_LENGTH
     options.report({
       event: 'message',
+      connectedAt,
       ...(tooLarge ? {} : { raw }),
       at: now(),
     })
@@ -92,7 +94,10 @@ export function createChatHost(options: ChatHostOptions): ChatHost {
 
   const handlers: ChatWebSocketMonitorHandlers = {
     onMessage: handleSocketMessage,
-    onOpen: () => reportStatus('open'),
+    onOpen: () => {
+      connectedAt = now()
+      reportStatus('open')
+    },
     onClose: (info) =>
       options.report({
         event: 'close',
@@ -102,6 +107,7 @@ export function createChatHost(options: ChatHostOptions): ChatHost {
       }),
     onError: () => reportStatus('error'),
     onSocket: (detected) => {
+      if (socket !== detected) connectedAt = now()
       socket = detected
     },
   }
@@ -117,6 +123,7 @@ export function createChatHost(options: ChatHostOptions): ChatHost {
     },
     handlers,
     attachSocket: (next) => {
+      if (socket !== next) connectedAt = now()
       socket = next
     },
     handleSocketMessage,

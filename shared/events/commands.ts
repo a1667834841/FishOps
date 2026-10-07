@@ -414,6 +414,8 @@ export type ChatSocketEventName = 'message' | 'open' | 'close' | 'error'
  * 该负载只用于内存内解析，background 不会把它写日志或透传给 Workbench。
  */
 export interface ChatSocketEventPayload {
+  /** 宿主首次观察当前连接的时间；跨 Service Worker 唤醒保持，用于拒绝连接前补推。 */
+  connectedAt?: number
   event: ChatSocketEventName
   /** 原始 WebSocket 文本（仅 message）；超限会被拒绝。 */
   raw?: string

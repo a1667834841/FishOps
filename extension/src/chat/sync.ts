@@ -30,6 +30,8 @@ export interface ChatSyncDeps {
 
 /** 单次同步结果。 */
 export interface SyncResult {
+  /** 仅供后台回复接线使用的本批新增消息，不放入 Bridge 事件。 */
+  newMessages?: ChatMessage[]
   ok: boolean
   /** 实时事件的类型（历史/批量同步时为 undefined）。 */
   kind?: ChatEventKind
@@ -177,10 +179,21 @@ export class ChatSync {
     if (!parsed.ok) {
       return { ok: false, added: 0, updated: 0, error: parsed.error }
     }
+    const seen = new Set<string>()
+    const newMessages: ChatMessage[] = []
+    for (const message of parsed.event.messages) {
+      const key = `${message.sessionId}:${ChatStore.keyOf(message)}`
+      // 同批重复及已有历史都不触发；缺少可靠账号时默认方向只能用于聊天展示。
+      if (!seen.has(key) && !this.store.hasMessage(message) &&
+        normalizeUserId(this.parseCtx.myUserId) && message.senderId) newMessages.push(message)
+      seen.add(key)
+    }
+    // 保留原批量持久化，避免每条消息单独读取和重写 session 缓存。
     const count = this.store.upsertMessages(parsed.event.messages)
     return {
       ok: true,
       kind: parsed.event.kind,
+      newMessages,
       added: count.added,
       updated: count.updated,
       notes: parsed.event.notes,
