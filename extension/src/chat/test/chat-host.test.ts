@@ -141,3 +141,18 @@ test('页面连接探测：host 缺失或旧版 host 返回 null，新版只返�
     else page.__FISHOPS_CHAT_TRANSPORT__ = original
   }
 })
+
+test('消息携带宿主连接边界，时间推进不重置；新连接重新记录', () => {
+  let time = 100
+  const events: ChatSocketEventPayload[] = []
+  const host = createChatHost({ report: p => events.push(p), now: () => time })
+  host.reportStatus('open')
+  time = 200
+  host.handleSocketMessage('{}')
+  assert.equal(events.at(-1)?.connectedAt, 100)
+  time = 300
+  host.attachSocket(new FakeWebSocket(TARGET))
+  time = 400
+  host.handleSocketMessage('{}')
+  assert.equal(events.at(-1)?.connectedAt, 300)
+})

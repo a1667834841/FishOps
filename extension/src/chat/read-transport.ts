@@ -1,5 +1,5 @@
 /** 闲鱼会话已读的独立受控写 transport；不扩展历史读取白名单。 */
-import { createLwpRequest, LWP_REQUEST_TIMEOUT_MS, LWP_ROUTES, toFullCid, type LwpResponse } from '../../../shared/chat/index'
+import { createLwpRequest, generateMid, LWP_REQUEST_TIMEOUT_MS, LWP_ROUTES, toFullCid, type LwpResponse } from '../../../shared/chat/index'
 
 export interface ChatReadTransport {
   markRead(sessionId: string, messageId: string): Promise<LwpResponse>
@@ -41,7 +41,6 @@ interface PendingRead {
 export class ChatReadSocketTransport implements ChatReadTransport {
   private readonly pending = new Map<string, PendingRead>()
   private readonly options: ChatReadTransportOptions
-  private counter = 0
 
   constructor(options: ChatReadTransportOptions) { this.options = options }
 
@@ -51,7 +50,8 @@ export class ChatReadSocketTransport implements ChatReadTransport {
       return Promise.reject(new Error('聊天 WebSocket 未连接'))
     }
     if (!isServerMessageId(messageId)) return Promise.reject(new Error('缺少有效的服务端 messageId'))
-    const mid = this.options.midFactory?.() ?? `read-${Date.now()}-${++this.counter}`
+    // 平台 LWP 使用数字请求 ID 加空格标志；自定义 read- 前缀不符合原生请求格式。
+    const mid = this.options.midFactory?.() ?? generateMid()
     if (this.pending.has(mid)) return Promise.reject(new Error('已读请求 mid 重复'))
     const request = createChatReadRequest(sessionId, messageId, mid)
     const timeoutMs = this.options.timeoutMs ?? LWP_REQUEST_TIMEOUT_MS

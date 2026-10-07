@@ -66,6 +66,8 @@ export interface ChatMessage {
   createAt: number
   /** 已读状态（历史接口返回）。 */
   readStatus?: number
+  /** 实时消息的客户端平台；缺失时不猜测来源。 */
+  platform?: string
   /** 数据来源。 */
   source: ChatMessageSource
   /**

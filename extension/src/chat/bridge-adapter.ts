@@ -285,8 +285,8 @@ export class ChatBridgeAdapter {
    * 摄入一条实时 WebSocket 原始消息，成功时为每条消息排队一个「元数据事件」。
    * 事件负载刻意不含正文，避免日志/持久化泄露聊天内容。
    */
-  ingestRealtime(raw: unknown): SyncResult {
-    const result = this.sync.ingestRealtime(raw)
+  ingestRealtime(raw: unknown, window?: { from: number; to: number }): SyncResult {
+    const result = this.sync.ingestRealtime(raw, window)
     if (result.ok && result.added + result.updated > 0) {
       // 通过 store 反查本次消息不现实（可能重复），此处按事件类型通知即可。
       this.push(ChatBridgeEvents.CHAT_MESSAGE_INGESTED, {

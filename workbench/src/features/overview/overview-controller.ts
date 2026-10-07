@@ -94,6 +94,18 @@ export class OverviewController extends StateStore<OverviewState> {
       }),
     ])
   }
+  /** 点击未读入口时读取最新会话，选择最近未读；已全部读完返回 null。 */
+  async getLatestUnreadSessionId(): Promise<string | null> {
+    if (!this.api || this.disposed) return null
+    const result = await this.api.call(CommandTypes.CHAT_LIST_CONVERSATIONS, {})
+    if (this.disposed) return null
+    if (!Array.isArray(result.conversations) || result.conversations.some(c =>
+      !Number.isFinite(c.unreadCount) || c.unreadCount < 0)) throw new Error('会话数据格式不正确')
+    const unread = result.conversations.filter(c => c.unreadCount > 0)
+    if (unread.some(c => typeof c.sessionId !== 'string' || !c.sessionId ||
+      !Number.isFinite(c.lastMessageTime))) throw new Error('未读会话缺少定位信息')
+    return unread.sort((a, b) => b.lastMessageTime - a.lastMessageTime)[0]?.sessionId ?? null
+  }
   /** 切换与商品库一致的来源，旧来源计数不得沿用。 */
   async setProductSource(source: 'feishu' | 'my_published'): Promise<void> {
     if (source === this.state.productSource) return

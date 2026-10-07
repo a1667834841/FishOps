@@ -22,7 +22,7 @@ import { ChatHistoryClient, type ChatTransport } from '../chat/history'
 import { PeerProfileResolver, type PeerProfileRequester } from '../chat/peer-profiles'
 import { fetchPeerProfileInPage, isPeerProfilePageResult } from '../chat/peer-profiles-main'
 import { ChatStore, type ChatPersistence } from '../chat/store'
-import { ChatSync } from '../chat/sync'
+import { ChatSync, type SyncResult } from '../chat/sync'
 import type { ChatReadTransport } from '../chat/read-transport'
 
 /** 需要 background `ChatRuntime` 处理的 Workbench 命令。 */
@@ -41,6 +41,8 @@ export function isChatCommand(type: string): boolean {
 }
 
 export interface ChatRuntimeDeps {
+  /** 旧宿主没有连接时间时采用的后台启动边界，用于拒绝历史未读累加。 */
+  liveSince?: number
   /** 只读 LWP transport；缺省时历史同步返回失败。 */
   transport?: ChatTransport
   /** 已读接口的独立写 transport；缺省时 CHAT_MARK_READ 返回 READ_UNAVAILABLE。 */
@@ -64,7 +66,7 @@ export interface ChatRuntime {
   /** 处理一条 Workbench 聊天命令。 */
   handleCommand(command: CommandEnvelope): Promise<ResponseEnvelope>
   /** 摄入一条 MAIN world 上报的 socket 事件（不抛错）。 */
-  ingestSocketEvent(payload: ChatSocketEventPayload): void
+  ingestSocketEvent(payload: ChatSocketEventPayload): SyncResult | undefined
   /** 取出并清空待广播事件。 */
   drainEvents(): BridgeEventEnvelopeLike[]
   /**
@@ -86,6 +88,7 @@ export interface ChatRuntime {
 
 /** 创建聊天运行时。 */
 export function createChatRuntime(deps: ChatRuntimeDeps = {}): ChatRuntime {
+  const liveSince = deps.liveSince ?? Date.now()
   const store = new ChatStore(deps.persistence ?? undefined)
   const history = deps.transport
     ? new ChatHistoryClient({ transport: deps.transport, ...(deps.myUserId === undefined ? {} : { myUserId: deps.myUserId }) })
@@ -154,10 +157,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps = {}): ChatRuntime {
       }
     },
 
-    ingestSocketEvent(payload: ChatSocketEventPayload): void {
+    ingestSocketEvent(payload: ChatSocketEventPayload): SyncResult | undefined {
       switch (payload.event) {
         case 'message':
-          if (typeof payload.raw === 'string') adapter.ingestRealtime(payload.raw)
+          if (typeof payload.raw === 'string') return adapter.ingestRealtime(payload.raw, {
+            from: payload.connectedAt ?? liveSince, to: payload.at,
+          })
           break
         case 'open':
           adapter.reportSocketStatus('open')
