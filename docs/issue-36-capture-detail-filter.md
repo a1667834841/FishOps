@@ -61,3 +61,36 @@
 本次 Codex 会话 ID：`01a11417-9281-7680-8ff0-af87f5e8d194`。执行对话副本保存在当前目录 `.task-evidence/issue-36/conversation.jsonl.local`，认领正文为 `claim.md.local`，均仅本地保留，不提交 GitHub；可在当前 Orca 终端继续对话。
 
 按 B 类规范执行模块回归和本地交付检查，未执行真实 Chrome/飞书 E2E、真实采集或外部写入；Mock 同步只证明最终输入集合一致。真实平台列表与详情差异频率仍未验证。CI 状态以 GitHub 实际执行为准。PR 创建后保持 pr review，等待人工 Review，不自动 Merge，不进入 done。
+
+## 真实 Chrome / 飞书补充验收（2026-10-07）
+
+用户追加要求真实 E2E，并授权恢复及在原空间不存在后新建测试空间。最终在空间 354 串行完成部署、页面、真实接口、采集及远端回读。源码仍为 `0d3829b`，部署来源为本 worktree 的 `a8fc255`，没有业务代码变化；此前「未执行真实 E2E」描述仅适用于首次交付阶段，本节为最新验证结论。
+
+`npm run agent:setup` 在本工作区构建、同步固定目录、重载和导入配置成功，包含 `SETUP_COMPLETED`。已读取真实运行中任务检查，无任务才部署。测试扩展入口为 `chrome-extension://lnkgjbkfdimiloglccfmeefcclfgifbo/workbench.html`，闲鱼页面已登录。AI、飞书配置存在，自动回复关闭。
+
+自动编排最初受旧配置空间及部署脚本结束空间后标签未重新接入影响，保留失败结果，未将入口失败标为通过。依据已有恢复授权在同一空间接回真实工作台标签，执行原 `scripts/regression-browser.mjs` 检查逻辑，仅延后空间结束动作供业务专项继续；13 项全部通过：4 个真实读取命令、7 个页面导航、设置页真实 AI 接口和飞书 Schema 连接。
+
+| 真实动作 | 实际结果 | 写入与验证边界 |
+| --- | --- | --- |
+| 页面创建「手机」，1 页、10 条、最低想要数 5、采集详情 | completed，fetched=10、filtered=4、valid=stored=6、detailFailed=6；飞书 createdCount=6 | 详情被闲鱼滑块阻断，保留列表值；6 条飞书回读与本地原观测一致，不能证明详情成功 |
+| 用户处理滑块后，真实详情 API 检查 | SUCCESS，真实商品 wantCnt=6 | 未修改或伪造平台响应 |
+| 页面再次创建相同「手机」条件 | completed，fetched=10、filtered=4、valid=stored=6、detailFailed=failed=0；飞书 createdCount=0、skippedCount=6 | 6 次详情成功；同小时按商品和关键词去重，飞书保留首次观测。重复操作不产生远端重复行，不能声称本轮详情值覆盖旧行 |
+| 页面创建「荣耀Magic8」，1 页、5 条、最低想要数 1、采集详情 | completed，fetched=valid=stored=5、filtered=detailFailed=failed=0；飞书 createdCount=5、skippedCount=0 | 5 次详情成功并首次同步；真实飞书查询回读 5 条，商品 ID、采集时间、关键词、想要数逐条与本地一致 |
+| 再次进入商品库、返回采集页 | 页面加载通过；读取运行中任务数为 0 | 最后结束测试空间 354，保留 Orca 执行会话 |
+
+最后一轮真实想要数为 2、1、3、16、3，全部 >=1，包含等于阈值的 1。checkpoint 的 storedIds、capturedRecords 均为 5。匹配真实飞书结果按商品 ID 和本次原始采集时间完成，`hasMore=false`，未用 Mock、注入数据或 fixture 替代。
+
+本轮副作用：创建 3 个采集任务、保存对应本地观测，真实飞书新增 11 条采集记录，重复轮跳过 6 条。保留验收数据，不删除，不发布商品，不发送消息。测试账号授权沿用 `docs/workflow/test-authorization.md`。验证码由用户处理；记录未包含凭据、聊天或商品描述。
+
+可覆盖的真实 Chrome/飞书基线、正常详情采集、等阈值保留、列表筛选、详情失败回退、重复同步去重和首次同步回读均通过。**真实数据没有出现列表通过但详情低于阈值的组合，也没有覆盖详情缺字段及跨页去重释放边界；这些由 8 条新增模块回归覆盖，不称为真实验证。** 同小时远端去重保留首次观测为现有语义，本次未扩大范围修改。
+
+详细本地证据均在本 worktree：
+
+- `.regression/2026-10-07T13-48-13-398Z-78071/setup.log`：实际构建、部署和完成标记；同目录 report.json 保留编排失败。
+- `.task-evidence/issue-36/real-checks-354.log`：13 项真实基线逐项结果。
+- `.task-evidence/issue-36/capture-final.json.local`、`feishu-readback.json.local`：首次列表降级入库与飞书回读。
+- `.task-evidence/issue-36/capture-detail-success.json.local`：详情成功及重复同步跳过，新的采集时间在飞书没有新增观测，非回读失败。
+- `.task-evidence/issue-36/capture-fresh-detail.json.local`：5 条首次详情写入及逐条一致回读。
+- `.task-evidence/issue-36/conversation.jsonl.local`：本工作区执行对话副本。
+
+CI 在追加文档前已通过；补充验收提交只修改文档，源码与实际测试版本一致，复用此前本地全量回归、定向测试和真实部署结果。PR 更新后继续等待人工 Review，不自动 Merge。
