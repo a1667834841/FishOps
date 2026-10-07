@@ -216,6 +216,8 @@ let bgSeq = 0
  */
 async function bootBackground(options = {}) {
   const store = new Map()
+  const localStore = new Map()
+  const alarmStore = new Map()
   const sessionGet = options.sessionGet ?? (async (key) => store.get(key))
 
   const chromeMock = {
@@ -239,6 +241,29 @@ async function bootBackground(options = {}) {
         async set(items) {
           for (const [key, value] of Object.entries(items)) store.set(key, value)
         },
+      },
+      // 调度层使用 storage.local 作为配置真源；提供真实语义的 mock，避免启动时误报。
+      local: {
+        async get(key) {
+          const result = {}
+          if (typeof key === 'string' && localStore.has(key)) result[key] = localStore.get(key)
+          return result
+        },
+        async set(items) {
+          for (const [key, value] of Object.entries(items)) localStore.set(key, value)
+        },
+      },
+    },
+    alarms: {
+      onAlarm: createEventTarget(),
+      async get(name) {
+        return alarmStore.get(name)
+      },
+      async create(name, info) {
+        alarmStore.set(name, { name, scheduledTime: Date.now(), ...info })
+      },
+      async clear(name) {
+        return alarmStore.delete(name)
       },
     },
     action: { onClicked: createEventTarget() },
@@ -345,6 +370,11 @@ async function testBackgroundSources() {
   check('content script 发 CHAT_GET_MESSAGES 被拒绝', contentChatGet.ret === false)
   const contentPublish = await bg.invoke(CONTENT_SENDER, 'PUBLISH', { event: 'DEMO_TICK', payload: {} })
   check('content script 发 PUBLISH 被拒绝', contentPublish.ret === false)
+  // 通用调度命令同属扩展内页专属：content script 不得读取计划或执行记录。
+  const contentSchedule = await bg.invoke(CONTENT_SENDER, 'SCHEDULE_LIST', {})
+  check('content script 发 SCHEDULE_LIST 被拒绝', contentSchedule.ret === false && contentSchedule.response === '__no_response__')
+  const extSchedule = await bg.invoke(EXT_PAGE_SENDER, 'SCHEDULE_LIST', {})
+  check('扩展内页可读取调度计划（数组）', extSchedule.response?.ok === true && Array.isArray(extSchedule.response?.result), extSchedule.response)
 
   // 回归：CHAT_SYNC_CONVERSATIONS 在原缺陷中返回空响应（客户端报 INVALID_MESSAGE）。
   // 本 mock 环境无 chrome.scripting、且 tabs 缺 query/get/onUpdated → 无 goofish tab；
@@ -493,6 +523,7 @@ function testManifest() {
     ['storage', 'scripting', 'tabs', 'cookies'].every((p) => (manifest.permissions ?? []).includes(p)),
     manifest.permissions,
   )
+  check('声明 alarms 权限（通用调度依赖固定间隔唤醒）', (manifest.permissions ?? []).includes('alarms'), manifest.permissions)
 }
 
 async function run() {

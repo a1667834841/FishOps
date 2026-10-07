@@ -15,7 +15,8 @@
  *   2. 带 tab 的扩展内页 PING 返回 PONG；
  *   3. 带 tab 的扩展内页长连接未被断开且收到补发的 WORKER_STARTED；
  *   4. content script 来源仍被拒绝（安全不回退）；
- *   5. 启动过程不产生 unhandledRejection。
+ *   5. 通用调度唤醒器同步注册、创建 1 分钟 alarm，调度命令仍只接受扩展内页；
+ *   6. 启动过程不产生 unhandledRejection。
  *
  * 用法：先 `npm run build`（或 `npm run build:extension`），再 `node scripts/service-worker-startup.mjs`
  */
@@ -55,6 +56,7 @@ process.on('unhandledRejection', (reason) => unhandled.push(reason))
 // ---- 最小 chrome.* mock（贴近真实扩展环境）---- //
 const sessionStore = new Map()
 const localStore = new Map()
+const alarmStore = new Map()
 
 function createEventTarget() {
   const listeners = []
@@ -108,6 +110,18 @@ globalThis.chrome = {
       async set(items) {
         for (const [key, value] of Object.entries(items)) localStore.set(key, value)
       },
+    },
+  },
+  alarms: {
+    onAlarm: createEventTarget(),
+    async get(name) {
+      return alarmStore.get(name)
+    },
+    async create(name, info) {
+      alarmStore.set(name, { name, scheduledTime: Date.now(), ...info })
+    },
+    async clear(name) {
+      return alarmStore.delete(name)
     },
   },
   action: { onClicked: createEventTarget() },
@@ -209,7 +223,23 @@ async function run() {
   const contentPort = connectPort(CONTENT_SENDER)
   check('content script Port 被断开', contentPort.disconnected === true)
 
-  console.log('Part 5：启动无未处理异常')
+  console.log('Part 5：通用调度唤醒器启动与命令来源')
+  check('调度 alarm 监听已同步注册', chrome.alarms.onAlarm.hasListeners())
+  const schedulerAlarm = alarmStore.get('fishops.scheduler.tick')
+  check('启动时创建了 1 分钟固定间隔的调度 alarm', schedulerAlarm?.periodInMinutes === 1, schedulerAlarm)
+  const executors = await invoke(EXTENSION_PAGE_SENDER, 'SCHEDULE_EXECUTOR_LIST', {})
+  check('本期无业务执行器：执行器列表为空数组', executors.response?.ok === true && Array.isArray(executors.response?.result) && executors.response.result.length === 0, executors.response)
+  const schedules = await invoke(EXTENSION_PAGE_SENDER, 'SCHEDULE_LIST', {})
+  check('扩展内页可读取调度计划（初始为空数组）', schedules.response?.ok === true && Array.isArray(schedules.response?.result), schedules.response)
+  const contentSchedule = await invoke(CONTENT_SENDER, 'SCHEDULE_SAVE', { id: 'p', name: 'p', taskType: 'none', config: {}, intervalMinutes: 1, enabled: true })
+  check('content script 发调度命令被拒绝（listener 返回 false）', contentSchedule.ret === false)
+  check('content script 调度命令无响应', contentSchedule.response === '__no_response__')
+
+  console.log('Part 6：启动无未处理异常')
+  // 手动触发一次 alarm；本期无执行器，tick 应空跑而不产生未处理拒绝。
+  const alarmListener = chrome.alarms.onAlarm.last()
+  alarmListener({ name: 'fishops.other.event' })
+  alarmListener({ name: 'fishops.scheduler.tick' })
   await sleep(50)
   check('启动期间无 unhandledRejection', unhandled.length === 0, unhandled.map(String))
 
