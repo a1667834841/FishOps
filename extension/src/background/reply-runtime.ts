@@ -33,6 +33,7 @@ import {
   type ResponseEnvelope,
 } from '@fishops/shared'
 import { toFullCid } from '../../../shared/chat/index'
+import { normalizeUserId } from '../chat/parser'
 import type { ChatMessage, Conversation } from '../../../shared/types/chat'
 import {
   DEFAULT_AI_MAX_HISTORY,
@@ -481,12 +482,15 @@ export function createReplyRuntime(deps: ReplyRuntimeDeps): ReplyRuntime {
       pendingEcho: true,
     }
 
-    const existing = store.getConversation(input.sessionId)
+    const candidate = store.getConversation(input.sessionId)
+    const existing = candidate?.accountUserId && normalizeUserId(candidate.accountUserId) !== normalizeUserId(input.myId)
+      ? undefined : candidate
     const conversation: Conversation = existing
-      ? { ...existing, lastMessage: summary, lastMessageTime: input.sentAt, sortIndex: input.sentAt }
+      ? { ...existing, accountUserId: normalizeUserId(input.myId), lastMessage: summary, lastMessageTime: input.sentAt, sortIndex: input.sentAt }
       : {
           sessionId: input.sessionId,
           cid,
+          accountUserId: normalizeUserId(input.myId),
           peerUserId: input.receiverId,
           peerUserName: '',
           lastMessage: summary,

@@ -144,12 +144,14 @@ export function parseConversationItem(item: unknown, myUserId?: string): Convers
     cid,
     peerUserId: peerIsSelf ? undefined : peerUserId ?? undefined,
     peerUserName,
-    peerAvatarUrl: extractAvatarUrl([
-      userConv['extension'],
-      extension,
-      // 真实头像字段 logo 位于 userInfo / ownerInfo 内（mtop user.query / session.sync）。
-      isRecord(userConv['userInfo']) ? userConv['userInfo'] : undefined,
-      isRecord(userConv['ownerInfo']) ? userConv['ownerInfo'] : undefined,
+    // 消息扩展中的头像归属发送者；用户资料也必须按 ID 排除自己，不能按 owner 角色猜。
+    peerAvatarUrl: peerIsSelf ? undefined : extractAvatarUrl([
+      senderIsPeer ? extension : undefined,
+      ...[userConv['userInfo'], userConv['ownerInfo']].filter(info => {
+        if (!isRecord(info)) return false
+        const id = normalizeUserId(info['userId'])
+        return !!id && (explicitPeer ? id === explicitPeer : !!selfId && id !== selfId)
+      }),
     ]),
     lastMessage: typeof custom['summary'] === 'string' ? custom['summary'] : '',
     lastMessageTime: typeof msg['createAt'] === 'number' ? msg['createAt'] : modifyTime,

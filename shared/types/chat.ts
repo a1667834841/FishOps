@@ -82,6 +82,8 @@ export interface ChatMessage {
 
 /** 标准会话（会话列表项）。 */
 export interface Conversation {
+  /** 本地缓存所属登录账号；防止账号切换后沿用旧会话资料，旧缓存可缺失。 */
+  accountUserId?: string
   /** 会话 ID，已去掉 `@goofish` 后缀。 */
   sessionId: string
   /** 原始 cid。 */
@@ -105,6 +107,8 @@ export interface Conversation {
   sortIndex: number
   /** 关联商品 ID。 */
   itemId?: string
+  /** 会话关联商品封面；仅来自同一 session 的 itemInfo.mainPic，不能使用头像或聊天图片。 */
+  itemCoverUrl?: string
   /** 是否可见。 */
   visible: boolean
 }

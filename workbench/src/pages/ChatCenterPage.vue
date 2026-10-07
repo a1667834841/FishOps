@@ -68,7 +68,11 @@ const threadMessages = computed(() => {
 })
 
 const itemContext = computed(() => deriveItemContext(selectedConversation.value, threadMessages.value))
-const peer = computed(() => derivePeer(selectedConversation.value, threadMessages.value))
+const peer = computed(() => {
+  const context = derivePeer(selectedConversation.value, threadMessages.value)
+  const conversation = selectedConversation.value
+  return conversation ? { ...context, name: displayName(conversation.sessionId, conversation.peerUserName) } : context
+})
 /** 消息窗口尾部 id：变化表示追加了新消息（实时消息 / 发送回显 / 刷新替换）。 */
 const tailId = computed(() => {
   const items = threadMessages.value
@@ -81,8 +85,10 @@ const headId = computed(() => {
   const first = items.length > 0 ? items[0] : undefined
   return first ? first.id : ''
 })
-/** 当前会话头像：会话字段优先，回退到对方消息头像；两者都缺失时为 null，走字母 fallback。 */
-const peerAvatar = computed(() => peerAvatarUrl(selectedConversation.value, threadMessages.value))
+/** 买家栏与列表使用同一会话身份；尚无会话实体时才回退消息头像。 */
+const peerAvatar = computed(() => selectedConversation.value
+  ? safeHttpsUrl(selectedConversation.value.peerAvatarUrl)
+  : peerAvatarUrl(null, threadMessages.value))
 
 /**
  * P6 回复层（规则 / 建议 / 发送）使用独立控制器与独立 Bridge。
@@ -109,6 +115,16 @@ function conversationAvatar(item: Conversation): string | null {
   const url = safeHttpsUrl(item.peerAvatarUrl)
   if (!url || failedAvatars.value[url]) return null
   return url
+}
+
+/** 封面独立记录失败状态，不能回退成买家头像或聊天图片。 */
+const failedCovers = ref<Record<string, boolean>>({})
+function conversationCover(item: Conversation): string | null {
+  const url = item.itemId ? safeHttpsUrl(item.itemCoverUrl) : null
+  return url && !failedCovers.value[url] ? url : null
+}
+function markCoverFailed(url: string | null): void {
+  if (url) failedCovers.value = { ...failedCovers.value, [url]: true }
 }
 
 /**
@@ -469,32 +485,40 @@ watch(
                 :aria-current="item.sessionId === selectedId ? 'true' : undefined"
                 @click="controller.selectSession(item.sessionId)"
               >
-                <span class="conv__avatar" aria-hidden="true">
-                  <img
-                    v-if="conversationAvatar(item)"
-                    :src="conversationAvatar(item) ?? undefined"
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    referrerpolicy="no-referrer"
-                    @error="markAvatarFailed(conversationAvatar(item))"
-                  />
-                  <template v-else>{{ displayName(item.sessionId, item.peerUserName).slice(0, 1) }}</template>
+                <span class="conv__identity">
+                  <span class="conv__avatar" aria-hidden="true">
+                    <img
+                      v-if="conversationAvatar(item)"
+                      :src="conversationAvatar(item) ?? undefined"
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      referrerpolicy="no-referrer"
+                      @error="markAvatarFailed(conversationAvatar(item))"
+                    />
+                    <template v-else>{{ displayName(item.sessionId, item.peerUserName).slice(0, 1) }}</template>
+                  </span>
+                  <span v-if="item.unreadCount > 0" class="conv__unread">
+                    <span aria-hidden="true">{{ unreadLabel(item.unreadCount) }}</span>
+                    <span class="sr-only">{{ item.unreadCount }} 条未读</span>
+                  </span>
                 </span>
                 <span class="conv__body">
                   <span class="conv__top">
                     <span class="conv__name">{{ displayName(item.sessionId, item.peerUserName) }}</span>
-                    <time v-if="item.lastMessageTime > 0" class="conv__time" :datetime="isoTime(item.lastMessageTime)">
-                      {{ formatShortTime(item.lastMessageTime) }}
-                    </time>
                   </span>
                   <span class="conv__bottom">
                     <span class="conv__last">{{ item.lastMessage || '（暂无消息摘要）' }}</span>
-                    <span v-if="item.unreadCount > 0" class="conv__unread">
-                      <span aria-hidden="true">{{ unreadLabel(item.unreadCount) }}</span>
-                      <span class="sr-only">{{ item.unreadCount }} 条未读</span>
-                    </span>
                   </span>
+                  <time v-if="item.lastMessageTime > 0" class="conv__time" :datetime="isoTime(item.lastMessageTime)">
+                    {{ formatShortTime(item.lastMessageTime) }}
+                  </time>
+                </span>
+                <span v-if="item.itemId" class="conv__cover">
+                  <img v-if="conversationCover(item)" :src="conversationCover(item) ?? undefined"
+                    alt="关联商品封面" loading="lazy" decoding="async" referrerpolicy="no-referrer"
+                    @error="markCoverFailed(conversationCover(item))" />
+                  <span v-else class="conv__cover-placeholder">暂无封面</span>
                 </span>
               </button>
             </li>
@@ -729,7 +753,7 @@ watch(
 
 .chat {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
   min-height: 480px;
@@ -787,8 +811,8 @@ watch(
 
 .skel--avatar {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
 }
 
@@ -840,7 +864,8 @@ watch(
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 10px 14px;
+  min-height: 88px;
+  padding: 12px 14px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -864,13 +889,18 @@ watch(
   outline-offset: -2px;
 }
 
+.conv__identity {
+  position: relative;
+  flex: none;
+}
+
 .conv__avatar {
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   overflow: hidden;
   border-radius: 50%;
   background: var(--bg-subtle, #F5F2EB);
@@ -911,8 +941,8 @@ watch(
 
 .conv__name {
   overflow: hidden;
-  font-size: 12.5px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text-main, #1C1917);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -933,6 +963,10 @@ watch(
 }
 
 .conv__unread {
+  position: absolute;
+  top: -6px;
+  right: -7px;
+  border: 2px solid var(--bg-card, #FFFFFF);
   flex: none;
   min-width: 17px;
   height: 17px;
@@ -945,6 +979,29 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.conv__cover {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--bg-subtle, #F5F2EB);
+}
+
+.conv__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.conv__cover-placeholder {
+  font-size: 10px;
+  color: var(--text-secondary, #78716C);
 }
 
 /* 消息区 */

@@ -11,6 +11,7 @@ import {
   PeerProfileResolver,
   parseSessionSyncProfiles,
   parseUserQueryProfile,
+  parseItemHeadCover,
   type PeerProfileRequest,
   type PeerProfileRequester,
 } from '../peer-profiles'
@@ -90,7 +91,7 @@ test('parseSessionSyncProfiles：无法确认归属时跳过（不猜、不混�
 })
 
 test('parseSessionSyncProfiles：http（非 https）logo 被拒绝，但仍回传 peerId 用于纠正', () => {
-  const payload = syncPayload([{ id: '1', ownerId: 'me', guestId: 'peer', guestLogo: 'http://img.alicdn.com/x.jpg' }])
+  const payload = syncPayload([{ id: '1', ownerId: 'me', guestId: 'peer', guestLogo: 'http://untrusted.example/x.jpg' }])
   // 非法 logo 不采用（peerAvatarUrl 字段缺席），但归属已验证的 peerUserId 仍回传。
   assert.deepEqual(parseSessionSyncProfiles(payload, 'me'), [{ sessionId: '1', peerUserId: 'peer' }])
 })
@@ -100,19 +101,20 @@ test('parseUserQueryProfile：提取 data.userInfo 的 logo/昵称并校验 http
     peerAvatarUrl: AVATAR,
     peerUserName: '买家',
   })
-  assert.deepEqual(parseUserQueryProfile({ data: { userInfo: { logo: 'http://img.alicdn.com/x.jpg' } } }), {})
+  assert.deepEqual(parseUserQueryProfile({ data: { userInfo: { logo: 'http://untrusted.example/x.jpg' } } }), {})
   assert.deepEqual(parseUserQueryProfile({ data: {} }), {})
   assert.deepEqual(parseUserQueryProfile('nope'), {})
 })
 
-test('resolveMissing：会话资料已完备时不发起任何请求', async () => {
+test('resolveMissing：资料已完备仍批量核对商品，不重复查询用户', async () => {
   const requester = new FakeRequester(() => syncPayload([]))
   const resolver = new PeerProfileResolver({ requester, myUserId: 'me' })
   const updates = await resolver.resolveMissing([
     conv({ sessionId: '1', peerUserId: 'peer', peerUserName: '买家', peerAvatarUrl: AVATAR }),
   ])
   assert.deepEqual(updates, [])
-  assert.equal(requester.calls.length, 0)
+  assert.equal(requester.calls.length, 1)
+  assert.equal(requester.calls[0]?.api, 'session.sync')
 })
 
 test('resolveMissing：session.sync 批量补齐（按 sessionId 精确映射）', async () => {
@@ -131,9 +133,9 @@ test('resolveMissing：session.sync 批量补齐（按 sessionId 精确映射）
     { sessionId: '1', peerUserId: 'peerA', peerAvatarUrl: AVATAR },
     { sessionId: '2', peerUserId: 'peerB', peerAvatarUrl: AVATAR2 },
   ])
-  // 仅一次 session.sync，且不含 user.query（已被批量覆盖）。
+  // 仅一次 session.sync；缺少新对方昵称时继续查询，不能保留归属不明的旧昵称。
   assert.equal(requester.calls.filter((c) => c.api === 'session.sync').length, 1)
-  assert.equal(requester.calls.filter((c) => c.api === 'user.query').length, 0)
+  assert.equal(requester.calls.filter((c) => c.api === 'user.query').length, 2)
 })
 
 test('resolveMissing：可信 session.sync 按 sessionId 校正过期 peerUserId', async () => {
@@ -324,4 +326,46 @@ test('resolveMissing：user.query 回退并发有界', async () => {
   const updates = await resolver.resolveMissing(conversations)
   assert.equal(updates.length, 6)
   assert.ok(maxActive <= 2, `并发应 <= 2，实际 ${maxActive}`)
+})
+
+test('真实 session.sync 结构：同一买家不同会话的商品封面独立，图片消息不参与', () => {
+  const payload = { data: { sessions: [101, 102].map((id) => ({
+    session: { sessionId: id, ownerInfo: { userId: 'me', logo: AVATAR },
+      userInfo: { userId: 'buyer', fishNick: '买家', logo: AVATAR2 },
+      itemInfo: { itemId: id + 1000, mainPic: `https://img.alicdn.com/item-${id}.jpg` } },
+    message: { imageUrl: AVATAR },
+  })) } }
+  const profiles = parseSessionSyncProfiles(payload, 'me')
+  assert.equal(profiles[0]?.itemId, '1101')
+  assert.equal(profiles[0]?.itemCoverUrl, 'https://img.alicdn.com/item-101.jpg')
+  assert.equal(profiles[1]?.itemCoverUrl, 'https://img.alicdn.com/item-102.jpg')
+  assert.equal(profiles[0]?.peerAvatarUrl, AVATAR2)
+})
+
+test('商品封面必须有独立商品 ID，非法图片与用户头像不能成为商品封面', () => {
+  for (const itemInfo of [{ mainPic: AVATAR }, { itemId: 42, mainPic: 'http://untrusted.example/a.jpg' },
+    { itemId: 42, mainPic: 'https://user:pass@img.alicdn.com/a.jpg' }]) {
+    const profiles = parseSessionSyncProfiles({ data: { sessions: [{ session: {
+      sessionId: 1, ownerInfo: { userId: 'me', logo: AVATAR }, userInfo: { userId: 'buyer', logo: AVATAR2 }, itemInfo,
+    } }] } }, 'me')
+    assert.equal(profiles[0]?.itemCoverUrl, undefined)
+  }
+})
+
+
+test('官方 CDN 的 HTTP 头像转为 HTTPS；凭据及其它 HTTP 地址仍拒绝', () => {
+  assert.equal(parseUserQueryProfile({ data: { userInfo: { logo: 'http://img.alicdn.com/buyer.jpg' } } }).peerAvatarUrl,
+    'https://img.alicdn.com/buyer.jpg')
+  assert.equal(parseUserQueryProfile({ data: { userInfo: { logo: 'http://user:pass@img.alicdn.com/a.jpg' } } }).peerAvatarUrl, undefined)
+})
+
+test('商品头信息只使用与请求商品 ID 一致的封面，批量未匹配也能独立回退', async () => {
+  const payload = { data: { commonData: { itemId: 42 }, left: { data: { picUrl: 'https://img.alicdn.com/item.jpg' } } } }
+  assert.equal(parseItemHeadCover(payload, '43'), undefined)
+  assert.equal(parseItemHeadCover(payload, '42'), 'https://img.alicdn.com/item.jpg')
+  const requester = new FakeRequester(request => request.api === 'item.headinfo' ? payload : { data: {} })
+  const resolver = new PeerProfileResolver({ requester, myUserId: 'me' })
+  const updates = await resolver.resolveMissing([conv({ sessionId: '1', itemId: '42', peerUserId: 'buyer', peerAvatarUrl: AVATAR })])
+  assert.equal(updates[0]?.itemCoverUrl, 'https://img.alicdn.com/item.jpg')
+  assert.deepEqual(requester.calls.find(c => c.api === 'item.headinfo')?.data, { sessionId: '1', itemId: '42', sessionType: 1 })
 })
