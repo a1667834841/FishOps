@@ -21,7 +21,7 @@
 import { CommandTypes, EventTypes } from '@fishops/shared'
 import type { ChatEventKind, ChatMessage, Conversation, MessageCursor } from '../../../shared/types/chat'
 import type { ChatSocketStatus } from './websocket'
-import { correctMessageDirection } from './parser'
+import { normalizeUserId, correctMessageDirection } from './parser'
 import type { ChatSync, SyncConversationsOptions, SyncResult } from './sync'
 import type { ChatStore } from './store'
 import { isServerMessageId, type ChatReadTransport } from './read-transport'
@@ -180,7 +180,10 @@ export class ChatBridgeAdapter {
     const { requestId, type } = command
     switch (type) {
       case ChatBridgeCommands.CHAT_LIST_CONVERSATIONS: {
-        const conversations: Conversation[] = this.store.listConversations()
+        const account = normalizeUserId(this.myUserId)
+        const conversations: Conversation[] = this.store.listConversations().filter(conv =>
+          !account || normalizeUserId(conv.accountUserId) === account,
+        )
         return this.ok(requestId, type, { conversations })
       }
       case ChatBridgeCommands.CHAT_GET_MESSAGES: {
@@ -285,8 +288,8 @@ export class ChatBridgeAdapter {
    * 摄入一条实时 WebSocket 原始消息，成功时为每条消息排队一个「元数据事件」。
    * 事件负载刻意不含正文，避免日志/持久化泄露聊天内容。
    */
-  ingestRealtime(raw: unknown): SyncResult {
-    const result = this.sync.ingestRealtime(raw)
+  ingestRealtime(raw: unknown, window?: { from: number; to: number }): SyncResult {
+    const result = this.sync.ingestRealtime(raw, window)
     if (result.ok && result.added + result.updated > 0) {
       // 通过 store 反查本次消息不现实（可能重复），此处按事件类型通知即可。
       this.push(ChatBridgeEvents.CHAT_MESSAGE_INGESTED, {

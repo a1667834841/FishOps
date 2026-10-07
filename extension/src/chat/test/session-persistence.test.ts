@@ -127,3 +127,19 @@ test('会话 upsert：去重并按上限截断', async () => {
   assert.equal(loaded[0].sortIndex, 3)
   assert.ok(storage.data.has(CHAT_CONVERSATIONS_KEY))
 })
+
+test('商品封面跨 store 恢复仍按 sessionId 绑定，旧缓存可读取', async () => {
+  const persistence = new SessionChatPersistence(fakeStorage())
+  const store = new ChatStore(persistence)
+  store.upsertConversations([
+    { ...conv('a', 1), itemId: '11', itemCoverUrl: 'https://img.alicdn.com/a.jpg' },
+    { ...conv('b', 2), itemId: '22', itemCoverUrl: 'https://img.alicdn.com/b.jpg' },
+    conv('legacy', 3),
+  ])
+  await store.flush()
+  const restored = new ChatStore(persistence)
+  await restored.init()
+  assert.equal(restored.getConversation('a')?.itemCoverUrl, 'https://img.alicdn.com/a.jpg')
+  assert.equal(restored.getConversation('b')?.itemCoverUrl, 'https://img.alicdn.com/b.jpg')
+  assert.equal(restored.getConversation('legacy')?.itemCoverUrl, undefined)
+})

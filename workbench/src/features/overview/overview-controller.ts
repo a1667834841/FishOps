@@ -15,6 +15,7 @@ export interface OverviewSource<T> {
 }
 export type OverviewTask = Task | PublishTask
 export interface OverviewState {
+  productSource: 'feishu' | 'my_published'
   availability: 'ready' | 'unavailable'
   products: OverviewSource<number>
   conversations: OverviewSource<number>
@@ -43,7 +44,7 @@ export class OverviewController extends StateStore<OverviewState> {
   private sequence = { products: 0, conversations: 0, tasks: 0, publish: 0 }
   private timer: ReturnType<typeof setTimeout> | null = null
   constructor(api: BridgeApi | null) {
-    super({ availability: api ? 'ready' : 'unavailable', products: empty(),
+    super({ productSource: 'feishu', availability: api ? 'ready' : 'unavailable', products: empty(),
       conversations: empty(), tasks: empty(), publish: empty(), realtimeError: null })
     this.api = api
   }
@@ -66,18 +67,14 @@ export class OverviewController extends StateStore<OverviewState> {
     if (this.disposed || this.timer !== null) return
     // 立即使在途旧响应失效，避免事件后的状态被旧快照覆盖。
     for (const key of Object.keys(this.sequence) as Array<keyof typeof this.sequence>) this.sequence[key]++
-    this.timer = setTimeout(() => { this.timer = null; void this.refresh() }, 300)
+    this.timer = setTimeout(() => { this.timer = null; void this.refresh(false) }, 300)
   }
-  async refresh(): Promise<void> {
+  async refresh(forceRefresh = true): Promise<void> {
     if (!this.api || this.disposed) return
     if (this.timer !== null) { clearTimeout(this.timer); this.timer = null }
     const api = this.api
     await Promise.all([
-      this.load('products', async () => {
-        const result = await api.call(CommandTypes.PRODUCT_LIST, { limit: 1, source: 'all' })
-        if (!Number.isInteger(result.total) || result.total < 0) throw new Error('商品数量格式不正确')
-        return result.total
-      }),
+      this.load('products', () => this.loadProductCount(forceRefresh)),
       this.load('conversations', async () => {
         const result = await api.call(CommandTypes.CHAT_LIST_CONVERSATIONS, {})
         if (!Array.isArray(result.conversations) || result.conversations.some((item) =>
@@ -96,6 +93,54 @@ export class OverviewController extends StateStore<OverviewState> {
         return tasks
       }),
     ])
+  }
+  /** 点击未读入口时读取最新会话，选择最近未读；已全部读完返回 null。 */
+  async getLatestUnreadSessionId(): Promise<string | null> {
+    if (!this.api || this.disposed) return null
+    const result = await this.api.call(CommandTypes.CHAT_LIST_CONVERSATIONS, {})
+    if (this.disposed) return null
+    if (!Array.isArray(result.conversations) || result.conversations.some(c =>
+      !Number.isFinite(c.unreadCount) || c.unreadCount < 0)) throw new Error('会话数据格式不正确')
+    const unread = result.conversations.filter(c => c.unreadCount > 0)
+    if (unread.some(c => typeof c.sessionId !== 'string' || !c.sessionId ||
+      !Number.isFinite(c.lastMessageTime))) throw new Error('未读会话缺少定位信息')
+    return unread.sort((a, b) => b.lastMessageTime - a.lastMessageTime)[0]?.sessionId ?? null
+  }
+  /** 切换与商品库一致的来源，旧来源计数不得沿用。 */
+  async setProductSource(source: 'feishu' | 'my_published'): Promise<void> {
+    if (source === this.state.productSource) return
+    this.sequence.products++
+    this.patch({ productSource: source, products: empty() })
+    await this.refresh()
+  }
+  private async loadProductCount(forceRefresh: boolean): Promise<number> {
+    const source = this.state.productSource
+    let cursor: string | undefined
+    let targetTableId: string | undefined
+    let count = 0
+    const seen = new Set<string>()
+    for (let page = 0; page < 10000; page++) {
+      const result = await this.api!.call(CommandTypes.PRODUCT_CATALOG_QUERY, {
+        source, pageSize: 100,
+        ...(forceRefresh && !cursor ? { forceRefresh: true } : {}),
+        ...(cursor ? { cursor, targetTableId } : {}),
+      })
+      if (this.disposed || source !== this.state.productSource) throw new Error('商品来源已切换')
+      if (result.source !== source || !Array.isArray(result.products)) throw new Error('商品目录格式不正确')
+      if (result.total !== null) {
+        if (!Number.isInteger(result.total) || result.total! < 0) throw new Error('商品数量格式不正确')
+        return result.total!
+      }
+      // 飞书未返回 total 时遍历真实分页；不按 itemId 去重，保持每日表采集记录口径。
+      count += result.products.length
+      if (!result.hasMore) return count
+      if (!result.nextCursor || seen.has(result.nextCursor) || !result.targetTableId ||
+        (targetTableId && targetTableId !== result.targetTableId)) throw new Error('商品分页不完整，请刷新重试')
+      seen.add(result.nextCursor)
+      cursor = result.nextCursor
+      targetTableId = result.targetTableId
+    }
+    throw new Error('商品分页超出读取上限')
   }
   private validateTasks(tasks: OverviewTask[]): OverviewTask[] {
     if (!Array.isArray(tasks) || tasks.some((task) => !task || typeof task.id !== 'string' ||

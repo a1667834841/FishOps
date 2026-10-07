@@ -94,3 +94,11 @@
 - `.task-evidence/issue-36/conversation.jsonl.local`：本工作区执行对话副本。
 
 CI 在追加文档前已通过；补充验收提交只修改文档，源码与实际测试版本一致，复用此前本地全量回归、定向测试和真实部署结果。PR 更新后继续等待人工 Review，不自动 Merge。
+
+## 合并主分支前同步与复验
+
+用户明确授权合并后，GitHub 显示 PR 与最新主分支有冲突。仅同步一次 `origin/main`（`6596da4`），唯一冲突为控制器测试文件末尾双方追加不同回归；完整保留详情筛选与跨类型隔离两组用例。控制器业务代码自动合并，类型隔离和详情筛选意图均保留，无新增行为或无关重构。
+
+合并树在当前 worktree 执行定向命令 `node --import ./extension/src/capture/test/register.mjs --test extension/src/capture/test/controller.test.ts extension/src/capture/test/capture-runtime.test.ts`，92/92 通过、退出码 0，日志 `.task-evidence/issue-36/merge-targeted.log`。再运行 `npm run regression`，全部检查通过、退出码 0；报告 `.regression/2026-10-07T14-26-21-091Z-32211/report.json`，入口日志 `.task-evidence/issue-36/merge-regression.log`。该报告记录合并前 HEAD 且 dirty=true，因为同步树尚未提交；实际测试树与同步提交代码一致。`git diff --cached --check` 通过。
+
+真实 E2E 仍对应前述已部署版本；此次主分支同步后没有重跑真实 E2E，不能将历史真实结果包装为新合并树的真实验证。合并提交与 Issue 关闭状态在 GitHub 合并后核实，最终记录保存在当前工作区，不为记录结果直接写主分支。

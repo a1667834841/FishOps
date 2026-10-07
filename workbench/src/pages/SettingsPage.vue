@@ -13,6 +13,7 @@ import {
 } from '@phosphor-icons/vue'
 import Callout from '../components/Callout.vue'
 import PanelCard from '../components/PanelCard.vue'
+import BackupPanel from '../components/BackupPanel.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useBridgeController } from '../composables/useBridgeController'
 import { useBridgeStatus, type BridgeState } from '../composables/useBridgeStatus'
@@ -48,6 +49,7 @@ const ReplyRulesPanel = defineAsyncComponent(() => import('../components/chat/Re
 
 const theme = useTheme()
 const settingsSections = [
+  { id: 'backup', label: '数据文件', icon: PhTable },
   { id: 'appearance', label: '外观', icon: PhPalette },
   { id: 'ai', label: 'AI 配置', icon: PhCpu },
   { id: 'feishu', label: '飞书配置', icon: PhTable },
@@ -394,6 +396,7 @@ async function onTogglePause(): Promise<void> {
 
       <!-- 右侧白卡设置内容区 -->
       <div class="settings-content">
+        <BackupPanel v-if="activeSection === 'backup'" />
         <!-- 1. 外观 -->
         <PanelCard v-show="activeSection === 'appearance'" title="外观" description="选择界面主题，自动保存本地偏好。">
           <div class="appearance-card-body">

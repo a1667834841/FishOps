@@ -8,7 +8,7 @@ class FakeApi implements BridgeApi {
   calls: Array<{ type: string; payload: unknown }> = []
   handlers = new Map<string, Set<(payload: never) => void>>()
   responders = new Map<string, () => unknown | Promise<unknown>>([
-    [CommandTypes.PRODUCT_LIST, () => ({ total: 12, products: [] })],
+    [CommandTypes.PRODUCT_CATALOG_QUERY, () => ({ source: 'feishu', total: 12, products: [], hasMore: false })],
     [CommandTypes.CHAT_LIST_CONVERSATIONS, () => ({ conversations: [{ unreadCount: 0 }, { unreadCount: 4 }, { unreadCount: 1 }] })],
     [CommandTypes.TASK_LIST, () => ({ tasks: [task('a', 'capture', 'running', 10), task('b', 'analysis', 'failed', 30)] })],
     [CommandTypes.PUBLISH_LIST, () => ({ total: 1, tasks: [task('c', 'publish', 'waiting_confirmation', 20)] })],
@@ -57,7 +57,7 @@ test('部分源首次失败不冒充零，后续刷新失败保留已成功数�
   assert.equal(taskCounts(controller.getState()), null)
   assert.equal(controller.getState().conversations.value, 2)
   const products = controller.getState().products
-  api.responders.set(CommandTypes.PRODUCT_LIST, () => { throw new Error('读取失败') })
+  api.responders.set(CommandTypes.PRODUCT_CATALOG_QUERY, () => { throw new Error('读取失败') })
   await controller.refresh()
   assert.equal(controller.getState().products.value, 12)
   assert.equal(controller.getState().products.updatedAt, products.updatedAt)
@@ -78,19 +78,19 @@ test('发布结果被截断时不统计全量任务', async () => {
 test('迟到请求不会覆盖新响应，卸载后在途响应不写状态', async () => {
   const api = new FakeApi()
   const old = deferred<unknown>()
-  api.responders.set(CommandTypes.PRODUCT_LIST, () => old.promise)
+  api.responders.set(CommandTypes.PRODUCT_CATALOG_QUERY, () => old.promise)
   const controller = new OverviewController(api)
   const first = controller.refresh()
-  api.responders.set(CommandTypes.PRODUCT_LIST, () => ({ total: 99, products: [] }))
+  api.responders.set(CommandTypes.PRODUCT_CATALOG_QUERY, () => ({ source: 'feishu', total: 99, products: [], hasMore: false }))
   await controller.refresh()
-  old.resolve({ total: 1, products: [] }); await first
+  old.resolve({ source: 'feishu', total: 1, products: [], hasMore: false }); await first
   assert.equal(controller.getState().products.value, 99)
   const late = deferred<unknown>()
-  api.responders.set(CommandTypes.PRODUCT_LIST, () => late.promise)
+  api.responders.set(CommandTypes.PRODUCT_CATALOG_QUERY, () => late.promise)
   const final = controller.refresh()
   controller.dispose()
   const snapshot = controller.getState()
-  late.resolve({ total: 100, products: [] }); await final
+  late.resolve({ source: 'feishu', total: 100, products: [], hasMore: false }); await final
   assert.equal(controller.getState(), snapshot)
 })
 
@@ -122,4 +122,59 @@ test('非扩展环境无请求且指标不可用', async () => {
   assert.equal(controller.getState().products.value, null)
   assert.equal(taskCounts(controller.getState()), null)
   controller.dispose()
+})
+
+
+test('商品计数与目录来源一致，不读取本地采集库；未知 total 遍历完整分页', async () => {
+  const api = new FakeApi()
+  let pages = 0
+  api.responders.set(CommandTypes.PRODUCT_CATALOG_QUERY, () => ++pages === 1
+    ? { source: 'feishu', total: null, products: [{ recordId: 'a' }], hasMore: true, nextCursor: 'next', targetTableId: 'scope' }
+    : { source: 'feishu', total: null, products: [{ recordId: 'b' }, { recordId: 'c' }], hasMore: false, targetTableId: 'scope' })
+  const controller = new OverviewController(api)
+  await controller.refresh()
+  assert.equal(controller.getState().products.value, 3)
+  const calls = api.calls.filter(call => call.type === CommandTypes.PRODUCT_CATALOG_QUERY)
+  assert.deepEqual(calls[1].payload, { source: 'feishu', pageSize: 100, cursor: 'next', targetTableId: 'scope' })
+  assert.ok(!api.calls.some(call => call.type === CommandTypes.PRODUCT_LIST))
+  controller.dispose()
+})
+
+test('分页缺少或循环游标时计数失败，不显示不完整总数', async () => {
+  const api = new FakeApi()
+  api.responders.set(CommandTypes.PRODUCT_CATALOG_QUERY, () => ({ source: 'feishu', total: null, products: [], hasMore: true }))
+  const controller = new OverviewController(api)
+  await controller.refresh()
+  assert.equal(controller.getState().products.value, null)
+  assert.ok(controller.getState().products.error)
+  controller.dispose()
+})
+
+test('未读入口从最新快照选择最近未读会话；无未读不选择其他会话', async () => {
+  const api = new FakeApi()
+  api.responders.set(CommandTypes.CHAT_LIST_CONVERSATIONS, () => ({ conversations: [
+    { sessionId: 'read', unreadCount: 0, lastMessageTime: 300 },
+    { sessionId: 'older', unreadCount: 2, lastMessageTime: 100 },
+    { sessionId: 'latest', unreadCount: 1, lastMessageTime: 200 },
+  ] }))
+  const controller = new OverviewController(api)
+  assert.equal(await controller.getLatestUnreadSessionId(), 'latest')
+  api.responders.set(CommandTypes.CHAT_LIST_CONVERSATIONS, () => ({ conversations: [
+    { sessionId: 'read', unreadCount: 0, lastMessageTime: 300 },
+  ] }))
+  assert.equal(await controller.getLatestUnreadSessionId(), null)
+  controller.dispose()
+})
+
+test('未读定位拒绝不完整数据；在途请求完成后已卸载不再导航', async () => {
+  const api = new FakeApi()
+  api.responders.set(CommandTypes.CHAT_LIST_CONVERSATIONS, () => ({ conversations: [{ unreadCount: 1 }] }))
+  const controller = new OverviewController(api)
+  await assert.rejects(controller.getLatestUnreadSessionId(), /定位信息/)
+  const pending = deferred<unknown>()
+  api.responders.set(CommandTypes.CHAT_LIST_CONVERSATIONS, () => pending.promise)
+  const request = controller.getLatestUnreadSessionId()
+  controller.dispose()
+  pending.resolve({ conversations: [{ sessionId: 'latest', unreadCount: 1, lastMessageTime: 200 }] })
+  assert.equal(await request, null)
 })

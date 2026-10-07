@@ -137,6 +137,36 @@ export class IndexedDbProductRepository implements ProductRepository {
     return this.withStore(PRODUCT_STORE, 'readonly', (store) => store.count())
   }
 
+  async exportData(): Promise<{ products: Product[]; snapshots: ProductSnapshot[] }> {
+    const db = await this.getDb()
+    const tx = db.transaction([PRODUCT_STORE, SNAPSHOT_STORE], 'readonly')
+    // 同一事务读取两个 store，避免导出期间商品与快照跨时刻。
+    const products = requestToPromise(tx.objectStore(PRODUCT_STORE).getAll() as IDBRequest<Product[]>)
+    const snapshots = requestToPromise(tx.objectStore(SNAPSHOT_STORE).getAll() as IDBRequest<ProductSnapshot[]>)
+    return { products: await products, snapshots: await snapshots }
+  }
+  async importData(data: { products: Product[]; snapshots: ProductSnapshot[] }): Promise<void> {
+    const db = await this.getDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([PRODUCT_STORE, SNAPSHOT_STORE], 'readwrite')
+      const products = tx.objectStore(PRODUCT_STORE)
+      const snapshots = tx.objectStore(SNAPSHOT_STORE)
+      // 比较与写入在同一事务内，磁盘或配额错误会回滚本次商品恢复。
+      for (const product of data.products) {
+        const request = products.get(product.itemId) as IDBRequest<Product | undefined>
+        request.onsuccess = () => {
+          if (!request.result || request.result.captureTimeMs < product.captureTimeMs) products.put(product)
+        }
+      }
+      for (const snapshot of data.snapshots) {
+        const request = snapshots.get(snapshot.id)
+        request.onsuccess = () => { if (!request.result) snapshots.put(snapshot) }
+      }
+      tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error ?? new Error('商品文件恢复失败'))
+      tx.onerror = () => reject(tx.error)
+    })
+  }
   async clear(): Promise<void> {
     await this.withStore(PRODUCT_STORE, 'readwrite', (store) => store.clear() as IDBRequest<undefined>)
     await this.withStore(SNAPSHOT_STORE, 'readwrite', (store) => store.clear() as IDBRequest<undefined>)

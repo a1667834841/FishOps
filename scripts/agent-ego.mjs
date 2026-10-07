@@ -6,6 +6,8 @@ let previous
 try { previous = JSON.parse(await fs.readFile(agentInput.statePath, 'utf8')) } catch (error) {
   if (error.code !== 'ENOENT') throw new Error('测试空间记录无法读取，请检查本地状态文件')
 }
+// 完整回归指定的空间保持活动，避免部署切到旧空间或提前结束后续验收。
+if (agentInput.spaceId) previous = { spaceId: agentInput.spaceId, finished: false }
 // 配置未完成时续用同一个测试空间，避免重试时新建重复任务。
 const task = previous
   ? previous.finished ? await claimTaskSpace(previous.spaceId) : await taskSpace(previous.spaceId)
@@ -87,7 +89,7 @@ const status = await page.evaluate(async config => {
 console.log(`FISHOPS: 配置状态：AI=${status.aiConfigured}，飞书=${status.feishuConfigured}，AI 域名权限=${status.aiPermissionGranted}`)
 if (config.ai && !status.aiPermissionGranted) throw new Error('AI 接口域名权限验证失败')
 console.log('FISHOPS: 请确认闲鱼网页版已登录，并刷新现有闲鱼页面使新插件生效；本命令不自动发送消息或执行远端写入。')
-await task.finish({ keep: [page.label] })
-await fs.writeFile(agentInput.statePath, JSON.stringify({ spaceId: task.spaceId, finished: true }))
+if (!agentInput.spaceId) await task.finish({ keep: [page.label] })
+await fs.writeFile(agentInput.statePath, JSON.stringify({ spaceId: task.spaceId, finished: !agentInput.spaceId }))
 console.log('FISHOPS: SETUP_COMPLETED：插件已重载，配置与权限状态已验证。')
 }

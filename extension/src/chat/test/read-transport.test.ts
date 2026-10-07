@@ -28,3 +28,16 @@ test('已读 transport 只发送固定路由，使用 code 200 关联响应', as
   assert.equal((await pending).code, 200)
   transport.dispose()
 })
+
+test('默认已读请求沿用平台数字 mid 和空格标志，避免响应关联超时', async () => {
+  const socket = new Socket()
+  const transport = new ChatReadSocketTransport({ getSocket: () => socket })
+  const pending = transport.markRead('abc', 'server-id')
+  const request = JSON.parse(socket.sent[0])
+  const mid = request.headers.mid
+  // 即使格式断言失败，也释放请求和计时器，防止红态测试挂起。
+  transport.handleMessage(JSON.stringify({ code: 200, headers: { mid } }))
+  await pending
+  transport.dispose()
+  assert.match(mid, /^\d+ 0$/)
+})

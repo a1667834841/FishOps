@@ -1,12 +1,13 @@
 /**
- * 会话对方头像补齐 —— MAIN world 只读读取模块。
+ * 会话身份与商品封面补齐 —— MAIN world 只读读取模块。
  *
  * 该模块只导出一个**自包含**函数 {@link fetchPeerProfileInPage}，由 background 通过
  * `chrome.scripting.executeScript({ world: 'MAIN', func })` 注入 goofish 页面执行。
  * 它在页面上下文复用官方 mtop SDK（`window.lib.mtop.request`，与项目
- * `background/direct-publish-page.ts` 同一条官方 SDK 路径），只读调用两条已实测接口：
+ * `background/direct-publish-page.ts` 同一条官方 SDK 路径），只读调用三条已实测接口：
  * - `mtop.taobao.idlemessage.pc.session.sync`（v3.0）
  * - `mtop.taobao.idlemessage.pc.user.query`（v4.0）
+ * - `mtop.idle.trade.pc.message.headinfo`（v1.0，会话商品头信息）
  *
  * 口径依据（ego-browser 只读捕获页面自身请求 + SDK 实测，未导出个人数据）：
  * - 普通单聊会话 `sessionTypes` 为 `[1]`；`[3]` 只会返回系统会话（伪 UID，不可用）；
@@ -39,6 +40,7 @@ export async function fetchPeerProfileInPage(request: PeerProfileRequest): Promi
   const configs: Record<string, { api: string; v: string }> = {
     'session.sync': { api: 'mtop.taobao.idlemessage.pc.session.sync', v: '3.0' },
     'user.query': { api: 'mtop.taobao.idlemessage.pc.user.query', v: '4.0' },
+    'item.headinfo': { api: 'mtop.idle.trade.pc.message.headinfo', v: '1.0' },
   }
 
   const globalObject = globalThis as {
@@ -94,6 +96,7 @@ export function isPeerProfilePageResult(value: unknown): value is PeerProfilePag
 
 /** 公开接口名到 mtop 接口的映射（供接线方与测试使用）。 */
 export const PEER_PROFILE_API_MAP: Record<PeerProfileApi, { api: string; v: string }> = {
+  'item.headinfo': { api: 'mtop.idle.trade.pc.message.headinfo', v: '1.0' },
   'session.sync': { api: 'mtop.taobao.idlemessage.pc.session.sync', v: '3.0' },
   'user.query': { api: 'mtop.taobao.idlemessage.pc.user.query', v: '4.0' },
 }

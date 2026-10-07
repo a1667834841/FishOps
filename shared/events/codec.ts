@@ -353,6 +353,9 @@ export function isChatSocketEventPayload(value: unknown): value is ChatSocketEve
   const event = value['event']
   if (event !== 'message' && event !== 'open' && event !== 'close' && event !== 'error') return false
   if (typeof value['at'] !== 'number' || !Number.isFinite(value['at'])) return false
+  if (value['connectedAt'] !== undefined &&
+    (typeof value['connectedAt'] !== 'number' || !Number.isFinite(value['connectedAt']) ||
+      value['connectedAt'] < 0 || value['connectedAt'] > value['at'])) return false
   if (value['raw'] !== undefined) {
     if (typeof value['raw'] !== 'string') return false
     if (value['raw'].length > CHAT_SOCKET_MAX_RAW_LENGTH) return false

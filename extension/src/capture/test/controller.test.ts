@@ -64,8 +64,10 @@ function makeController(options: {
   random?: () => number
   minIntervalMs?: number
   intervalJitterMs?: number
+  syncProducts?: import('../controller').CaptureControllerDeps['syncProducts']
 } = {}) {
-  const tasks = new TaskManager({ store: new MemoryTaskStore() })
+  const store = new MemoryTaskStore()
+  const tasks = new TaskManager({ store })
   const repository = new MemoryProductRepository()
   const platform = new MockPlatform()
   const clock = makeClock()
@@ -73,6 +75,7 @@ function makeController(options: {
     tasks,
     platform,
     repository,
+    syncProducts: options.syncProducts,
     now: clock.now,
     sleep: clock.sleep,
     // 默认固定随机源，便于对搜索节流做确定性断言。
@@ -81,7 +84,7 @@ function makeController(options: {
     ...(options.intervalJitterMs === undefined ? {} : { intervalJitterMs: options.intervalJitterMs }),
     ...(options.getCurrentUserId ? { getCurrentUserId: options.getCurrentUserId } : {}),
   })
-  return { tasks, repository, platform, clock, controller }
+  return { store, tasks, repository, platform, clock, controller }
 }
 
 test('同一采集任务跨小时保留同商品多条快照，同小时重复跳过', async () => {
@@ -894,4 +897,57 @@ test('详情筛除商品不占用去重标记，跨页再次符合条件时可�
   assert.equal((await repository.getSnapshots('retry-item')).length, 1)
   assert.equal(checkpointOf(done).capturedRecords!.length, 1)
   assert.deepEqual(synced.map((product) => [product.itemId, product.wantCnt]), [['retry-item', 6]])
+})
+
+test('控制器拒绝跨类型操作：原任务不变且无采集副作用', async (t) => {
+  for (const type of ['analysis', 'publish'] as const) {
+    for (const status of ['pending', 'running', 'paused'] as const) {
+      for (const action of ['start', 'resume', 'pause', 'cancel'] as const) {
+        await t.test(`${type}/${status}/${action}`, async () => {
+          let syncCalls = 0
+          const { tasks, repository, platform, controller } = makeController({
+            syncProducts: async () => { syncCalls += 1; return { createdCount: 0, skippedCount: 0 } },
+          })
+          const task = await tasks.create({ type, payload: { ruleId: 'synthetic' }, meta: { marker: '保留' } })
+          if (status !== 'pending') await tasks.start(task.id)
+          if (status === 'paused') await tasks.pause(task.id)
+          if (status !== 'pending') await tasks.updateProgress(task.id, 37)
+          const before = await tasks.getById(task.id)
+          const changes: Task[] = []
+          tasks.subscribe((event) => changes.push(event.task))
+          // 再次调用仍应拒绝，且不能通过旧任务的状态走幂等成功路径。
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            await assert.rejects(controller[action](task.id), /任务类型不匹配.*capture/)
+          }
+          assert.deepEqual(await tasks.getById(task.id), before)
+          assert.deepEqual(changes, [])
+          assert.deepEqual(platform.searchCalls, [])
+          assert.deepEqual(platform.detailCalls, [])
+          assert.equal(syncCalls, 0)
+          assert.equal(await repository.count(), 0)
+        })
+      }
+    }
+  }
+})
+
+test('队列出队前复验任务类型，跳过错误类型并继续正常调度', async () => {
+  const { store, tasks, platform, controller } = makeController()
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  platform.hooks.set(1, () => gate)
+  const first = await controller.create({ keyword: 'first', pages: 1 })
+  await controller.start(first.id)
+  await waitFor(() => platform.searchCalls.length === 1)
+  const queued = await controller.create({ keyword: 'wrong-type', pages: 1 })
+  await controller.start(queued.id)
+  // 模拟队列等待期间存储返回了非采集任务；不得流转状态或执行搜索。
+  const replacement: Task = { ...(await tasks.getById(queued.id))!, type: 'analysis', result: { summary: '保留结果' } }
+  await store.save(replacement)
+  const next = await controller.create({ keyword: 'next', pages: 1 })
+  await controller.start(next.id)
+  release()
+  await waitForTask(controller, next.id, (task) => task.status === 'completed')
+  assert.deepEqual(await tasks.getById(queued.id), replacement)
+  assert.deepEqual(platform.searchKeywords, ['first', 'next'])
 })

@@ -155,6 +155,14 @@ function createRunState(): RunState {
   return state
 }
 
+/** 采集操作收到其他类型的任务时抛出，调用方应按无效入参处理。 */
+export class CaptureTaskTypeError extends Error {
+  constructor(task: Task) {
+    super(`任务类型不匹配：采集操作需要 capture，实际为 ${task.type}（${task.id}）`)
+    this.name = 'CaptureTaskTypeError'
+  }
+}
+
 export class CaptureController {
   private readonly syncProducts?: CaptureControllerDeps['syncProducts']
   private readonly tasks: TaskManager
@@ -241,10 +249,10 @@ export class CaptureController {
   async start(id: string): Promise<Task> {
     const task = await this.requireTask(id)
     if (task.status === 'pending' || task.status === 'paused') {
-      this.enqueue(id)
+      this.enqueue(task)
     } else if (task.status === 'running' && this.activeId !== id) {
       // 已处于 running 但未被本控制器执行（例如 adopt / 重启残留）：纳入队列统一调度。
-      this.enqueue(id)
+      this.enqueue(task)
     }
     return this.requireTask(id)
   }
@@ -256,12 +264,12 @@ export class CaptureController {
   async resume(id: string): Promise<Task> {
     const task = await this.requireTask(id)
     if (task.status === 'running') {
-      if (this.activeId !== id) this.enqueue(id)
+      if (this.activeId !== id) this.enqueue(task)
       return task
     }
     if (task.status !== 'paused') return task
     const requeued = await this.tasks.requeue(id)
-    this.enqueue(id)
+    this.enqueue(task)
     return requeued
   }
 
@@ -304,17 +312,21 @@ export class CaptureController {
   async requeuePending(): Promise<void> {
     const pending = await this.tasks.list({ status: 'pending', type: 'capture' })
     pending.sort((a, b) => a.createdAt - b.createdAt)
-    for (const task of pending) this.enqueue(task.id)
+    for (const task of pending) this.enqueue(task)
   }
 
   private async requireTask(id: string): Promise<Task> {
     const task = await this.tasks.getById(id)
     if (!task) throw new TaskNotFoundError(id)
+    // 采集与分析共用存储，必须在任何状态写入或队列操作之前隔离任务类型。
+    if (task.type !== 'capture') throw new CaptureTaskTypeError(task)
     return task
   }
 
   /** 把任务加入统一队列；已在队列中的任务不重复入队。 */
-  private enqueue(id: string): void {
+  private enqueue(task: Task): void {
+    if (task.type !== 'capture') throw new CaptureTaskTypeError(task)
+    const id = task.id
     if (this.queued.has(id)) return
     this.queued.add(id)
     this.queue.push(id)
@@ -349,7 +361,8 @@ export class CaptureController {
   /** 执行一个已出队的任务：按当前状态流转到 running 后运行整轮。 */
   private async execute(id: string): Promise<void> {
     let task = await this.tasks.getById(id)
-    if (!task) return
+    // 出队时重新读取并复验，避免等待期间存储变化后执行其他类型任务。
+    if (!task || task.type !== 'capture') return
     if (task.status === 'pending') {
       task = await this.tasks.start(id)
     } else if (task.status === 'paused') {
@@ -415,7 +428,7 @@ export class CaptureController {
   private async shouldContinue(id: string, run: RunState): Promise<boolean> {
     if (run.aborted) return false
     const task = await this.tasks.getById(id)
-    return task !== null && task.status === 'running'
+    return task !== null && task.type === 'capture' && task.status === 'running'
   }
 
   /**
@@ -733,7 +746,7 @@ export class CaptureController {
     } catch (error) {
       // 仅在任务仍处于 running 且未被新一轮接管时才落 failed，避免覆盖暂停 / 取消状态。
       const current = await this.tasks.getById(id).catch(() => null)
-      if (current && owns() && current.status === 'running') {
+      if (current && current.type === 'capture' && owns() && current.status === 'running') {
         return await this.tasks.fail(id, limitText(errorMessage(error), CAPTURE_LIMITS.taskErrorMaxLength))
       }
       if (current) return current

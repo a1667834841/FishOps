@@ -387,6 +387,7 @@ interface BuildMessageInput {
   itemTitle?: string
   createAt?: number
   readStatus?: number
+  platform?: unknown
   source: ChatMessage['source']
   myUserId?: string
 }
@@ -419,6 +420,7 @@ function makeMessage(input: BuildMessageInput): ChatMessage {
     itemTitle: input.itemTitle && input.itemTitle.length > 0 ? input.itemTitle : undefined,
     createAt: input.createAt ?? 0,
     readStatus: input.readStatus,
+    ...(typeof input.platform === 'string' && input.platform.trim() ? { platform: input.platform.trim().toLowerCase() } : {}),
     source: input.source,
   }
 }
@@ -565,6 +567,7 @@ function handleObjectData(data: Record<string, unknown>, ctx: ParseContext): { m
     content: typeof chatInfo['reminderContent'] === 'string' ? chatInfo['reminderContent'] : '',
     itemId: extractUrlParam(reminderUrl, 'itemId') ?? '',
     createAt: typeof one['5'] === 'number' ? one['5'] : 0,
+    platform: chatInfo['_platform'],
     source: 'realtime',
     myUserId: ctx.myUserId,
   })
@@ -642,6 +645,7 @@ function handleStringData(base64Data: string, ctx: ParseContext): { message?: Ch
     imageUrl,
     itemId: extractUrlParam(reminderUrl, 'itemId') ?? '',
     createAt: typeof chatData['5'] === 'number' ? chatData['5'] : 0,
+    platform: contentData['_platform'],
     source: 'realtime',
     myUserId: ctx.myUserId,
   })
@@ -699,6 +703,7 @@ function parseRealtimeBody(body: Record<string, unknown>, ctx: ParseContext): Pa
     imageUrl: decoded.imageUrl,
     itemId: extractUrlParam(reminderUrl, 'itemId') ?? '',
     createAt: typeof body['createAt'] === 'number' ? body['createAt'] : 0,
+    platform: extension['_platform'],
     source: 'realtime',
     myUserId: ctx.myUserId,
   })

@@ -371,3 +371,22 @@ test('CHAT_SYNC_HISTORY：透传 cursor 并返回 nextCursor/hasMore', async () 
   assert.equal(r2.nextCursor, undefined)
   assert.deepEqual(anchors, [INITIAL_CURSOR, 1500], '第二跳必须带上上一页返回的游标')
 })
+
+test('会话列表仅暴露当前账号资料，旧缓存待重新同步，封面通过 Bridge 传递', async () => {
+  const store = new ChatStore()
+  const sync = new ChatSync({ store }, { myUserId: 'old' })
+  const adapter = new ChatBridgeAdapter({ store, sync, myUserId: 'old' })
+  const base: Conversation = { sessionId: 'a', cid: 'a@goofish', peerUserName: '买家',
+    lastMessage: '', lastMessageTime: 1, sortIndex: 1, unreadCount: 0, visible: true }
+  store.upsertConversations([{ ...base, accountUserId: 'old', itemId: '11', itemCoverUrl: 'https://img.alicdn.com/a.jpg' },
+    { ...base, sessionId: 'legacy' }, { ...base, sessionId: 'b', accountUserId: 'new', itemId: '22', itemCoverUrl: 'https://img.alicdn.com/b.jpg' }])
+  const command = { kind: 'command' as const, requestId: 'list-account', type: 'CHAT_LIST_CONVERSATIONS' }
+  const first = await adapter.handleCommand(command)
+  assert.deepEqual((first.result as { conversations: Conversation[] }).conversations.map(c => c.sessionId), ['a'])
+  sync.setMyUserId('new')
+  adapter.setMyUserId('new')
+  const second = await adapter.handleCommand(command)
+  const rows = (second.result as { conversations: Conversation[] }).conversations
+  assert.deepEqual(rows.map(c => c.sessionId), ['b'])
+  assert.equal(rows[0]?.itemCoverUrl, 'https://img.alicdn.com/b.jpg')
+})

@@ -235,3 +235,28 @@ test('头像字段：识别真实 logo 字段，且不把商品图当头像', ()
   assert.equal(extractAvatarUrl([{ picUrl: 'https://img.alicdn.com/bao/uploaded/i3/x-0-fleamarket.jpg' }]), undefined)
   assert.equal(extractAvatarUrl([{ itemMainPic: 'https://img.alicdn.com/bao/uploaded/i3/x-0-xy_item.jpg' }]), undefined)
 })
+
+test('实时解析保留平台来源，缺失来源不猜测', () => {
+  for (const platform of ['web', 'android', undefined, 42]) {
+    const result = parseWebSocketMessage(JSON.stringify({ body: {
+      extension: { senderUserId: 'me', sessionId: 'peer', _platform: platform },
+      content: { custom: { contentType: 1, summary: '测试' } },
+      messageId: 'platform', createAt: 100,
+    } }), { myUserId: 'me' })
+    assert.equal(result.ok, true)
+    if (result.ok) assert.equal((result.event.messages[0] as { platform?: string }).platform,
+      typeof platform === 'string' ? platform : undefined)
+  }
+})
+
+test('sync 推送对象与 base64 消息都保留 _platform', () => {
+  const item = (platform: string) => ({ '1': {
+    '10': { senderUserId: 'me', reminderContent: '测试', reminderUrl: 'https://x?sid=peer', _platform: platform },
+    '2': 'peer@goofish', '3': platform, '5': 200,
+  } })
+  const result = parseWebSocketMessage(JSON.stringify({ body: { syncPushPackage: { data: [
+    { data: item('android') }, { data: b64(JSON.stringify(item('web'))) },
+  ] } } }), { myUserId: 'me' })
+  assert.equal(result.ok, true)
+  if (result.ok) assert.deepEqual(result.event.messages.map(m => [m.platform, m.direction]), [['android', 'out'], ['web', 'out']])
+})

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import BackupNotice from '../components/BackupNotice.vue'
 import {
   PhArrowClockwise as ArrowClockwise,
   PhArrowRight as ArrowRight,
@@ -23,15 +24,36 @@ import {
   type OverviewTask,
 } from '../features/overview/overview-controller'
 
-const emit = defineEmits<{ navigate: [page: PageId] }>()
+const emit = defineEmits<{ navigate: [page: PageId, sessionId?: string] }>()
 
 const { state, controller } = useBridgeController<OverviewState, OverviewController>({
   events: OVERVIEW_EVENTS,
   create: (api) => new OverviewController(api),
 })
 
+const openingUnread = ref(false)
+const unreadNavigationError = ref<string | null>(null)
+let active = true
+onBeforeUnmount(() => { active = false })
+
+async function navigateMetric(metric: { id: string; target: PageId }): Promise<void> {
+  if (metric.id !== 'conversations') { emit('navigate', metric.target); return }
+  if (openingUnread.value) return
+  openingUnread.value = true
+  unreadNavigationError.value = null
+  try {
+    const id = await controller.getLatestUnreadSessionId()
+    if (active) emit('navigate', 'chat', id ?? undefined)
+  } catch {
+    if (active) unreadNavigationError.value = '无法定位未读会话，请刷新后重试。'
+  } finally {
+    if (active) openingUnread.value = false
+  }
+}
+
 const counts = computed(() => taskCounts(state.value))
-const recent = computed(() => overviewTasks(state.value).slice(0, 8))
+const showAllTasks = ref(false)
+const recent = computed(() => showAllTasks.value ? overviewTasks(state.value) : overviewTasks(state.value).slice(0, 8))
 const refreshing = computed(() =>
   [state.value.products, state.value.conversations, state.value.tasks, state.value.publish].some(
     (source) => source.loading,
@@ -177,6 +199,11 @@ function taskStatusClass(status: string): string {
         <span class="view-sub">商品资产、未读会话、任务流水线与运行环境状态看板</span>
       </div>
       <div class="view-tools">
+        <select class="input" aria-label="概览商品来源" :value="state.productSource"
+          @change="controller.setProductSource(($event.target as HTMLSelectElement).value as 'feishu' | 'my_published')">
+          <option value="feishu">飞书采集的商品库</option>
+          <option value="my_published">自己发布的商品库</option>
+        </select>
         <button
           type="button"
           class="btn"
@@ -198,6 +225,7 @@ function taskStatusClass(status: string): string {
       </div>
     </div>
 
+    <BackupNotice @settings="emit('navigate', 'settings')" />
     <!-- 2. 四指标卡片网格 -->
     <div class="metrics-grid">
       <button
@@ -205,7 +233,9 @@ function taskStatusClass(status: string): string {
         :key="metric.id"
         type="button"
         class="metric-card"
-        @click="emit('navigate', metric.target)"
+        :disabled="metric.id === 'conversations' && openingUnread"
+        :aria-busy="metric.id === 'conversations' && openingUnread ? 'true' : undefined"
+        @click="navigateMetric(metric)"
       >
         <div class="metric-header">
           <span class="metric-label">{{ metric.label }}</span>
@@ -228,6 +258,8 @@ function taskStatusClass(status: string): string {
       </button>
     </div>
 
+    <p v-if="unreadNavigationError" class="callout callout--error" role="alert">{{ unreadNavigationError }}</p>
+
     <!-- 3. 下方分栏布局：左侧近期任务，右侧运行状态与快捷入口 -->
     <div class="dashboard-split">
       <!-- 近期任务卡片 -->
@@ -240,9 +272,9 @@ function taskStatusClass(status: string): string {
           <button
             type="button"
             class="btn btn-sm"
-            @click="emit('navigate', 'collect')"
+            @click="showAllTasks = !showAllTasks"
           >
-            查看全部任务
+            {{ showAllTasks ? '收起任务列表' : '查看全部任务' }}
           </button>
         </div>
 

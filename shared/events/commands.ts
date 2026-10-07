@@ -68,6 +68,16 @@ import type { PlatformErrorCategory } from './protocol'
 
 /** 命令类型常量。 */
 export const CommandTypes = {
+  /** 通用固定间隔调度：计划、启停、执行记录与代码注册执行器查询。 */
+  SCHEDULE_LIST: 'SCHEDULE_LIST',
+  SCHEDULE_SAVE: 'SCHEDULE_SAVE',
+  SCHEDULE_SET_ENABLED: 'SCHEDULE_SET_ENABLED',
+  SCHEDULE_RUN_LIST: 'SCHEDULE_RUN_LIST',
+  SCHEDULE_EXECUTOR_LIST: 'SCHEDULE_EXECUTOR_LIST',
+  /** 独立文件备份的状态、立即保存和合并恢复。 */
+  DATA_BACKUP_STATUS: 'DATA_BACKUP_STATUS',
+  DATA_BACKUP_SAVE: 'DATA_BACKUP_SAVE',
+  DATA_BACKUP_RESTORE: 'DATA_BACKUP_RESTORE',
   /** 连通性探测，用于验证 Workbench ↔ Extension 链路。 */
   PING: 'PING',
   /** 声明订阅的事件类型（页面侧通道使用；扩展内页走长连接 Port）。 */
@@ -410,6 +420,8 @@ export type ChatSocketEventName = 'message' | 'open' | 'close' | 'error'
  * 该负载只用于内存内解析，background 不会把它写日志或透传给 Workbench。
  */
 export interface ChatSocketEventPayload {
+  /** 宿主首次观察当前连接的时间；跨 Service Worker 唤醒保持，用于拒绝连接前补推。 */
+  connectedAt?: number
   event: ChatSocketEventName
   /** 原始 WebSocket 文本（仅 message）；超限会被拒绝。 */
   raw?: string
@@ -1063,6 +1075,14 @@ export {
 
 /** 命令 → 负载 映射。 */
 export interface CommandPayloadMap {
+  [CommandTypes.SCHEDULE_LIST]: Record<string, never>
+  [CommandTypes.SCHEDULE_SAVE]: import('../types/scheduler').ScheduleInput
+  [CommandTypes.SCHEDULE_SET_ENABLED]: { id: string; enabled: boolean }
+  [CommandTypes.SCHEDULE_RUN_LIST]: { scheduleId: string }
+  [CommandTypes.SCHEDULE_EXECUTOR_LIST]: Record<string, never>
+  [CommandTypes.DATA_BACKUP_STATUS]: Record<string, never>
+  [CommandTypes.DATA_BACKUP_SAVE]: Record<string, never>
+  [CommandTypes.DATA_BACKUP_RESTORE]: { content: string }
   [CommandTypes.PING]: PingPayload
   [CommandTypes.SUBSCRIBE]: SubscribePayload
   [CommandTypes.UNSUBSCRIBE]: UnsubscribePayload
@@ -1129,6 +1149,14 @@ export interface CommandPayloadMap {
 
 /** 命令 → 结果 映射。 */
 export interface CommandResultMap {
+  [CommandTypes.SCHEDULE_LIST]: import('../types/scheduler').Schedule[]
+  [CommandTypes.SCHEDULE_SAVE]: import('../types/scheduler').Schedule
+  [CommandTypes.SCHEDULE_SET_ENABLED]: import('../types/scheduler').Schedule
+  [CommandTypes.SCHEDULE_RUN_LIST]: import('../types/scheduler').ScheduleRun[]
+  [CommandTypes.SCHEDULE_EXECUTOR_LIST]: string[]
+  [CommandTypes.DATA_BACKUP_STATUS]: import('../persistence/backup-status').BackupStatus
+  [CommandTypes.DATA_BACKUP_SAVE]: import('../persistence/backup-status').BackupStatus
+  [CommandTypes.DATA_BACKUP_RESTORE]: { products: number; tasks: number }
   [CommandTypes.PING]: PingResult
   [CommandTypes.SUBSCRIBE]: SubscribeResult
   [CommandTypes.UNSUBSCRIBE]: UnsubscribeResult

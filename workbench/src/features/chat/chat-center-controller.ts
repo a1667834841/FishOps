@@ -521,7 +521,7 @@ export class ChatCenterController {
         const result = await api.call(CommandTypes.CHAT_LIST_CONVERSATIONS, {})
         if (this.disposed || this.state.selectedId !== sessionId || this.markReadGeneration !== generation) return
         const items = parseConversations(result)
-        if (items) this.patch({ conversations: { phase: 'ready', items, error: null, refreshing: false } })
+        if (items) this.applyConversationList(items)
       } catch (error) {
         if (this.disposed || this.state.selectedId !== sessionId || this.markReadGeneration !== generation) return
         this.patch({ markReadError: describeError(error) })
@@ -645,6 +645,24 @@ export class ChatCenterController {
     }
   }
 
+  /** 会话被账号过滤或归属发生变化时，清除选择与在途消息，避免顶部沿用旧身份。 */
+  private applyConversationList(items: Conversation[]): void {
+    const selected = this.state.selectedId
+    const previous = this.state.conversations.items.find(item => item.sessionId === selected)
+    const current = items.find(item => item.sessionId === selected)
+    const changedAccount = previous?.accountUserId && current?.accountUserId && previous.accountUserId !== current.accountUserId
+    if (selected && (!current || changedAccount)) {
+      this.markReadGeneration++
+      this.sessionEpoch++
+      this.seq.messages++
+      this.paging.clear()
+      this.markedReadMessageIds.clear()
+      this.patch({ selectedId: null, messages: createInitialState(this.state.availability).messages,
+        markReadError: null, historySync: idleSync() })
+    }
+    this.patch({ conversations: { phase: 'ready', items, error: null, refreshing: false } })
+  }
+
   private async loadConversations(silent: boolean): Promise<void> {
     const api = this.api
     if (!api || this.disposed) return
@@ -661,7 +679,7 @@ export class ChatCenterController {
       if (this.isStale('list', token)) return
       const items = parseConversations(result)
       if (!items) throw new Error(BAD_SHAPE)
-      this.patch({ conversations: { phase: 'ready', items, error: null, refreshing: false } })
+      this.applyConversationList(items)
     } catch (error) {
       if (this.isStale('list', token)) return
       const latest = this.state.conversations
