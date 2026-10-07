@@ -41,7 +41,7 @@ import type {
   TaskListSortOrder,
 } from '../../../shared/types/capture'
 import { PlatformError } from '../platform/errors'
-import { CaptureController, type CapturePlatform } from '../capture/controller'
+import { CaptureController, CaptureTaskTypeError, type CapturePlatform } from '../capture/controller'
 import type { ProductRepository } from '../../../shared/capture/product-repository'
 
 /** 采集运行时产出的事件信封（形状与 P1 `EventEnvelope` 兼容）。 */
@@ -369,7 +369,7 @@ function compareTasks(
 
 /** 把任务相关异常归一为协议错误响应。 */
 function taskError(command: CommandEnvelope, error: unknown): ResponseEnvelope {
-  if (error instanceof TaskNotFoundError) {
+  if (error instanceof TaskNotFoundError || error instanceof CaptureTaskTypeError) {
     return invalid(command, error.message)
   }
   if (error instanceof InvalidTaskTransitionError) {
