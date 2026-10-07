@@ -37,6 +37,9 @@ import {
   type RuntimeStatusResult,
 } from '@fishops/shared'
 import { handleCommand, type PlatformRouterDeps } from './message-router'
+import { createScheduler } from './scheduler'
+import { handleSchedulerCommand, SCHEDULER_COMMANDS, startSchedulerAlarm } from './scheduler-runtime'
+import type { SchedulerState } from '../../../shared/types/scheduler'
 import { createChatRuntime, type ChatRuntime } from './chat-runtime'
 import { isTrustedChatContentSource } from './chat-source'
 import { createChatReplyIngestor } from './chat-reply-ingest'
@@ -1212,6 +1215,16 @@ chrome.runtime.onConnect.addListener((port) => {
   }
 })
 
+/** 通用调度本期不注册业务执行器；后续接入仅修改 executors 注册表。 */
+const scheduler = createScheduler({
+  now: () => Date.now(),
+  read: async () => (await chrome.storage.local.get('fishops.scheduler.v1'))['fishops.scheduler.v1'] as SchedulerState | undefined,
+  write: async state => { await chrome.storage.local.set({ 'fishops.scheduler.v1': state }) },
+  executors: {},
+})
+// MV3 被 alarm 唤醒：监听器由 startSchedulerAlarm 在模块顶层同步注册。
+startSchedulerAlarm(chrome.alarms, scheduler)
+
 // ---- 命令通道：Workbench 通过 chrome.runtime.sendMessage 发起 ----
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isCommandEnvelope(message)) return false
@@ -1244,6 +1257,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isExtensionPageSender(sender, chrome.runtime.id)) {
     finishTrace('rejected', 'INVALID_MESSAGE')
     return false
+  }
+
+  if (SCHEDULER_COMMANDS.has(message.type)) {
+    void handleSchedulerCommand(scheduler, message).then(response => {
+      finishTrace(response.ok ? 'success' : 'error')
+      sendResponse(response)
+    })
+    return true
   }
 
   if ([CommandTypes.DATA_BACKUP_STATUS, CommandTypes.DATA_BACKUP_SAVE, CommandTypes.DATA_BACKUP_RESTORE].includes(message.type as never)) {

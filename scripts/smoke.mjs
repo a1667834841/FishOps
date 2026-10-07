@@ -44,6 +44,10 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
 // ---- 最小 chrome.* mock ----
 /** 模拟 chrome.storage.session：跨 service worker 重启保留，用于验证持久化。 */
 const sessionStore = new Map()
+/** 模拟 chrome.storage.local：通用调度等配置的真源（真实扩展已声明 storage 权限）。 */
+const localStore = new Map()
+/** 模拟 chrome.alarms：调度唤醒器重建与触发依赖它。 */
+const alarmStore = new Map()
 
 function createEventTarget() {
   const listeners = []
@@ -84,6 +88,29 @@ globalThis.chrome = {
       async set(items) {
         for (const [key, value] of Object.entries(items)) sessionStore.set(key, value)
       },
+    },
+    // 真实扩展已声明 storage 权限，chrome.storage.local 必然可用；通用调度以此作为配置真源。
+    local: {
+      async get(key) {
+        const result = {}
+        if (typeof key === 'string' && localStore.has(key)) result[key] = localStore.get(key)
+        return result
+      },
+      async set(items) {
+        for (const [key, value] of Object.entries(items)) localStore.set(key, value)
+      },
+    },
+  },
+  alarms: {
+    onAlarm: createEventTarget(),
+    async get(name) {
+      return alarmStore.get(name)
+    },
+    async create(name, info) {
+      alarmStore.set(name, { name, scheduledTime: Date.now(), ...info })
+    },
+    async clear(name) {
+      return alarmStore.delete(name)
     },
   },
   action: { onClicked: createEventTarget() },
