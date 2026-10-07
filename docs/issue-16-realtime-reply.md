@@ -1,5 +1,7 @@
 # Issue #16 执行记录
 
+当前结论：修复已完成，最终定向回归 33/33、本地检查及完整 `regression:full` 均通过；真实新入站、平台字段及刷新复查通过。自动发送和手机出站暂停使用安全替身验证，未执行真实外发。以下保留历史阻碍与恢复过程，最终交付状态见末节。
+
 ## 任务与工作区
 
 - Issue：https://github.com/a1667834841/FishOps/issues/16
@@ -123,3 +125,17 @@ ego-browser 空间 317，页面 p1。动作：打开真实扩展工作台 → �
 再次刷新工作台后，消息缓存仍为 1，socket=open，自动回复 enabled=false、processedCount=0、aiPaused=false。真实新入站、平台映射和再次进入缓存检查通过；未产生真实回复或 AI 暂停。自动发送和手机出站暂停由真实 runtime + 安全替身回归覆盖，未宣称真实外发验收。
 
 交付前 fetch 确认主分支新增 `06dd5e2`（PR #39），其中已提供 `FISHOPS_REGRESSION_SPACE_ID` 复用且保持活动空间的部署路径。下一步同步该主分支，并重新运行完整回归，核对接线未变及新基线集成；历史编排失败记录仍保留。
+
+
+## 最终交付状态
+
+- 最新主分支：`06dd5e2`。业务实现 Commit：`01665d0f74a63cb96d9c8fdb23ba3fdfc7b5defb`。同步主分支前为 `3ae3530`；`git range-diff 2aa4b99..3ae3530 origin/main..HEAD` 显示补丁相等，无冲突、无业务实现变化。
+- 最终完整命令：`FISHOPS_REGRESSION_SPACE_ID=317 npm run regression:full`，在本任务 worktree 执行，退出码 0。报告 `.regression/2026-10-07T06-55-39-518Z-53938/report.json`；详细日志 `.regression/issue-16-execution/final-regression-full.log`。
+- 最终本地层：全量单测、shared/extension/workbench 类型检查、完整构建、安全检查、Bridge 冒烟、采集闭环和 SW 启动均通过。
+- 最终真实层：部署来源为当前 worktree 和上述业务 Commit，包含 SETUP_COMPLETED；Bridge、任务读取、聊天缓存、发布历史、概览/采集/聊天/商品库/发布/分析/设置 7 个页面、AI/飞书连接共 13 项均通过。
+- 此前的完整编排失败由主分支新增的空间保留路径解决，最终完整命令通过；没有把旧失败结果修改为通过。
+- 新入站专项：用户真实发送的 Android 文本消息经 realtime 入库为 1 条，方向为 in、platform=android；刷新工作台仍为 1 条，自动回复禁用，无重复消息、真实外发或 AI 暂停。同步后 patch 未变；新基线的完整集成回归通过，复用有效专项证据。
+- 真实手机出站、真实 auto 外发未执行；这些行为及安全边界由真实 store/runtime + 禁止外发 transport 的回归覆盖。未人为伪造真实消息或破坏外部数据。
+- CI 待 PR 创建后执行，本地结果不代替 CI。最终证据更新仅修改本文档，不改变已验证的业务代码。
+- 自查只包含 Issue #16 的来源/去重/平台/队列/连接边界及测试；没有带入主分支 #39 的额外改动。`git diff --check` 与暂存区检查通过。
+- 真实测试空间已由成功基线脚本按规范结束；执行终端和会话继续保留在当前工作区。提交后进入 pr review，PR 创建后停止，不自动 Merge、不提前关闭 Issue。
