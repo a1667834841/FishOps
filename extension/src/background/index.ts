@@ -1,3 +1,7 @@
+import type { BackupStatus } from '../../../shared/persistence/backup-status'
+import { FileBackup } from './file-backup'
+import { backupHandleStore } from '../../../shared/persistence/file-handle'
+import { AdapterTaskStore, ChromeStorageSessionAdapter, withTaskUpdateLock } from '../../../shared/task/task-store'
 import { createDailyCaptureFeishuSync } from './capture-feishu-sync'
 import { captureDate } from '../../../shared/data-source/feishu-daily-tables'
 import { mapCatalogProductToProduct } from '../../../shared/data-source/catalog-product-mapping'
@@ -480,6 +484,47 @@ function getCapturedProductRepository(): ReturnType<typeof createProductReposito
   return capturedProductRepository ??= createProductRepository()
 }
 
+// 通用任务与发布任务保留原命名空间，文件备份只读取业务数据，不读取配置或聊天。
+const persistentTasks = createPersistentTaskStore('fishops')
+const persistentPublish = createPersistentTaskStore('fishops.publish')
+let migration: Promise<void> | null = null
+function migrateSessionTasks(): Promise<void> {
+  return migration ??= (async () => {
+    if (!ChromeStorageSessionAdapter.isSupported()) return
+    const legacy = new AdapterTaskStore(new ChromeStorageSessionAdapter())
+    for (const task of await legacy.list()) {
+      const destination = task.type === 'publish' ? persistentPublish : persistentTasks
+      await withTaskUpdateLock(destination, task.id, async () => {
+        const existing = await destination.get(task.id)
+        if (!existing || existing.updatedAt < task.updatedAt) await destination.save(task)
+      })
+    }
+  })().catch(error => { migration = null; throw error })
+}
+let fileBackup: FileBackup | null = null
+function getFileBackup(): FileBackup {
+  return fileBackup ??= new FileBackup({
+    products: getCapturedProductRepository(), tasks: persistentTasks, publish: persistentPublish,
+    onTaskRestored: task => {
+      // 恢复是任务数据变化，不是 Worker 重启；复用完整快照事件通知各业务页面。
+      broadcast(task.type === 'publish' ? EventTypes.PUBLISH_TASK_CHANGED : EventTypes.TASK_CHANGED,
+        { eventType: 'updated', task, timestamp: Date.now() })
+    },
+    getHandle: async () => typeof indexedDB === 'undefined' ? null : (await backupHandleStore()).get(),
+    readStatus: async () => ((await chrome.storage.local.get('fishops.fileBackupStatus'))['fishops.fileBackupStatus'] as BackupStatus | undefined) ?? null,
+    writeStatus: async status => { await chrome.storage.local.set({ 'fishops.fileBackupStatus': status }) },
+  })
+}
+let backupTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleFileBackup(): void {
+  if (backupTimer !== null) return
+  // 合并进度事件，后台仍会保存；重启后立即补写，避免页面关闭丢失最后状态。
+  backupTimer = setTimeout(() => {
+    backupTimer = null
+    void migrateSessionTasks().then(() => getFileBackup().save()).catch(() => {})
+  }, 500)
+}
+
 /** 单例采集运行时（init 成功后才赋值）。 */
 let captureRuntime: CaptureRuntime | null = null
 /** 进行中的组装 promise（并发去重）；init 失败时置空以便下次重建重试。 */
@@ -493,8 +538,10 @@ function getCaptureRuntime(): Promise<CaptureRuntime> {
 }
 
 async function createCaptureRuntimeInstance(): Promise<CaptureRuntime> {
+  await migrateSessionTasks()
   const runtime = createCaptureRuntime({
     platform: capturePlatform,
+    tasks: new TaskManager({ store: persistentTasks }),
     repository: getCapturedProductRepository(),
     syncProducts: (_itemIds, shouldContinue, products) => syncDailyCapturedProducts(products, shouldContinue),
     getCurrentUserId: resolveMyUserId,
@@ -528,10 +575,12 @@ function getAnalysisRuntime(): Promise<AnalysisRuntime> {
 }
 
 async function createAnalysisRuntimeInstance(): Promise<AnalysisRuntime> {
+  await migrateSessionTasks()
   // 飞书配置来自专用存储键（可能由迁移写入）；未配置时为 undefined，不注册飞书数据源。
   const feishuConfig = await getFeishuConfigStore().load()
   const runtime = createAnalysisRuntime({
-    repository: createProductRepository(),
+    repository: getCapturedProductRepository(),
+    tasks: new TaskManager({ store: persistentTasks }),
     ...(feishuConfig === null ? {} : { feishuConfig }),
     onEvent: (event) => {
       broadcast(event.type as EventType, event.payload)
@@ -683,7 +732,7 @@ async function createPublishRuntimeInstance(): Promise<PublishRuntime> {
   // 发布任务历史必须跨扩展 reload 保留：waiting_confirmation 断点若落在 chrome.storage.session，
   // 会在扩展 reload / 更新时被官方语义清空，导致 PUBLISH_LIST total=0。
   // 因此发布中心单独使用 chrome.storage.local 持久化，并用独立前缀与 capture/analysis 任务存储隔离。
-  const tasks = new TaskManager({ store: createPersistentTaskStore('fishops.publish') })
+  const tasks = new TaskManager({ store: persistentPublish })
 
   const runtime = createPublishRuntime({
     repository: createProductRepository(),
@@ -1077,6 +1126,8 @@ async function bootstrap(): Promise<void> {
     console.warn('[FishOps:Background] 采集层启动恢复失败', error)
   })
 
+  scheduleFileBackup()
+
   // 启动恢复：把遗留 running 的分析任务恢复为 failed。
   void getAnalysisRuntime().catch((error: unknown) => {
     console.warn('[FishOps:Background] 分析层启动恢复失败', error)
@@ -1091,6 +1142,7 @@ async function bootstrap(): Promise<void> {
 
 /** 向订阅了该事件的 Port 广播事件，返回投递数量。 */
 function broadcast(type: EventType, payload: unknown): number {
+  if (type === EventTypes.TASK_CHANGED || type === EventTypes.PUBLISH_TASK_CHANGED) scheduleFileBackup()
   const event = createEvent(type, payload)
   if (type === EventTypes.TASK_CHANGED && payload && typeof payload === 'object') {
     const task = (payload as { task?: { type?: unknown; status?: unknown; result?: unknown } }).task
@@ -1195,6 +1247,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isExtensionPageSender(sender, chrome.runtime.id)) {
     finishTrace('rejected', 'INVALID_MESSAGE')
     return false
+  }
+
+  if ([CommandTypes.DATA_BACKUP_STATUS, CommandTypes.DATA_BACKUP_SAVE, CommandTypes.DATA_BACKUP_RESTORE].includes(message.type as never)) {
+    const run = async () => {
+      if (message.type === CommandTypes.DATA_BACKUP_RESTORE) {
+        const payload = message.payload as { content?: unknown }
+        if (!payload || typeof payload.content !== 'string' || payload.content.length > 50 * 1024 * 1024) throw new Error('备份文件无效或超过 50 MB')
+        await migrateSessionTasks()
+        const result = await getFileBackup().restore(payload.content)
+        scheduleFileBackup()
+        return result
+      }
+      if (!isEmptyPayload(message.payload)) throw new Error('备份命令负载非法')
+      if (message.type === CommandTypes.DATA_BACKUP_STATUS) return getFileBackup().getStatus()
+      await migrateSessionTasks()
+      return getFileBackup().save()
+    }
+    void run().then(result => {
+      finishTrace('success')
+      sendResponse(createResponse(message.requestId, message.type, result))
+    }).catch(() => {
+      finishTrace('error', 'INTERNAL')
+      sendResponse(createErrorResponse(message.requestId, message.type, { code: 'INTERNAL', message: '文件操作失败。请检查文件完整性、磁盘空间和授权；若恢复中途失败，可重新恢复以补齐记录。' }))
+    })
+    return true
   }
 
   handleCommand(message, {

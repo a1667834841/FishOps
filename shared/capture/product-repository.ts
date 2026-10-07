@@ -26,6 +26,10 @@ export interface ProductRepository {
    * @param capturedAt 本次采集时间戳（毫秒）。
    */
   upsertProducts(products: readonly Product[], capturedAt: number): Promise<ProductUpsertResult>
+  /** 导出商品与快照；文件备份必须同时保留两者。 */
+  exportData?(): Promise<{ products: Product[]; snapshots: ProductSnapshot[] }>
+  /** 合并恢复，保留更晚的商品与已有快照；不清空现有库。 */
+  importData?(data: { products: Product[]; snapshots: ProductSnapshot[] }): Promise<void>
   /** 查询商品列表。 */
   list(query?: ProductListQuery): Promise<ProductPage>
   /** 读取某商品的全部快照（按 capturedAt 升序）。 */
@@ -265,6 +269,18 @@ export class MemoryProductRepository implements ProductRepository {
     return this.products.size
   }
 
+  async exportData(): Promise<{ products: Product[]; snapshots: ProductSnapshot[] }> {
+    return structuredClone({ products: [...this.products.values()], snapshots: [...this.snapshots.values()] })
+  }
+  async importData(data: { products: Product[]; snapshots: ProductSnapshot[] }): Promise<void> {
+    for (const product of data.products) {
+      const existing = this.products.get(product.itemId)
+      if (!existing || existing.captureTimeMs < product.captureTimeMs) this.products.set(product.itemId, structuredClone(product))
+    }
+    for (const snapshot of data.snapshots) {
+      if (!this.snapshots.has(snapshot.id)) this.snapshots.set(snapshot.id, structuredClone(snapshot))
+    }
+  }
   async clear(): Promise<void> {
     this.products.clear()
     this.snapshots.clear()

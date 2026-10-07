@@ -13,6 +13,8 @@ try {
   if (operation === 'configure' && args.length && (args.length !== 2 || args[0] !== '--config')) {
     throw new Error('用法：npm run agent:configure -- --config /绝对路径/agent-config.json.local；或 npm run agent:uninstall')
   }
+  const spaceId = operation === 'configure' && process.env.FISHOPS_REGRESSION_SPACE_ID ? Number(process.env.FISHOPS_REGRESSION_SPACE_ID) : undefined
+  if (spaceId !== undefined && (!Number.isSafeInteger(spaceId) || spaceId <= 0)) throw new Error('测试空间 ID 非法')
   const configPath = operation === 'uninstall' ? null : args.length ? resolve(args[1]) : await resolveAgentConfigPath(projectRoot)
   let config
   try { config = configPath ? JSON.parse(await readFile(configPath, 'utf8')) : {} } catch {
@@ -27,7 +29,7 @@ try {
   await mkdir(dirname(agentExtensionDir), { recursive: true })
   const result = spawnSync('ego-browser', ['nodejs'], {
     // ego 运行时不继承 CLI 环境变量，仅把非敏感文件路径写入脚本参数。
-    input: `const agentInput = ${JSON.stringify({ operation, configPath, target: agentExtensionDir, statePath: join(dirname(agentExtensionDir), 'agent-ego-state.json') })};\nconst reloadUnpacked = ${reloadUnpacked.toString()};\nconst uninstallExtension = ${uninstallExtension.toString()};\n${script}`,
+    input: `const agentInput = ${JSON.stringify({ operation, configPath, spaceId, target: agentExtensionDir, statePath: join(dirname(agentExtensionDir), 'agent-ego-state.json') })};\nconst reloadUnpacked = ${reloadUnpacked.toString()};\nconst uninstallExtension = ${uninstallExtension.toString()};\n${script}`,
     encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 60000,
   })
