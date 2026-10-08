@@ -32,7 +32,7 @@ import {
   TaskManager,
 } from '../../../../shared/task/index'
 import type { Product } from '../../../../shared/types/product'
-import { createPublishRuntime } from '../../background/publish-runtime'
+import { createPublishRuntime } from './owned-product-fixture'
 import type { FormFillResult, PublishFormFiller } from '../form-filler'
 import type { ImageDownloader, PreparedImageFile } from '../controller'
 

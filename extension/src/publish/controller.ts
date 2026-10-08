@@ -104,7 +104,7 @@ export class DefaultImageDownloader implements ImageDownloader {
 }
 
 /**
- * 当前账号自有商品的只读回退来源（本地商品库未命中时使用）。
+ * 当前账号自有商品的只读复验来源（本地命中也必须复验）。
  *
  * 实现必须从受支持的真实数据源（当前账号官方在售目录）读取并确认归属；
  * 未命中返回 `null`，读取失败抛错。**绝不写入本地商品库**，也不得返回其他账号商品。
@@ -124,7 +124,7 @@ export interface PublishControllerDeps {
   /** 商品仓储（P4 ProductRepository） */
   repository: ProductRepository
   /**
-   * 当前账号自有商品只读回退来源；未接线时只使用本地商品库（保持原行为）。
+   * 当前账号自有商品只读复验来源；未接线时拒绝自营素材发布。
    * 用途：候选来自商品目录（未采集入库）时，发布创建仍能读取同一来源的真实商品。
    */
   ownedProducts?: OwnedProductFallback
@@ -153,8 +153,8 @@ export class PublishController {
   }
 
   /**
-   * 解析待发布商品：先查本地商品库（既有采集/本地发布路径），未命中时回退到当前账号官方在售目录只读解析
-   * （未接线回退来源时保持原行为，直接视为未找到）。
+   * 解析待发布商品：拒绝本地非自营来源，自营素材始终从当前账号官方在售目录复验。
+   * 返回复验后的官方素材，不信任历史本地归属标记，也不改写仓储。
    *
    * @param trimmedId 已裁剪的真实 itemId
    * @returns 解析出的商品；未找到返回 null
@@ -164,8 +164,11 @@ export class PublishController {
     // 再严格校验来源，以便对竞品 / legacy / 未确认结构化拒绝，而非笼统的“找不到”。
     const page = await this.repository.list({ keyword: trimmedId, limit: 50, source: 'all' })
     const found = page.products.find((p) => p.itemId === trimmedId)
-    if (found) return found
-    if (!this.ownedProducts) return null
+    if (found && found.source !== 'my_published') return found
+    if (!this.ownedProducts) {
+      if (!found) return null
+      throw new PublishError('PRODUCT_SOURCE_UNAVAILABLE', '缺少当前账号自有商品复验能力，已拒绝发布', { retryable: false })
+    }
 
     let resolved: Product | null
     try {
@@ -218,7 +221,7 @@ export class PublishController {
     // 安全铁律：只允许发布当前账号已验证归属的已发布商品（my_published）。
     // 竞品（captured_search）、存量未确认（legacy_unconfirmed）与任何归属未确认商品一律结构化拒绝，
     // 避免把他人商品 / 来源不明的商品误发布到当前账号。
-    if (product.source !== 'my_published') {
+    if (product.source !== 'my_published' || product.ownershipUnconfirmed === true) {
       const source = product.source ?? 'legacy_unconfirmed'
       throw new PublishError(
         'PRODUCT_SOURCE_NOT_ALLOWED',

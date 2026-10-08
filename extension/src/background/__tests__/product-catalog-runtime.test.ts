@@ -509,13 +509,13 @@ test('缓存刷新：刷新期间新增来源会排队执行', async () => {
 
 // ---- Issue19：发布创建复用同一来源契约（当前账号在售目录只读解析） ----
 
-test('Issue19: resolveMyPublishedItem 复用会话快照按 itemId 精确解析，未命中返回 null', async () => {
+test('Issue29: resolveMyPublishedItem 重新读取目录，已下架商品不复用快照', async () => {
   let reads = 0
   const runtime = createProductCatalogRuntime({
     platform: makePlatform({
       listOnSaleItems: async () => {
         reads += 1
-        return { accountId: 'u1', items: [card('a'), card('b')] }
+        return { accountId: 'u1', items: reads === 1 ? [card('a'), card('b')] : [card('a')] }
       },
       detail: async () => ({ data: {} }),
     }),
@@ -525,9 +525,8 @@ test('Issue19: resolveMyPublishedItem 复用会话快照按 itemId 精确解析�
 
   assert.equal((await runtime.resolveMyPublishedItem('b'))?.itemId, 'b')
   // 未命中（商品已下架 / 候选过期）：返回 null，绝不猜商品。
-  assert.equal(await runtime.resolveMyPublishedItem('not_exist'), null)
-  // 会话复用：解析不重复触发平台读取。
-  assert.equal(reads, 1)
+  assert.equal(await runtime.resolveMyPublishedItem('b'), null)
+  assert.equal(reads, 2)
 })
 
 test('Issue19: resolveMyPublishedItem 空 itemId 直接返回 null 且不触发平台读取', async () => {

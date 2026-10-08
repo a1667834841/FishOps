@@ -1,3 +1,4 @@
+import { createPublishRuntime } from './owned-product-fixture'
 /**
  * PublishRuntime 核心运行时与生命周期单测（P8）。
  *
@@ -41,7 +42,6 @@ import { createMemoryProductRepository } from '../../../../shared/capture/produc
 import { MemoryTaskStore, TaskManager } from '../../../../shared/task/index'
 import type { Product } from '../../../../shared/types/product'
 import {
-  createPublishRuntime,
   type PublishedItemRef,
   type PublishedItemsReader,
   type PublishEventEnvelope,
@@ -1966,3 +1966,51 @@ test('Issue19: 目录读取失败时 PUBLISH_CREATE 结构化拒绝且不创建�
   const list = await tasks.list({ type: 'publish' })
   assert.equal(list.length, 0)
 })
+
+for (const switchAt of ['create', 'fill', 'download', 'submit'] as const) {
+  test(`Issue29: ${switchAt} 阶段切号拒绝旧素材且不派发填充或提交`, async () => {
+    const repository = createMemoryProductRepository()
+    const product = makeProduct('account-A-item')
+    await repository.upsertProducts([product], Date.now())
+    const tasks = new TaskManager({store:new MemoryTaskStore()})
+    const filler = new MockPublishFormFiller()
+    let owned = switchAt !== 'create'
+    let reads = 0
+    const downloader = new MockImageDownloader()
+    const runtime = createPublishRuntime({
+      repository, tasks, tabs:new MockTabsApi(), formFiller:filler,
+      ownedProducts:{resolve:async()=>{ reads++; return owned ? product : null }},
+      imageDownloader:{download:async(url,filename)=>{
+        const file = await downloader.download(url,filename)
+        if (switchAt === 'download') owned = false
+        return file
+      }},
+      publishedItems:new MockPublishedItemsReader(),
+    })
+    const created = await runtime.handleCommand(makeCommand(CommandTypes.PUBLISH_CREATE,{itemId:product.itemId}))
+    if (switchAt === 'create') {
+      assert.equal(created.ok,false)
+      assert.equal(created.error?.businessCode,'PRODUCT_NOT_FOUND')
+      assert.equal((await tasks.list({type:'publish'})).length,0)
+      return
+    }
+    assert.equal(created.ok,true)
+    const id = (created.result as PublishCreateResult).task.id
+    if (switchAt === 'fill') owned = false
+    const filled = await runtime.handleCommand(makeCommand(CommandTypes.PUBLISH_FILL_FORM,{id}))
+    if (switchAt !== 'submit') {
+      assert.equal(filled.ok,false)
+      assert.equal(filler.fillCount,0)
+    } else {
+      assert.equal(filled.ok,true)
+      owned = false
+      const token = (filled.result as PublishFillFormResult).task.result?.submitToken
+      const submitted = await runtime.handleCommand(makeCommand(CommandTypes.PUBLISH_SUBMIT,{id,submitToken:token,confirm:true}))
+      assert.equal(submitted.ok,false)
+      assert.equal(submitted.error?.businessCode,'PRODUCT_NOT_FOUND')
+      assert.notEqual((await tasks.getById(id))?.meta?.submitAttempted,true)
+    }
+    assert.equal(filler.submitCount,0)
+    assert.ok(reads >= 2)
+  })
+}
