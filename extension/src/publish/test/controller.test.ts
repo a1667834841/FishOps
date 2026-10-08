@@ -2,8 +2,8 @@
  * PublishController 与 FormFiller 单元测试（P8）。
  *
  * 测试目标：
- * 1. 严格从 ProductRepository 按指定 itemId 获取商品，商品不存在时返回结构化 PRODUCT_NOT_FOUND；
- *    Issue19 起：本地库未命中时经 OwnedProductFallback 从当前账号在售商品目录只读解析（同一来源契约）；
+ * 1. 按指定 itemId 解析商品，商品不存在时返回结构化 PRODUCT_NOT_FOUND；
+ *    自营素材经 OwnedProductFallback 从当前账号在售目录只读复验，本地命中也不例外；
  * 2. 严禁私自偷偷随机选择商品；
  * 3. 准备图片接口全部可注入 mock，脱机运行，完全不发起真实网络请求；
  * 4. PublishController.submit 不提供自动提交（显式拒绝）；DOMPublishFormFiller.submit 返回结构化提交结果；
@@ -15,9 +15,9 @@ import test from 'node:test'
 import { createMemoryProductRepository } from '../../../../shared/capture/product-repository'
 import { PublishError } from '../../../../shared/types/publish'
 import type { Product } from '../../../../shared/types/product'
+import { PublishController } from './owned-product-fixture'
 import {
   DefaultImageDownloader,
-  PublishController,
   type ImageDownloader,
   type OwnedProductFallback,
   type PreparedImageFile,
@@ -396,7 +396,7 @@ test('DOMPublishFormFiller: 表单填充成功概览与 submit() 结构化返回
 
 // ---- Issue19：发布候选与创建同源（商品目录 my_published → 发布创建） ----
 
-/** 回退来源测试替身：记录解析调用，便于验证「本地命中时绝不调用目录」。 */
+/** 回退来源测试替身：记录解析调用，便于验证「本地命中仍调用目录复验」。 */
 class MockOwnedProductFallback implements OwnedProductFallback {
   public readonly resolvedIds: string[] = []
   public errorToThrow: unknown = null
@@ -431,7 +431,7 @@ test('Issue19: 本地库未命中时回退当前账号在售目录只读解析�
   assert.equal(page.total, 0)
 })
 
-test('Issue19: 本地库命中时优先本地记录，绝不调用目录回退（保持旧采集本地发布路径）', async () => {
+test('Issue29: 本地库命中时复验官方目录并使用官方素材', async () => {
   const repo = createMemoryProductRepository()
   const local = { ...createSampleProduct('local_1'), title: '本地采集商品' }
   await repo.upsertProducts([local], Date.now())
@@ -440,8 +440,8 @@ test('Issue19: 本地库命中时优先本地记录，绝不调用目录回退�
 
   const item = await controller.preparePublishItem('local_1')
 
-  assert.equal(item.sourceTitle, '本地采集商品')
-  assert.deepEqual(fallback.resolvedIds, [])
+  assert.equal(item.sourceTitle, '目录商品')
+  assert.deepEqual(fallback.resolvedIds, ['local_1'])
 })
 
 test('Issue19: 本地库与在售目录均未命中 → PRODUCT_NOT_FOUND（空结果不误创建）', async () => {

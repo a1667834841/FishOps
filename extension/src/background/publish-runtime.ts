@@ -118,8 +118,8 @@ export interface PublishRuntimeDeps {
   /** 商品仓储（P4 ProductRepository） */
   repository: ProductRepository
   /**
-   * 当前账号自有商品的只读回退来源（本地商品库未命中时使用）。
-   * 未接线时发布创建只认本地商品库，保持原行为；接线后候选与创建共用官方在售目录契约。
+   * 当前账号自有商品的只读复验来源（本地命中也必须复验）。
+   * 未接线时拒绝自营素材；创建、填充及提交均使用当前账号官方在售目录复验。
    */
   ownedProducts?: OwnedProductFallback
   /** 任务管理器；缺省自动使用默认持久化 Store */
@@ -1179,6 +1179,11 @@ export function createPublishRuntime(deps: PublishRuntimeDeps): PublishRuntime {
 
       await persistProgress(85, { step: 'filling_form' })
 
+      // 图片下载与打开页面期间可能切号；派发填充前重新复验，不复用创建许可。
+      if (payload.source !== 'feishu') {
+        await controller.preparePublishItem(payload.itemId ?? '', payload.rule, payload.override)
+      }
+
       // 5. 调用 FormFiller 填充表单字段（记录 page_check / fields / images 安全阶段）
       const fillCallStart = now()
       let fillResult: FormFillResult
@@ -1627,6 +1632,12 @@ export function createPublishRuntime(deps: PublishRuntimeDeps): PublishRuntime {
         latencyMs: Math.max(0, now() - baselineStart),
         counters: { onSaleCount: beforeCount },
       })
+
+      // 人工确认期间可能切号或下架；在写入派发锁之前只读复验，失败不点击。
+      const sourcePayload = task.payload as PublishTaskPayload
+      if (sourcePayload.source !== 'feishu') {
+        await controller.preparePublishItem(sourcePayload.itemId ?? '', sourcePayload.rule, sourcePayload.override)
+      }
 
       // 8. 【防重复发布·关键顺序】在派发真实点击之前，先把“已尝试提交”锁持久化落盘：
       //    - 若 Service Worker 在点击之后、结果持久化之前被销毁并重启，

@@ -739,8 +739,8 @@ async function createPublishRuntimeInstance(): Promise<PublishRuntime> {
     tasks,
     tabs: tabs as any,
     scripting: scripting as any,
-    // 当前账号自有商品只读回退来源：发布候选与创建共用商品目录（官方在售）契约。
-    // 本地商品库命中时仍优先使用本地记录，只在未命中时按 itemId 复验目录，绝不写入本地商品库。
+    // 当前账号自有商品只读复验来源：创建、填充与提交均确认官方在售归属。
+    // 本地命中不作为归属凭据；返回当前账号官方素材，绝不写入本地商品库。
     ownedProducts: {
       resolve: async (itemId: string) => {
         const catalog = await getProductCatalogRuntime()

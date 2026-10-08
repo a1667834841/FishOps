@@ -458,13 +458,13 @@ export function createProductCatalogRuntime(deps: ProductCatalogRuntimeDeps): Pr
   }
 
   /**
-   * 只读解析当前账号自有商品（当前账号官方在售目录）：复用会话快照（无快照时重建一次）。
+   * 只读解析当前账号自有商品：强制读取官方在售目录，避免已下架素材沿用会话快照。
    * 账号失效 / 切换 / 平台读取失败抛错，未命中返回 null。
    */
   async function resolveMyPublishedItem(itemId: string): Promise<CatalogProduct | null> {
     const target = itemId?.trim() ?? ''
     if (!target) return null
-    const current = await load(false)
+    const current = await load(true)
     return current.products.find((product) => product.itemId === target) ?? null
   }
 

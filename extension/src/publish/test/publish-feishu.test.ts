@@ -18,7 +18,7 @@ import {
   type PublishFillFormResult,
   type PublishTask,
 } from '@fishops/shared'
-import { createPublishRuntime } from '../../background/publish-runtime'
+import { createPublishRuntime } from './owned-product-fixture'
 import { MemoryFeishuConfigStore } from '../../data-source/feishu-config-store'
 import { createMemoryProductRepository } from '../../../../shared/capture/product-repository'
 import { MemoryTaskStore, TaskManager } from '../../../../shared/task/index'
