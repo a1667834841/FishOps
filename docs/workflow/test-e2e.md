@@ -1,5 +1,7 @@
 # 真实 E2E
 
+> 新 native host 架构使用 [Agent API 测试流程](../agent-api-testing.md) 的隔离部署与真实 Chrome 规则；下文 agent:setup 和工作台步骤仅适用于 legacy，不再作为 M1 入口。来源检查、真实性与授权规则继续有效。
+
 - 按[测试授权](test-authorization.md)确认操作边界；当前项目串行部署验收，固定扩展目录不供多 worktree 同时使用。
 - 无运行中任务或获准重载后，每次 E2E 前在当前 worktree 根目录运行 `npm run agent:setup`；退出码 0 且包含 `SETUP_COMPLETED` 才继续。部署细节见[环境说明](../agent-testing.md)及当前脚本；来源缺失先报告适配方案。
 - 重开真实工作台；涉及闲鱼时刷新宿主页面。核对登录、入口、部署来源与资源版本；配置导入成功不等于连接成功。

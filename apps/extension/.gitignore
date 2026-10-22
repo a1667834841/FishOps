@@ -1,0 +1,7 @@
+# 构建产物：由 scripts/build.mjs 生成，不入库
+dist/
+
+# 私钥与本地配置永不入库：manifest 只提交公钥 key
+*.pem
+*.key
+*.local

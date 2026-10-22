@@ -1,90 +1,33 @@
-name: 构建插件
-
+name: Agent API 验证
 on:
   push:
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  build:
-    name: ci
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+  regression:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 配置 Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version-file: .node-version
           cache: npm
-
-      - name: 安装依赖
-        run: npm ci
-
-      - name: 运行本地全量回归
-        run: npm run regression
-
-      - name: 保留回归报告与检查日志
+      - run: npm ci
+      - run: npm run regression
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: regression-report
-          path: .regression/
+          name: m1-report-${{ matrix.os }}
+          path: .test-results/
           include-hidden-files: true
-          retention-days: 14
-
-      - name: 打包插件
-        working-directory: extension/dist
-        run: |
-          test -f manifest.json
-          test -f workbench.html
-          mkdir -p ../../dist
-          zip -r ../../dist/fishops-extension.zip .
-
-      - name: 上传插件压缩包
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: fishops-extension
-          path: dist/fishops-extension.zip
+          name: m1-extension-${{ matrix.os }}
+          path: apps/extension/dist/
           if-no-files-found: error
-          retention-days: 30
-
-  release:
-    name: 发布插件到 Release
-    needs: build
-    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    concurrency:
-      group: extension-release-${{ github.ref }}
-      cancel-in-progress: false
-
-    steps:
-      - name: 下载插件压缩包
-        uses: actions/download-artifact@v4
-        with:
-          name: fishops-extension
-          path: dist
-
-      - name: 创建 Release 并上传插件
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/fishops-extension.zip --clobber
-          else
-            gh release create "$RELEASE_TAG" dist/fishops-extension.zip \
-              --verify-tag \
-              --title "FishOps $RELEASE_TAG" \
-              --notes "下载 fishops-extension.zip，解压后在 Chrome 扩展管理页面加载包含 manifest.json 的目录。"
-          fi

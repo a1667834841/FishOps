@@ -1,0 +1,21 @@
+{
+  "name": "@fishops/extension",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "FishOps Agent API 执行扩展：连接本地 native host，响应 system.status 并推送 account.changed。",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:unit": "node --disable-warning=ExperimentalWarning --test src/test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.4",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
+  }
+}
